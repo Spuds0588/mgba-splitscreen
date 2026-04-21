@@ -5,7 +5,7 @@ Follow these steps to test the current build of the DualBoy split-screen GBA emu
 ## 1. Launching the App
 Open your terminal and run:
 ```bash
-cd "/home/coreyb/Coding Projects/Applications/DualBoy"
+cd "/home/coreyb/Coding Projects/Applications/mgba-splitscreen/DualBoy"
 npm run tauri dev
 ```
 
