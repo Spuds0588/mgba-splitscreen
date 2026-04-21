@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tauri App</title>
+    <script type="module" src="/main.js" defer></script>
+  </head>
+
+  <body>
+    <main class="container">
+      <h1>DualBoy</h1>
+      
+      <div class="screen-container">
+        <div class="screen-wrapper">
+          <h2>Player 1</h2>
+          <canvas id="screen1" width="240" height="160"></canvas>
+        </div>
+        <div class="screen-wrapper">
+          <h2>Player 2</h2>
+          <canvas id="screen2" width="240" height="160"></canvas>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="load-rom">Load ROM</button>
+        <p id="status">Waiting for ROM...</p>
+      </div>
+    </main>
+  </body>
+</html>
