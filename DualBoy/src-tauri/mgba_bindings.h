@@ -5,4 +5,4 @@
 #include <mgba/core/sync.h>
 #include <mgba/gba/interface.h>
 #include <mgba/core/lockstep.h>
-#include <mgba/internal/gba/sio/lockstep.h>
+#include <mgba-util/vfs.h>

@@ -102,7 +102,7 @@ async function pickAndLoadRom() {
 }
 
 function connectWebSocket() {
-  const socket = new WebSocket('ws://127.0.0.1:8080');
+  const socket = new WebSocket('ws://127.0.0.1:8088');
   socket.binaryType = 'arraybuffer';
 
   socket.onopen = () => {
