@@ -1,5 +1,5 @@
-mod gba;
-mod emulation;
+pub mod gba;
+pub mod emulation;
 mod bindings;
 
 use std::sync::Arc;
