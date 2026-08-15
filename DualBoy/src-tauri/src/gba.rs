@@ -1,6 +1,4 @@
 use std::ffi::CString;
-use std::sync::{Arc, Mutex};
-use std::ptr;
 use crate::bindings;
 
 pub struct GbaInstance {
@@ -39,39 +37,45 @@ impl GbaInstance {
         let c_path = CString::new(temp_name.as_str()).unwrap();
         
         unsafe {
-            println!("[GBA {}] Step 1: Preloading ROM file...", self.id);
-            if bindings::mCorePreloadFile(self.core, c_path.as_ptr()) {
-                println!("[GBA {}] Step 2: ROM preloaded. Initializing hardware...", self.id);
-                
-                if let Some(init_fn) = (*self.core).init {
-                    init_fn(self.core);
+            // mGBA init order (see src/gba/test/core.c): init -> initConfig -> load -> reset.
+            // Loading the ROM before init dereferences core->board, which is NULL until
+            // _GBACoreInit allocates it, so init MUST come first.
+            println!("[GBA {}] Step 1: Initializing hardware...", self.id);
+            if let Some(init_fn) = (*self.core).init {
+                if !init_fn(self.core) {
+                    println!("[GBA {}] Core init failed.", self.id);
+                    let _ = std::fs::remove_file(temp_name);
+                    return false;
                 }
+            }
 
-                println!("[GBA {}] Step 3: Setting video buffer...", self.id);
-                if let Some(set_video_buffer_fn) = (*self.core).setVideoBuffer {
-                    set_video_buffer_fn(self.core, self.video_buffer.as_mut_ptr() as *mut _, 240);
-                }
-                
-                println!("[GBA {}] Step 4: Loading config...", self.id);
-                bindings::mCoreInitConfig(self.core, std::ptr::null_mut());
-                bindings::mCoreLoadConfig(self.core);
-                
-                println!("[GBA {}] Step 5: Resetting core...", self.id);
-                if let Some(reset_fn) = (*self.core).reset {
-                    reset_fn(self.core);
-                }
-                
-                self.is_running = true;
-                println!("[GBA {}] GBA instance is now RUNNING.", self.id);
-                
-                // Cleanup temp file after load
-                let _ = std::fs::remove_file(temp_name);
-                true
-            } else {
+            println!("[GBA {}] Step 2: Loading config...", self.id);
+            bindings::mCoreInitConfig(self.core, std::ptr::null_mut());
+            bindings::mCoreLoadConfig(self.core);
+
+            println!("[GBA {}] Step 3: Setting video buffer...", self.id);
+            if let Some(set_video_buffer_fn) = (*self.core).setVideoBuffer {
+                set_video_buffer_fn(self.core, self.video_buffer.as_mut_ptr() as *mut _, 240);
+            }
+
+            println!("[GBA {}] Step 4: Preloading ROM file...", self.id);
+            if !bindings::mCorePreloadFile(self.core, c_path.as_ptr()) {
                 println!("[GBA {}] mCorePreloadFile failed.", self.id);
                 let _ = std::fs::remove_file(temp_name);
-                false
+                return false;
             }
+
+            println!("[GBA {}] Step 5: Resetting core...", self.id);
+            if let Some(reset_fn) = (*self.core).reset {
+                reset_fn(self.core);
+            }
+
+            self.is_running = true;
+            println!("[GBA {}] GBA instance is now RUNNING.", self.id);
+            
+            // Cleanup temp file after load
+            let _ = std::fs::remove_file(temp_name);
+            true
         }
     }
 
