@@ -114,3 +114,26 @@ button:active {
   font-family: monospace;
   color: #666;
 }
+
+.save-row {
+  margin-top: 1rem;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.save-row label {
+  color: #888;
+  font-size: 0.9rem;
+}
+
+.save-row select {
+  padding: 0.5em 0.75em;
+  border-radius: 8px;
+  border: 1px solid #333;
+  background: #1e1e1e;
+  color: #e0e0e0;
+  font-family: inherit;
+}

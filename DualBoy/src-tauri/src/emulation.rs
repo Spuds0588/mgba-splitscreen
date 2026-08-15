@@ -5,10 +5,10 @@ use tokio::sync::broadcast;
 use crate::gba::GbaInstance;
 use crate::bindings;
 
-// The lockstep driver calls user->sleep/wake to block/resume the host thread in mGBA's
-// threaded model. Here both instances run sequentially on one thread, so the frame-level
-// pause (`nextEvent = 0` + interrupt) is what actually stops a frame; sleep/wake just
-// need to be non-NULL no-ops.
+/// The lockstep driver calls user->sleep/wake to block/resume the host thread in mGBA's
+/// threaded model. Here all instances run sequentially on one thread, so the frame-level
+/// pause (`nextEvent = 0` + interrupt) is what actually stops a frame; sleep/wake just
+/// need to be non-NULL no-ops.
 unsafe extern "C" fn lockstep_noop(_user: *mut bindings::mLockstepUser) {}
 
 /// Owns the lockstep coordinator and deinitializes it on drop.
@@ -25,76 +25,137 @@ impl Drop for LockstepCoordinator {
 }
 
 pub struct EmulationManager {
-    pub instance1: Arc<Mutex<GbaInstance>>,
-    pub instance2: Arc<Mutex<GbaInstance>>,
+    pub instances: Vec<Arc<Mutex<GbaInstance>>>,
     pub frame_sender: broadcast::Sender<Vec<u8>>,
-    driver1: *mut bindings::GBASIOLockstepDriver,
-    driver2: *mut bindings::GBASIOLockstepDriver,
-    _user1: Box<bindings::mLockstepUser>,
-    _user2: Box<bindings::mLockstepUser>,
+    drivers: Vec<*mut bindings::GBASIOLockstepDriver>,
+    _users: Vec<Box<bindings::mLockstepUser>>,
     // Boxed so its address is stable: the lockstep drivers hold a raw pointer to it.
     coordinator: LockstepCoordinator,
 }
 
 unsafe impl Send for EmulationManager {}
 unsafe impl Sync for EmulationManager {}
-unsafe impl Send for bindings::GBASIOLockstepCoordinator {}
-unsafe impl Sync for bindings::GBASIOLockstepCoordinator {}
 
 impl EmulationManager {
-    pub fn new() -> Self {
-        println!("Creating EmulationManager...");
+    /// Create `count` GBA instances linked over the virtual link cable. GBA supports up
+    /// to `MAX_GBAS` (4) players; the count is clamped to [2, 4].
+    pub fn new(count: usize) -> Self {
+        let count = count.clamp(2, 4);
+        println!("Creating EmulationManager with {count} instances...");
         let (tx, _) = broadcast::channel(10);
-        let mut coordinator = Box::new(unsafe { std::mem::zeroed::<bindings::GBASIOLockstepCoordinator>() });
+
+        let mut coordinator =
+            Box::new(unsafe { std::mem::zeroed::<bindings::GBASIOLockstepCoordinator>() });
         unsafe {
             bindings::GBASIOLockstepCoordinatorInit(&mut *coordinator);
         }
 
-        let mut gba1 = GbaInstance::new(1);
-        let mut gba2 = GbaInstance::new(2);
+        let mut instances = Vec::with_capacity(count);
+        for i in 0..count {
+            instances.push(Arc::new(Mutex::new(GbaInstance::new((i + 1) as u8))));
+        }
 
-        let (d1, d2, user1, user2) = unsafe {
-            let d1_ptr = Box::into_raw(Box::new(std::mem::zeroed::<bindings::GBASIOLockstepDriver>()));
-            let d2_ptr = Box::into_raw(Box::new(std::mem::zeroed::<bindings::GBASIOLockstepDriver>()));
+        let mut drivers = Vec::with_capacity(count);
+        let mut users = Vec::with_capacity(count);
+        for _ in 0..count {
+            unsafe {
+                let driver =
+                    Box::into_raw(Box::new(std::mem::zeroed::<bindings::GBASIOLockstepDriver>()));
+                let mut user = Box::new(std::mem::zeroed::<bindings::mLockstepUser>());
+                user.sleep = Some(lockstep_noop);
+                user.wake = Some(lockstep_noop);
 
-            let mut user1 = Box::new(std::mem::zeroed::<bindings::mLockstepUser>());
-            let mut user2 = Box::new(std::mem::zeroed::<bindings::mLockstepUser>());
-            user1.sleep = Some(lockstep_noop);
-            user1.wake = Some(lockstep_noop);
-            user2.sleep = Some(lockstep_noop);
-            user2.wake = Some(lockstep_noop);
+                bindings::GBASIOLockstepDriverCreate(driver, &mut *user);
+                bindings::GBASIOLockstepCoordinatorAttach(&mut *coordinator, driver);
 
-            bindings::GBASIOLockstepDriverCreate(d1_ptr, &mut *user1);
-            bindings::GBASIOLockstepDriverCreate(d2_ptr, &mut *user2);
-
-            bindings::GBASIOLockstepCoordinatorAttach(&mut *coordinator, d1_ptr);
-            bindings::GBASIOLockstepCoordinatorAttach(&mut *coordinator, d2_ptr);
-
-            (d1_ptr, d2_ptr, user1, user2)
-        };
+                drivers.push(driver);
+                users.push(user);
+            }
+        }
 
         EmulationManager {
-            instance1: Arc::new(Mutex::new(gba1)),
-            instance2: Arc::new(Mutex::new(gba2)),
+            instances,
             frame_sender: tx,
-            driver1: d1,
-            driver2: d2,
-            _user1: user1,
-            _user2: user2,
+            drivers,
+            _users: users,
             coordinator: LockstepCoordinator(coordinator),
         }
     }
 
-    pub fn attach_drivers(&self) {
-        let mut gba1 = self.instance1.lock().unwrap();
-        let mut gba2 = self.instance2.lock().unwrap();
-        gba1.set_sio_driver(self.driver1);
-        gba2.set_sio_driver(self.driver2);
+    pub fn player_count(&self) -> usize {
+        self.instances.len()
+    }
+
+    /// Load the same ROM into every instance, then attach the link-cable drivers.
+    pub fn load_rom(&self, path: &str) -> Result<(), String> {
+        let mut guards: Vec<_> = self
+            .instances
+            .iter()
+            .map(|i| i.lock().map_err(|e| e.to_string()))
+            .collect::<Result<_, _>>()?;
+
+        for gba in guards.iter_mut() {
+            if !gba.load_rom(path) {
+                return Err("Failed to load ROM in one or more instances".into());
+            }
+        }
+        drop(guards);
+
+        self.attach_drivers();
+        Ok(())
+    }
+
+    pub fn set_keys(&self, player: u8, keys: u32) -> Result<(), String> {
+        let idx = (player as usize)
+            .checked_sub(1)
+            .filter(|&i| i < self.instances.len())
+            .ok_or_else(|| format!("Invalid player {player}"))?;
+        self.instances[idx]
+            .lock()
+            .map_err(|e| e.to_string())?
+            .set_keys(keys);
+        Ok(())
+    }
+
+    /// Export the battery save of one instance (player is 1-based).
+    pub fn export_save(&self, player: u8) -> Result<Vec<u8>, String> {
+        let idx = (player as usize)
+            .checked_sub(1)
+            .filter(|&i| i < self.instances.len())
+            .ok_or_else(|| format!("Invalid player {player}"))?;
+        self.instances[idx]
+            .lock()
+            .map_err(|e| e.to_string())?
+            .export_save()
+            .ok_or_else(|| "No save data (game has no battery-backed save?)".into())
+    }
+
+    /// Import a battery save into one instance (player is 1-based).
+    pub fn import_save(&self, player: u8, data: &[u8]) -> Result<(), String> {
+        let idx = (player as usize)
+            .checked_sub(1)
+            .filter(|&i| i < self.instances.len())
+            .ok_or_else(|| format!("Invalid player {player}"))?;
+        if self.instances[idx]
+            .lock()
+            .map_err(|e| e.to_string())?
+            .import_save(data)
+        {
+            Ok(())
+        } else {
+            Err("Failed to import save".into())
+        }
+    }
+
+    fn attach_drivers(&self) {
+        let mut guards: Vec<_> = self.instances.iter().map(|i| i.lock().unwrap()).collect();
+        for (gba, driver) in guards.iter_mut().zip(&self.drivers) {
+            gba.set_sio_driver(*driver);
+        }
     }
 
     pub fn start(&self) {
-        let inst1 = self.instance1.clone();
-        let inst2 = self.instance2.clone();
+        let instances = self.instances.clone();
         let tx = self.frame_sender.clone();
 
         thread::spawn(move || {
@@ -103,17 +164,18 @@ impl EmulationManager {
 
             loop {
                 {
-                    let mut gba1 = inst1.lock().unwrap();
-                    let mut gba2 = inst2.lock().unwrap();
+                    let mut guards: Vec<_> =
+                        instances.iter().map(|i| i.lock().unwrap()).collect();
 
-                    if gba1.is_running && gba2.is_running {
-                        gba1.run_frame();
-                        gba2.run_frame();
+                    if guards.iter().all(|g| g.is_running) {
+                        for gba in guards.iter_mut() {
+                            gba.run_frame();
+                        }
 
-                        let mut combined = Vec::with_capacity(240 * 160 * 4 * 2);
-                        combined.extend_from_slice(&gba1.get_pixels_raw());
-                        combined.extend_from_slice(&gba2.get_pixels_raw());
-
+                        let mut combined = Vec::with_capacity(240 * 160 * 4 * guards.len());
+                        for gba in guards.iter() {
+                            combined.extend_from_slice(&gba.get_pixels_raw());
+                        }
                         let _ = tx.send(combined);
                     }
                 }
@@ -127,5 +189,3 @@ impl EmulationManager {
         });
     }
 }
-
-

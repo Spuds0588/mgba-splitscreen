@@ -1,5 +1,5 @@
-//! Headless smoke test: verify the full emulation pipeline (ROM load -> run frames
-//! -> pixels rendered) without a display, using the ROMs in `Test Roms/`.
+//! Headless smoke tests: verify the full emulation pipeline (ROM load -> run frames
+//! -> pixels rendered) and save import/export, using the ROMs in `Test Roms/`.
 
 use dualboy_lib::emulation::EmulationManager;
 
@@ -24,28 +24,39 @@ fn loads_rom_and_renders_frames() {
     let rom = find_test_rom();
     eprintln!("Using test ROM: {rom}");
 
-    let mgr = EmulationManager::new();
-
-    // Load the same ROM into both instances and attach the link-cable drivers.
-    let loaded = {
-        let mut gba1 = mgr.instance1.lock().unwrap();
-        let mut gba2 = mgr.instance2.lock().unwrap();
-        gba1.load_rom(&rom) && gba2.load_rom(&rom)
-    };
-    assert!(loaded, "failed to load ROM into both instances");
-    mgr.attach_drivers();
+    let mgr = EmulationManager::new(2);
+    mgr.load_rom(&rom).expect("load ROM into all instances");
 
     // Run a couple seconds of frames; the BIOS/title screen should render pixels.
     for _ in 0..60 {
-        let mut gba1 = mgr.instance1.lock().unwrap();
-        let mut gba2 = mgr.instance2.lock().unwrap();
-        gba1.run_frame();
-        gba2.run_frame();
+        let mut guards: Vec<_> = mgr.instances.iter().map(|i| i.lock().unwrap()).collect();
+        for gba in guards.iter_mut() {
+            gba.run_frame();
+        }
     }
 
-    let pixels = mgr.instance1.lock().unwrap().get_pixels_raw();
+    let pixels = mgr.instances[0].lock().unwrap().get_pixels_raw();
     let any_rendered = pixels
         .chunks_exact(4)
         .any(|px| px[0] != 0 || px[1] != 0 || px[2] != 0);
     assert!(any_rendered, "no pixels rendered after 60 frames");
+}
+
+#[test]
+fn save_round_trip() {
+    let rom = find_test_rom();
+    let mgr = EmulationManager::new(2);
+    mgr.load_rom(&rom).expect("load ROM");
+
+    // Run a few frames so the game initializes its save memory.
+    for _ in 0..10 {
+        let mut guards: Vec<_> = mgr.instances.iter().map(|i| i.lock().unwrap()).collect();
+        for gba in guards.iter_mut() {
+            gba.run_frame();
+        }
+    }
+
+    let save = mgr.export_save(1).expect("export save from player 1");
+    assert!(!save.is_empty(), "exported save is empty");
+    mgr.import_save(2, &save).expect("import save into player 2");
 }

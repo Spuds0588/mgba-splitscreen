@@ -118,6 +118,32 @@ impl GbaInstance {
         }
         pixels
     }
+
+    /// Export the battery save (SRAM/flash) as raw `.sav` bytes, or None if the game
+    /// has no save data. Compatible with mGBA's own .sav files.
+    pub fn export_save(&self) -> Option<Vec<u8>> {
+        unsafe {
+            let clone_fn = (*self.core).savedataClone?;
+            let mut sram: *mut std::ffi::c_void = std::ptr::null_mut();
+            let size = clone_fn(self.core, &mut sram);
+            if size == 0 || sram.is_null() {
+                return None;
+            }
+            let data = std::slice::from_raw_parts(sram as *const u8, size).to_vec();
+            bindings::free(sram);
+            Some(data)
+        }
+    }
+
+    /// Import a battery save from raw `.sav` bytes.
+    pub fn import_save(&mut self, data: &[u8]) -> bool {
+        unsafe {
+            if let Some(restore_fn) = (*self.core).savedataRestore {
+                return restore_fn(self.core, data.as_ptr() as *const _, data.len(), true);
+            }
+        }
+        false
+    }
 }
 
 impl Drop for GbaInstance {

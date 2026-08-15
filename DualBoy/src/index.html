@@ -4,27 +4,28 @@
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri App</title>
+    <title>DualBoy</title>
     <script type="module" src="/main.js" defer></script>
   </head>
 
   <body>
     <main class="container">
       <h1>DualBoy</h1>
-      
-      <div class="screen-container">
-        <div class="screen-wrapper">
-          <h2>Player 1</h2>
-          <canvas id="screen1" width="240" height="160"></canvas>
-        </div>
-        <div class="screen-wrapper">
-          <h2>Player 2</h2>
-          <canvas id="screen2" width="240" height="160"></canvas>
-        </div>
-      </div>
+
+      <div id="screens" class="screen-container"></div>
 
       <div class="controls">
         <button id="load-rom">Load ROM</button>
+
+        <div class="save-row">
+          <label for="player-select">Player</label>
+          <select id="player-select"></select>
+          <button id="export-save">Export Save</button>
+          <button id="import-save">Import Save</button>
+          <button id="export-set">Export All</button>
+          <button id="import-set">Import All</button>
+        </div>
+
         <p id="status">Waiting for ROM...</p>
       </div>
     </main>
