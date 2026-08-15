@@ -636,12 +636,19 @@ void _eReaderWriteControl0(struct GBACartEReader* ereader, uint8_t value) {
 				ereader->byte = 0;
 			}
 		} else if (ereader->command == EREADER_COMMAND_READ_DATA) {
-			int bit = ereader->serial[ereader->activeRegister & 0x7F] >> (7 - (ereader->state - EREADER_SERIAL_BIT_0));
+			int bit = 0;
+			if ((ereader->activeRegister & 0x7F) < 0x5A) {
+				bit = ereader->serial[ereader->activeRegister & 0x7F] >> (7 - (ereader->state - EREADER_SERIAL_BIT_0));
+			}
 			control = EReaderControl0SetData(control, bit);
 			++ereader->state;
 			if (ereader->state == EREADER_SERIAL_END_BIT) {
 				++ereader->activeRegister;
-				mLOG(GBA_HW, DEBUG, "[e-Reader] Read serial byte: %02x", ereader->serial[ereader->activeRegister & 0x7F]);
+				if ((ereader->activeRegister & 0x7F) < 0x5A) {
+					mLOG(GBA_HW, DEBUG, "[e-Reader] Read serial byte: %02x", ereader->serial[ereader->activeRegister & 0x7F]);
+				} else {
+					mLOG(GBA_HW, GAME_ERROR, "[e-Reader] Read out of bounds serial byte %02x", ereader->activeRegister & 0x7F);
+				}
 			}
 		}
 	} else if (!EReaderControl0IsDirection(control)) {
@@ -893,11 +900,15 @@ struct EReaderScan* EReaderScanLoadImagePNG(const char* filename) {
 		vf->close(vf);
 		return NULL;
 	}
-	unsigned height = png_get_image_height(png, info);
-	unsigned width = png_get_image_width(png, info);
+	uint64_t height = png_get_image_height(png, info);
+	uint64_t width = png_get_image_width(png, info);
 	int type = png_get_color_type(png, info);
 	int depth = png_get_bit_depth(png, info);
 	void* image = NULL;
+
+	if (width * height * 4 >= UINT32_MAX) {
+		return NULL;
+	}
 	switch (type) {
 	case PNG_COLOR_TYPE_RGB:
 		if (depth != 8) {
@@ -998,14 +1009,14 @@ struct EReaderScan* EReaderScanLoadImage8(const void* pixels, unsigned width, un
 }
 
 void EReaderScanDetectParams(struct EReaderScan* scan) {
-	size_t sum = 0;
+	double product = 0;
 	unsigned y;
 	for (y = 0; y < scan->height; ++y) {
 		const uint8_t* row = &scan->buffer[scan->width * y];
 		unsigned x;
 		for (x = 0; x < scan->width; ++x) {
 			uint8_t color = row[x];
-			sum += color;
+			product += log(color + 1);
 			if (color < scan->min) {
 				scan->min = color;
 			}
@@ -1014,8 +1025,8 @@ void EReaderScanDetectParams(struct EReaderScan* scan) {
 			}
 		}
 	}
-	scan->mean = sum / (scan->width * scan->height);
-	scan->anchorThreshold = 2 * (scan->mean - scan->min) / 5 + scan->min;
+	scan->mean = exp(product / (scan->width * scan->height));
+	scan->anchorThreshold = (scan->max - scan->mean) / 2 + scan->min;
 }
 
 void EReaderScanDetectAnchors(struct EReaderScan* scan) {
@@ -1107,6 +1118,10 @@ void EReaderScanFilterAnchors(struct EReaderScan* scan) {
 			areaMean += portion;
 		}
 	}
+	if (!EReaderAnchorListSize(&scan->anchors)) {
+		return;
+	}
+
 	areaMean /= EReaderAnchorListSize(&scan->anchors);
 	for (i = 0; i < EReaderAnchorListSize(&scan->anchors); ++i) {
 		struct EReaderAnchor* anchor = EReaderAnchorListGetPointer(&scan->anchors, i);
@@ -1118,6 +1133,9 @@ void EReaderScanFilterAnchors(struct EReaderScan* scan) {
 			--i;
 		}
 	}
+	if (!EReaderAnchorListSize(&scan->anchors)) {
+		return;
+	}
 
 	qsort(EReaderAnchorListGetPointer(&scan->anchors, 0), EReaderAnchorListSize(&scan->anchors), sizeof(struct EReaderAnchor), _compareAnchors);
 }
@@ -1127,7 +1145,7 @@ void EReaderScanConnectAnchors(struct EReaderScan* scan) {
 	for (i = 0; i < EReaderAnchorListSize(&scan->anchors); ++i) {
 		struct EReaderAnchor* anchor = EReaderAnchorListGetPointer(&scan->anchors, i);
 		float closest = scan->scale * 2.f;
-		float threshold;
+		float threshold = 1.25f * closest;
 		size_t j;
 		for (j = 0; j < EReaderAnchorListSize(&scan->anchors); ++j) {
 			if (i == j) {
@@ -1139,7 +1157,7 @@ void EReaderScanConnectAnchors(struct EReaderScan* scan) {
 			float distance = hypotf(dx, dy);
 			if (distance < closest) {
 				closest = distance;
-				threshold = 1.25 * closest;
+				threshold = 1.25f * closest;
 			}
 		}
 		if (closest >= scan->scale) {
@@ -1496,11 +1514,15 @@ bool EReaderScanCard(struct EReaderScan* scan) {
 	EReaderScanConnectAnchors(scan);
 	EReaderScanCreateBlocks(scan);
 	size_t blocks = EReaderBlockListSize(&scan->blocks);
+	if (!blocks) {
+		return false;
+	}
+
 	size_t i;
 	for (i = 0; i < blocks; ++i) {
 		EReaderScanDetectBlockThreshold(scan, i);
 		unsigned errors = 36 * 36;
-		while (!EReaderScanScanBlock(scan, i, true)) {
+		while (!EReaderScanScanBlock(scan, i, false)) {
 			if (errors < EReaderBlockListGetPointer(&scan->blocks, i)->errors) {
 				return false;
 			}

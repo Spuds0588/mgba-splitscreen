@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "MemoryModel.h"
+#include "moc_MemoryModel.cpp"
 
 #include "GBAApp.h"
 #include "CoreController.h"
@@ -14,6 +15,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QFileInfo>
 #include <QFontMetrics>
 #include <QPainter>
 #include <QScrollBar>
@@ -154,7 +156,12 @@ void MemoryModel::loadTBLFromPath(const QString& path) {
 		return;
 	}
 	m_codec = std::unique_ptr<TextCodec, TextCodecFree>(new TextCodec);
-	TextCodecLoadTBL(m_codec.get(), vf, true);
+	if (!TextCodecLoadTBL(m_codec.get(), vf, true)) {
+		m_codec.reset();
+	} else {
+		QFileInfo pathInfo(path);
+		m_tbl = pathInfo.baseName();
+	}
 	vf->close(vf);
 }
 
@@ -219,7 +226,7 @@ void MemoryModel::save() {
 	}
 	QFile outfile(filename);
 	if (!outfile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-		qWarning() << tr("Failed to open output file: %1").arg(filename);
+		LOG(QT, WARN) << tr("Failed to open output file: %1").arg(filename);
 		return;
 	}
 	QByteArray out(serialize());
@@ -233,7 +240,7 @@ void MemoryModel::load() {
 	}
 	QFile infile(filename);
 	if (!infile.open(QIODevice::ReadOnly)) {
-		qWarning() << tr("Failed to open input file: %1").arg(filename);
+		LOG(QT, WARN) << tr("Failed to open input file: %1").arg(filename);
 		return;
 	}
 	QByteArray bytestring(infile.readAll());
@@ -348,7 +355,7 @@ void MemoryModel::paintEvent(QPaintEvent*) {
 	painter.drawStaticText(QPointF((m_margins.left() - m_regionName.size().width() - 1) / 2.0, 0), m_regionName);
 	painter.drawText(
 	    QRect(QPoint(viewport()->size().width() - m_margins.right(), 0), QSize(m_margins.right(), m_margins.top())),
-	    Qt::AlignHCenter, m_codec ? tr("TBL") : tr("ISO-8859-1"));
+	    Qt::AlignHCenter, m_codec ? m_tbl : tr("ISO-8859-1"));
 	for (int x = 0; x < 16; ++x) {
 		painter.drawText(QRectF(QPointF(m_cellSize.width() * x + m_margins.left(), 0), m_cellSize), Qt::AlignHCenter,
 		                 QString::number(x, 16).toUpper());

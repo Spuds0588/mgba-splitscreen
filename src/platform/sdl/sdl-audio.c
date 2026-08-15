@@ -10,36 +10,67 @@
 
 mLOG_DEFINE_CATEGORY(SDL_AUDIO, "SDL Audio", "platform.sdl.audio");
 
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+static void _mSDLAudioCallback(void* context, SDL_AudioStream* stream, int additionalLen, int totalLen);
+#else
 static void _mSDLAudioCallback(void* context, Uint8* data, int len);
+#endif
 
 bool mSDLInitAudio(struct mSDLAudio* context, struct mCoreThread* threadContext) {
-#if defined(_WIN32) && SDL_VERSION_ATLEAST(2, 0, 8)
+#if defined(_WIN32) && SDL_VERSION_ATLEAST(2, 0, 8) && !SDL_VERSION_ATLEAST(3, 0, 0)
 	if (!getenv("SDL_AUDIODRIVER")) {
 		_putenv_s("SDL_AUDIODRIVER", "directsound");
 	}
 #endif
-	if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
+	if (!SDL_OK(SDL_InitSubSystem(SDL_INIT_AUDIO))) {
 		mLOG(SDL_AUDIO, ERROR, "Could not initialize SDL sound system: %s", SDL_GetError());
 		return false;
 	}
 
+	memset(&context->desiredSpec, 0, sizeof(context->desiredSpec));
+	memset(&context->obtainedSpec, 0, sizeof(context->obtainedSpec));
 	context->desiredSpec.freq = context->sampleRate;
-	context->desiredSpec.format = AUDIO_S16SYS;
 	context->desiredSpec.channels = 2;
-	context->desiredSpec.samples = context->samples;
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+	context->desiredSpec.format = SDL_AUDIO_S16;
+	char hint[21];
+	snprintf(hint, sizeof(hint), "%" PRIz "u", context->samples);
+	SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, hint);
+	context->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &context->desiredSpec, _mSDLAudioCallback, context);
+	if (!context->stream) {
+#else
 	context->desiredSpec.callback = _mSDLAudioCallback;
 	context->desiredSpec.userdata = context;
-
+	context->desiredSpec.samples = context->samples;
+	context->desiredSpec.format = AUDIO_S16SYS;
 #if SDL_VERSION_ATLEAST(2, 0, 0)
 	context->deviceId = SDL_OpenAudioDevice(0, 0, &context->desiredSpec, &context->obtainedSpec, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
 	if (context->deviceId == 0) {
 #else
 	if (SDL_OpenAudio(&context->desiredSpec, &context->obtainedSpec) < 0) {
 #endif
+#endif
 		mLOG(SDL_AUDIO, ERROR, "Could not open SDL sound system");
 		return false;
 	}
-	context->core = 0;
+	context->core = NULL;
+
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+	SDL_GetAudioStreamFormat(context->stream, &context->obtainedSpec, NULL);
+#endif
+	if (context->obtainedSpec.channels == 0) {
+		// This should never happen, but let's make sure
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+		SDL_DestroyAudioStream(context->stream);
+#elif SDL_VERSION_ATLEAST(2, 0, 0)
+		SDL_PauseAudioDevice(context->deviceId, 1);
+		SDL_CloseAudioDevice(context->deviceId);
+#else
+		SDL_PauseAudio(1);
+		SDL_CloseAudio();
+#endif
+		return false;
+	}
 
 	mAudioBufferInit(&context->buffer, context->samples, context->obtainedSpec.channels);
 	mAudioResamplerInit(&context->resampler, mINTERPOLATOR_SINC);
@@ -49,11 +80,7 @@ bool mSDLInitAudio(struct mSDLAudio* context, struct mCoreThread* threadContext)
 		context->core = threadContext->core;
 		context->sync = &threadContext->impl->sync;
 
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-		SDL_PauseAudioDevice(context->deviceId, 0);
-#else
-		SDL_PauseAudio(0);
-#endif
+		mSDLResumeAudio(context);
 	}
 
 	return true;
@@ -61,7 +88,9 @@ bool mSDLInitAudio(struct mSDLAudio* context, struct mCoreThread* threadContext)
 
 void mSDLDeinitAudio(struct mSDLAudio* context) {
 	UNUSED(context);
-#if SDL_VERSION_ATLEAST(2, 0, 0)
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+	SDL_DestroyAudioStream(context->stream);
+#elif SDL_VERSION_ATLEAST(2, 0, 0)
 	SDL_PauseAudioDevice(context->deviceId, 1);
 	SDL_CloseAudioDevice(context->deviceId);
 #else
@@ -74,7 +103,9 @@ void mSDLDeinitAudio(struct mSDLAudio* context) {
 }
 
 void mSDLPauseAudio(struct mSDLAudio* context) {
-#if SDL_VERSION_ATLEAST(2, 0, 0)
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+	SDL_PauseAudioStreamDevice(context->stream);
+#elif SDL_VERSION_ATLEAST(2, 0, 0)
 	SDL_PauseAudioDevice(context->deviceId, 1);
 #else
 	UNUSED(context);
@@ -83,7 +114,9 @@ void mSDLPauseAudio(struct mSDLAudio* context) {
 }
 
 void mSDLResumeAudio(struct mSDLAudio* context) {
-#if SDL_VERSION_ATLEAST(2, 0, 0)
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+	SDL_ResumeAudioStreamDevice(context->stream);
+#elif SDL_VERSION_ATLEAST(2, 0, 0)
 	SDL_PauseAudioDevice(context->deviceId, 0);
 #else
 	UNUSED(context);
@@ -91,18 +124,23 @@ void mSDLResumeAudio(struct mSDLAudio* context) {
 #endif
 }
 
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+static void _mSDLAudioCallback(void* context, SDL_AudioStream* stream, int additionalLen, int len) {
+	UNUSED(additionalLen);
+#else
 static void _mSDLAudioCallback(void* context, Uint8* data, int len) {
+#endif
 	struct mSDLAudio* audioContext = context;
 	if (!context || !audioContext->core) {
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+		return;
+#else
 		memset(data, 0, len);
 		return;
+#endif
 	}
-	struct mAudioBuffer* buffer = NULL;
-	unsigned sampleRate = 32768;
-	if (audioContext->core) {
-		buffer = audioContext->core->getAudioBuffer(audioContext->core);
-		sampleRate = audioContext->core->audioSampleRate(audioContext->core);
-	}
+	struct mAudioBuffer* buffer = audioContext->core->getAudioBuffer(audioContext->core);
+	unsigned sampleRate = audioContext->core->audioSampleRate(audioContext->core);
 	double fauxClock = 1;
 	if (audioContext->sync) {
 		if (audioContext->sync->fpsTarget > 0 && audioContext->core) {
@@ -114,13 +152,29 @@ static void _mSDLAudioCallback(void* context, Uint8* data, int len) {
 	}
 	mAudioResamplerSetSource(&audioContext->resampler, buffer, sampleRate / fauxClock, true);
 	mAudioResamplerProcess(&audioContext->resampler);
-	len /= 2 * audioContext->obtainedSpec.channels;
-	int available = mAudioBufferRead(&audioContext->buffer, (int16_t*) data, len);
-
 	if (audioContext->sync) {
 		mCoreSyncConsumeAudio(audioContext->sync);
 	}
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+	int16_t data[2048];
+	while (len > 0) {
+		int thisRead = sizeof(data);
+		if (len < thisRead) {
+			thisRead = len;
+		}
+		int available = mAudioBufferRead(&audioContext->buffer, data, thisRead / 4) * 4;
+		if (!available) {
+			break;
+		}
+		SDL_PutAudioStreamData(stream, data, available);
+		len -= available;
+	}
+#else
+	len /= 2 * audioContext->obtainedSpec.channels;
+	int available = mAudioBufferRead(&audioContext->buffer, (int16_t*) data, len);
+
 	if (available < len) {
 		memset(((short*) data) + audioContext->obtainedSpec.channels * available, 0, (len - available) * audioContext->obtainedSpec.channels * sizeof(short));
 	}
+#endif
 }

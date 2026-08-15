@@ -125,6 +125,7 @@ static void GBSetActiveRegion(struct SM83Core* cpu, uint16_t address) {
 		break;
 	default:
 		cpu->memory.cpuLoad8 = GBLoad8;
+		gb->memory.cartBus = 0xFF;
 		break;
 	}
 	if (gb->memory.dmaRemaining) {
@@ -184,7 +185,18 @@ void GBMemoryReset(struct GB* gb) {
 		uint32_t* base = (uint32_t*) gb->memory.wram;
 		size_t i;
 		uint32_t pattern = 0;
+		// Banks 0, 1, 3, 6, and 7 are cleared with this pattern
 		for (i = 0; i < GB_SIZE_WORKING_RAM / 4; i += 4) {
+			if ((i & 0x1FFF) == 0x800) {
+				// Skip bank 2
+				i += 0x3FC;
+				continue;
+			}
+			if ((i & 0x1FFF) == 0x1000) {
+				// Skip banks 5 and 5
+				i += 0x7FC;
+				continue;
+			}
 			if ((i & 0x1FF) == 0) {
 				pattern = ~pattern;
 			}
@@ -829,6 +841,10 @@ void GBMemorySerialize(const struct GB* gb, struct GBSerializedState* state) {
 		state->memory.mmm01.locked = memory->mbcState.mmm01.locked;
 		state->memory.mmm01.bank0 = memory->mbcState.mmm01.currentBank0;
 		break;
+	case GB_M161:
+		state->memory.m161.locked = memory->mbcState.m161.locked;
+		state->memory.m161.bank = memory->mbcState.m161.bank;
+		break;
 	case GB_UNL_NT_OLD_1:
 	case GB_UNL_NT_OLD_2:
 		state->memory.ntOld.flags = GBSerializedNTOldFlagsSetSwapped(0, memory->mbcState.ntOld.swapped);
@@ -994,6 +1010,12 @@ void GBMemoryDeserialize(struct GB* gb, const struct GBSerializedState* state) {
 		} else {
 			GBMBCSwitchBank0(gb, gb->memory.romSize / GB_SIZE_CART_BANK0 - 2);
 		}
+		break;
+	case GB_M161:
+		memory->mbcState.m161.locked = state->memory.m161.locked;
+		memory->mbcState.m161.bank = state->memory.m161.bank & 0x7;
+		GBMBCSwitchBank0(gb, memory->mbcState.m161.bank * 2);
+		GBMBCSwitchBank(gb, memory->mbcState.m161.bank * 2 + 1);
 		break;
 	case GB_UNL_NT_OLD_1:
 	case GB_UNL_NT_OLD_2:

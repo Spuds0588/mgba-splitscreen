@@ -255,7 +255,25 @@ static void _continue(struct GDBStub* stub, const char* message) {
 }
 
 static void _step(struct GDBStub* stub, const char* message) {
+	const struct ARMCore* cpu = stub->d.p->core->cpu;
+	const int32_t pc = cpu->gprs[ARM_PC];
+
 	stub->d.p->core->step(stub->d.p->core);
+
+	if (pc >= GBA_SIZE_BIOS && cpu->gprs[ARM_PC] < GBA_SIZE_BIOS) {
+		// GDB cannot cope with jumps into BIOS
+		// skip over them by placing a temporary breakpoint at PC (instruction after the jump)
+		// and then continue without sending a GDB SIGTRAP
+		const struct mBreakpoint breakpoint = {
+			.address = pc,
+			.type = BREAKPOINT_HARDWARE,
+			.isTemporary = true
+		};
+		stub->d.p->platform->setBreakpoint(stub->d.p->platform, &stub->d, &breakpoint);
+		_continue(stub, message);
+		return;
+	}
+
 	snprintf(stub->outgoing, GDB_STUB_MAX_LINE - 4, "S%02x", SIGTRAP);
 	_sendMessage(stub);
 	// TODO: parse message
@@ -477,9 +495,14 @@ static void _processQXferCommand(struct GDBStub* stub, const char* params, const
 	unsigned length = 0;
 
 	unsigned index = 0;
-	for (index = 0; params[index] != ','; ++index) {
+	for (index = 0; params[index] != ',' && params[index]; ++index) {
 		offset <<= 4;
 		offset |= _hex2int(&params[index], 1);
+	}
+
+	if (!params[index]) {
+		_error(stub, GDB_BAD_ARGUMENTS);
+		return;
 	}
 
 	++index;
@@ -495,8 +518,12 @@ static void _processQXferCommand(struct GDBStub* stub, const char* params, const
 		length = GDB_STUB_MAX_LINE - 4;
 	}
 
-	if (strlen(data) < length + offset) {
-		length = strlen(data) - offset + 1;
+	size_t dataLength = strlen(data);
+	if (dataLength < offset) {
+		_error(stub, GDB_BAD_ARGUMENTS);
+		return;
+	} if (dataLength < length + offset) {
+		length = dataLength - offset + 1;
 		stub->outgoing[0] = 'l';
 	} else {
 		stub->outgoing[0] = 'm';
@@ -650,9 +677,8 @@ static void _clearBreakpoint(struct GDBStub* stub, const char* message) {
 		for (index = 0; index < mWatchpointListSize(&watchpoints); ++index) {
 			struct mWatchpoint* watchpoint = mWatchpointListGetPointer(&watchpoints, index);
 			if (address >= watchpoint->minAddress && address < watchpoint->maxAddress) {
-				continue;
+				stub->d.p->platform->clearBreakpoint(stub->d.p->platform, watchpoint->id);
 			}
-			stub->d.p->platform->clearBreakpoint(stub->d.p->platform, watchpoint->id);
 		}
 		mWatchpointListDeinit(&watchpoints);
 		break;
@@ -690,7 +716,7 @@ size_t _parseGDBMessage(struct GDBStub* stub, const char* message) {
 
 	int i;
 	char messageType = message[0];
-	for (i = 0; message[i] != '#'; ++i, ++parsed) {
+	for (i = 0; message[i] != '#' && message[i]; ++i, ++parsed) {
 		checksum += message[i];
 	}
 	if (!message[i]) {
@@ -825,6 +851,8 @@ cleanup:
 }
 
 void GDBStubHangup(struct GDBStub* stub) {
+	strncpy(stub->outgoing, "W00", GDB_STUB_MAX_LINE - 4);
+	_sendMessage(stub);
 	if (!SOCKET_FAILED(stub->connection)) {
 		SocketClose(stub->connection);
 		stub->connection = INVALID_SOCKET;

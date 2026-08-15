@@ -417,12 +417,12 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 	core->currentVideoSize(core, &width, &height);
 	info->geometry.base_width = width;
 	info->geometry.base_height = height;
+	info->geometry.aspect_ratio = width / (double) height;
 
 	core->baseVideoSize(core, &width, &height);
 	info->geometry.max_width = width;
 	info->geometry.max_height = height;
 
-	info->geometry.aspect_ratio = width / (double) height;
 	info->timing.fps = core->frequency(core) / (float) core->frameCycles(core);
 	info->timing.sample_rate = core->audioSampleRate(core);
 }
@@ -487,6 +487,10 @@ void retro_init(void) {
 	lux.readLuminance = _readLux;
 	lux.sample = _updateLux;
 	_updateLux(&lux);
+	if (luxSensorUsed && !luxSensorEnabled) {
+		// No illuminance sensor was found during startup, but it might finish setup before the first frame
+		sensorsInitDone = false;
+	}
 
 	struct retro_log_callback log;
 	if (environCallback(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &log)) {
@@ -573,7 +577,7 @@ void retro_run(void) {
 	}
 
 	keys = 0;
-	int i;
+	unsigned i;
 	if (useBitmasks) {
 		int16_t joypadMask = inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
 		for (i = 0; i < sizeof(keymap) / sizeof(*keymap); ++i) {

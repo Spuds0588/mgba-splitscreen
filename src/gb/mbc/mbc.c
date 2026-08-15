@@ -178,18 +178,11 @@ void _GBMBC3(struct GB* gb, uint16_t address, uint8_t value) {
 	int bank = value;
 	switch (address >> 13) {
 	case 0x0:
-		switch (value & 0xF) {
-		case 0:
-			memory->sramAccess = false;
-			break;
-		case 0xA:
+		if ((value & 0xF) == 0xA) {
 			memory->sramAccess = true;
 			GBMBCSwitchSramBank(gb, memory->sramCurrentBank);
-			break;
-		default:
-			// TODO
-			mLOG(GB_MBC, STUB, "MBC3 unknown value %02X", value);
-			break;
+		} else {
+			memory->sramAccess = false;
 		}
 		break;
 	case 0x1:
@@ -564,4 +557,20 @@ void _GBMBC7Write(struct GBMemory* memory, uint16_t address, uint8_t value) {
 		value = GBMBC7FieldSetDO(value, GBMBC7FieldGetDO(old));
 	}
 	mbc7->eeprom = value;
+}
+
+void _GBM161(struct GB* gb, uint16_t address, uint8_t value) {
+	UNUSED(address);
+
+	struct GBM161State* m161 = &gb->memory.mbcState.m161;
+	if (m161->locked) {
+		return;
+	}
+
+	int bank = value & 0x7;
+	m161->bank = bank;
+	m161->locked = true;
+
+	GBMBCSwitchBank0(gb, bank * 2);
+	GBMBCSwitchBank(gb, bank * 2 + 1);
 }

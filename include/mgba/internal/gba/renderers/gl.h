@@ -44,7 +44,7 @@ struct GBAVideoGLBackground {
 	GLuint tex;
 
 	unsigned index;
-	int enabled;
+	int enabledAtY;
 	unsigned priority;
 	uint32_t charBase;
 	uint32_t oldCharBase;
@@ -120,6 +120,7 @@ enum {
 	GBA_GL_WIN_WIN1,
 	GBA_GL_WIN_CIRCLE0,
 	GBA_GL_WIN_CIRCLE1,
+	GBA_GL_WIN_DISABLE_INTERP,
 
 	GBA_GL_FINALIZE_SCALE = 2,
 	GBA_GL_FINALIZE_LAYERS,
@@ -203,6 +204,7 @@ struct GBAVideoGLRenderer {
 
 	int firstAffine;
 	int firstY;
+	int lastY;
 
 	int scale;
 };

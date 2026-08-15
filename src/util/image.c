@@ -97,6 +97,11 @@ struct mImage* mImageCreateWithStride(unsigned width, unsigned height, unsigned 
 	if (width < 1 || height < 1) {
 		return NULL;
 	}
+
+	if ((uint64_t) stride * (uint64_t) height * 4 >= UINT32_MAX) {
+		return NULL;
+	}
+
 	struct mImage* image = calloc(1, sizeof(struct mImage));
 	if (!image) {
 		return NULL;
@@ -106,7 +111,7 @@ struct mImage* mImageCreateWithStride(unsigned width, unsigned height, unsigned 
 	image->stride = stride;
 	image->format = format;
 	image->depth = mColorFormatBytes(format);
-	image->data = calloc(width * height, image->depth);
+	image->data = calloc(stride * height, image->depth);
 	if (!image->data) {
 		free(image);
 		return NULL;
@@ -158,8 +163,8 @@ static struct mImage* mImageLoadPNG(struct VFile* vf) {
 		PNGReadClose(png, info, end);
 		return NULL;
 	}
-	unsigned width = png_get_image_width(png, info);
-	unsigned height = png_get_image_height(png, info);
+	uint64_t width = png_get_image_width(png, info);
+	uint64_t height = png_get_image_height(png, info);
 
 	struct mImage* image = calloc(1, sizeof(*image));
 	if (!image) {
@@ -171,6 +176,10 @@ static struct mImage* mImageLoadPNG(struct VFile* vf) {
 	image->width = width;
 	image->height = height;
 	image->stride = width;
+
+	if (width * height * 4 >= UINT32_MAX) {
+		return NULL;
+	}
 
 	switch (png_get_channels(png, info)) {
 	case 3:
@@ -440,7 +449,7 @@ void mImageSetPaletteEntry(struct mImage* image, unsigned index, uint32_t color)
 	if (image->format != mCOLOR_PAL8) {
 		return;
 	}
-	if (index > 256) {
+	if (index >= 256) {
 		return;
 	}
 	image->palette[index] = color;
@@ -885,7 +894,12 @@ void mPainterDrawMask(struct mPainter* painter, const struct mImage* mask, int x
 		for (x = 0; x < srcRect.width; ++x, dstPixel += painter->backing->depth, maskPixel += mask->depth) {
 			uint32_t color;
 			GET_PIXEL(color, maskPixel, mask->depth);
-			color = mColorConvert(color, mask->format, mCOLOR_ARGB8);
+			if (mask->format != mCOLOR_L8) {
+				color = mColorConvert(color, mask->format, mCOLOR_ARGB8);
+			} else {
+				color <<= 24;
+				color |= 0xFFFFFF;
+			}
 			color = _mColorMultiply(painter->fillColor, color);
 			if (painter->blend || painter->fillColor < 0xFF000000) {
 				uint32_t current;

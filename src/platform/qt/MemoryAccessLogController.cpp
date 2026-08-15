@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "MemoryAccessLogController.h"
+#include "moc_MemoryAccessLogController.cpp"
 
 #include "GBAApp.h"
 #include "LogController.h"
@@ -45,8 +46,8 @@ bool MemoryAccessLogController::canExport() const {
 	return m_regionMapping.contains("cart0");
 }
 
-MemoryAccessLogController::Flags MemoryAccessLogController::flagsForAddress(uint32_t addresss, int segment) {
-	uint32_t offset = cacheRegion(addresss, segment);
+MemoryAccessLogController::Flags MemoryAccessLogController::flagsForAddress(uint32_t address, int segment) {
+	uint32_t offset = cacheRegion(address, segment);
 	if (!m_cachedRegion) {
 		return { 0, 0 };
 	}
@@ -114,7 +115,7 @@ void MemoryAccessLogController::load(bool loadExisting) {
 	}
 	VFile* vf = VFileDevice::open(m_path, flags);
 	if (!vf) {
-		qCritical() << tr("Failed to open memory log file");
+		LOG(QT, ERROR) << tr("Failed to open memory log file");
 		return;
 	}
 
@@ -123,7 +124,7 @@ void MemoryAccessLogController::load(bool loadExisting) {
 	m_controller->attachDebuggerModule(&m_logger.d);
 	if (!mDebuggerAccessLoggerOpen(&m_logger, vf, flags)) {
 		mDebuggerAccessLoggerDeinit(&m_logger);
-		qCritical() << tr("Failed to open memory log file");
+		LOG(QT, ERROR) << tr("Failed to open memory log file");
 		return;
 	}
 	emit loaded(true);

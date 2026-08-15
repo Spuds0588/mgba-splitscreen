@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "IOViewer.h"
+#include "moc_IOViewer.cpp"
 
 #include "CoreController.h"
 #include "GBAApp.h"
@@ -1565,8 +1566,8 @@ IOViewer::IOViewer(std::shared_ptr<CoreController> controller, QWidget* parent)
 	, m_controller(controller)
 {
 	m_ui.setupUi(this);
-	const char* const* regs;
-	unsigned maxRegs;
+	const char* const* regs = nullptr;
+	unsigned maxRegs = 0;
 	switch (controller->platform()) {
 #ifdef M_CORE_GB
 	case mPLATFORM_GB:

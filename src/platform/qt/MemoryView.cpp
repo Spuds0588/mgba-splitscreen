@@ -3,8 +3,8 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
 #include "MemoryView.h"
+#include "moc_MemoryView.cpp"
 
 #include "CoreController.h"
 #include "MemoryAccessLogView.h"
@@ -248,6 +248,9 @@ void MemoryView::setSegment(int segment) {
 void MemoryView::update() {
 	m_ui.hexfield->viewport()->update();
 	updateStatus();
+#ifdef ENABLE_DEBUGGERS
+	m_malModel.update();
+#endif
 }
 
 void MemoryView::jumpToAddress(uint32_t address) {
