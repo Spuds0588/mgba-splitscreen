@@ -54,10 +54,11 @@ Done:
 - [x] Web demo: standalone server (`cargo run --bin dualboy-web -- --players N`)
       serving the same frontend in a browser over HTTP + WebSocket.
 - [x] Headless smoke tests against `Test Roms/` (load + render + save round-trip).
+- [x] RGB565 frame streaming (2 bytes/pixel) to halve bandwidth for low-end devices.
 
 In progress / next:
 - [ ] Audio routing (both instances' audio to the output).
-- [ ] Performance optimization for low-end devices (frame compression, etc.).
+- [ ] Further perf: delta/region compression, buffer reuse (if profiling shows need).
 - [ ] Gamepad support for players 3–4 in the browser (Gamepad API).
 - [ ] Reduce mGBA debug log spam in the console.
 

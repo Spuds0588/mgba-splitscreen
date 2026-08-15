@@ -123,6 +123,21 @@ impl GbaInstance {
         pixels
     }
 
+    /// Pack the frame as RGB565 (2 bytes/pixel) for efficient streaming.
+    /// Halves bandwidth and allocation vs RGBA; the frontend decodes it back.
+    pub fn get_pixels_rgb565(&self) -> Vec<u8> {
+        let mut pixels = Vec::with_capacity(240 * 160 * 2);
+        for &pixel in &self.video_buffer {
+            let r = (pixel & 0xFF) as u16;
+            let g = ((pixel >> 8) & 0xFF) as u16;
+            let b = ((pixel >> 16) & 0xFF) as u16;
+            let rgb565 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+            pixels.push((rgb565 & 0xFF) as u8);
+            pixels.push((rgb565 >> 8) as u8);
+        }
+        pixels
+    }
+
     /// Export the battery save (SRAM/flash) as raw `.sav` bytes, or None if the game
     /// has no save data. Compatible with mGBA's own .sav files.
     pub fn export_save(&self) -> Option<Vec<u8>> {

@@ -2,7 +2,7 @@ const IS_TAURI = typeof window.__TAURI__ !== 'undefined';
 
 const GBA_WIDTH = 240;
 const GBA_HEIGHT = 160;
-const FRAME_SIZE = GBA_WIDTH * GBA_HEIGHT * 4;
+const FRAME_SIZE = GBA_WIDTH * GBA_HEIGHT * 2; // RGB565: 2 bytes/pixel
 
 const GBA_BUTTONS = {
   A: 1 << 0,
@@ -90,11 +90,22 @@ function initScreens(count) {
 
 function onFrame(data) {
   const bytes = new Uint8ClampedArray(data);
+  const pixelCount = GBA_WIDTH * GBA_HEIGHT;
   for (let i = 0; i < playerCount; i++) {
     if (data.byteLength < FRAME_SIZE * (i + 1)) break;
     const frame = bytes.subarray(i * FRAME_SIZE, (i + 1) * FRAME_SIZE);
-    const img = new ImageData(frame, GBA_WIDTH, GBA_HEIGHT);
-    screens[i].ctx.putImageData(img, 0, 0);
+
+    // Decode RGB565 -> RGBA for putImageData.
+    const rgba = new Uint8ClampedArray(pixelCount * 4);
+    for (let p = 0; p < pixelCount; p++) {
+      const c = (frame[p * 2 + 1] << 8) | frame[p * 2];
+      const o = p * 4;
+      rgba[o] = ((c >> 11) & 0x1f) << 3;
+      rgba[o + 1] = ((c >> 5) & 0x3f) << 2;
+      rgba[o + 2] = (c & 0x1f) << 3;
+      rgba[o + 3] = 255;
+    }
+    screens[i].ctx.putImageData(new ImageData(rgba, GBA_WIDTH, GBA_HEIGHT), 0, 0);
   }
 }
 

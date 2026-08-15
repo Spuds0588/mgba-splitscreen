@@ -239,9 +239,10 @@ impl EmulationManager {
                             gba.run_frame();
                         }
 
-                        let mut combined = Vec::with_capacity(240 * 160 * 4 * guards.len());
+                        // RGB565: 2 bytes/pixel keeps the stream lean for low-end devices.
+                        let mut combined = Vec::with_capacity(240 * 160 * 2 * guards.len());
                         for gba in guards.iter() {
-                            combined.extend_from_slice(&gba.get_pixels_raw());
+                            combined.extend_from_slice(&gba.get_pixels_rgb565());
                         }
                         let _ = tx.send(combined);
                     }
