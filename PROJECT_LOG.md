@@ -45,27 +45,33 @@ This repository is a fork of **mGBA** (`Spuds0588/mgba-splitscreen.git`, which t
 
 Done:
 - [x] Tauri project + Rust bindings + `libmgba` static build.
-- [x] Two synchronized instances with lockstep link cable (virtual link).
-- [x] WebSocket frame streaming to a dual-canvas UI.
+- [x] 2–4 synchronized instances with lockstep link cable (virtual link).
+- [x] WebSocket frame streaming to a multi-canvas UI.
 - [x] P1/P2 keyboard input mapping (laptop-optimized).
-- [x] ROM loading crash fixed (init order) + lockstep bindings restored.
-- [x] Build compiles (`cargo build` in `DualBoy/src-tauri`).
+- [x] Fixed several crashes: ROM load init order, bindgen/layout mismatch,
+      dangling coordinator pointer, NULL `mLockstepUser`, teardown order.
+- [x] Battery-save import/export (per instance + combined save set).
+- [x] Web demo: standalone server (`cargo run --bin dualboy-web -- --players N`)
+      serving the same frontend in a browser over HTTP + WebSocket.
+- [x] Headless smoke tests against `Test Roms/` (load + render + save round-trip).
 
 In progress / next:
 - [ ] Audio routing (both instances' audio to the output).
-- [ ] Save import/export (per instance + as a set).
-- [ ] Web version (browser demo, 2–4 players, one ROM) — lost, needs rebuild.
-- [ ] Performance optimization for low-end devices.
-- [ ] Runtime smoke test against `Test Roms/` (headless) to verify end-to-end emulation.
+- [ ] Performance optimization for low-end devices (frame compression, etc.).
+- [ ] Gamepad support for players 3–4 in the browser (Gamepad API).
+- [ ] Reduce mGBA debug log spam in the console.
 
 ## Build & run
 
 ```bash
 cd DualBoy
 npm install
-npm run tauri dev      # desktop dev (needs a display)
-# backend-only compile:
-cd src-tauri && cargo build
+npm run tauri dev            # desktop dev (needs a display)
+
+cd src-tauri
+cargo build                  # build everything
+cargo test --test smoke      # headless emulation + save round-trip
+cargo run --bin dualboy-web -- --players 4   # web demo on http://127.0.0.1:8080
 ```
 
 Build notes: first `libmgba` build takes minutes and several GB RAM (needs cmake + clang).

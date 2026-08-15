@@ -38,66 +38,16 @@ async fn import_save(player: u8, path: String) -> Result<(), String> {
     EMULATOR.import_save(player, &data)
 }
 
-/// File format for a "save set": all instances' battery saves in one file.
-/// Layout: b"DUALSAVE" | version:u32(1) | count:u32 | (size:u32, bytes)*
-const SAVE_SET_MAGIC: &[u8; 8] = b"DUALSAVE";
-
-fn serialize_save_set(saves: &[Vec<u8>]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(16 + saves.iter().map(|s| s.len() + 4).sum::<usize>());
-    out.extend_from_slice(SAVE_SET_MAGIC);
-    out.extend_from_slice(&1u32.to_le_bytes());
-    out.extend_from_slice(&(saves.len() as u32).to_le_bytes());
-    for s in saves {
-        out.extend_from_slice(&(s.len() as u32).to_le_bytes());
-        out.extend_from_slice(s);
-    }
-    out
-}
-
-fn deserialize_save_set(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
-    if data.len() < 16 || &data[0..8] != SAVE_SET_MAGIC {
-        return Err("Not a DualBoy save set".into());
-    }
-    let version = u32::from_le_bytes(data[8..12].try_into().unwrap());
-    if version != 1 {
-        return Err(format!("Unsupported save set version {version}"));
-    }
-    let count = u32::from_le_bytes(data[12..16].try_into().unwrap()) as usize;
-    let mut saves = Vec::with_capacity(count);
-    let mut off = 16;
-    for _ in 0..count {
-        if off + 4 > data.len() {
-            return Err("Truncated save set".into());
-        }
-        let size = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
-        off += 4;
-        if off + size > data.len() {
-            return Err("Truncated save set".into());
-        }
-        saves.push(data[off..off + size].to_vec());
-        off += size;
-    }
-    Ok(saves)
-}
-
 #[tauri::command]
 async fn export_save_set(path: String) -> Result<(), String> {
-    let count = EMULATOR.player_count();
-    let mut saves = Vec::with_capacity(count);
-    for p in 1..=count {
-        saves.push(EMULATOR.export_save(p as u8)?);
-    }
-    std::fs::write(&path, serialize_save_set(&saves)).map_err(|e| e.to_string())
+    let data = EMULATOR.export_save_set()?;
+    std::fs::write(&path, data).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn import_save_set(path: String) -> Result<(), String> {
     let data = std::fs::read(&path).map_err(|e| e.to_string())?;
-    let saves = deserialize_save_set(&data)?;
-    for (p, save) in saves.iter().enumerate() {
-        EMULATOR.import_save((p + 1) as u8, save)?;
-    }
-    Ok(())
+    EMULATOR.import_save_set(&data)
 }
 
 async fn start_websocket_server() {

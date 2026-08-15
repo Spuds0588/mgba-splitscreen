@@ -98,6 +98,10 @@ impl GbaInstance {
     }
 
     pub fn set_keys(&mut self, keys: u32) {
+        // setKeys dereferences core->board, which is NULL until a ROM is loaded.
+        if !self.is_running {
+            return;
+        }
         unsafe {
             if let Some(set_keys_fn) = (*self.core).setKeys {
                 set_keys_fn(self.core, keys);
@@ -122,6 +126,9 @@ impl GbaInstance {
     /// Export the battery save (SRAM/flash) as raw `.sav` bytes, or None if the game
     /// has no save data. Compatible with mGBA's own .sav files.
     pub fn export_save(&self) -> Option<Vec<u8>> {
+        if !self.is_running {
+            return None;
+        }
         unsafe {
             let clone_fn = (*self.core).savedataClone?;
             let mut sram: *mut std::ffi::c_void = std::ptr::null_mut();
@@ -137,6 +144,9 @@ impl GbaInstance {
 
     /// Import a battery save from raw `.sav` bytes.
     pub fn import_save(&mut self, data: &[u8]) -> bool {
+        if !self.is_running {
+            return false;
+        }
         unsafe {
             if let Some(restore_fn) = (*self.core).savedataRestore {
                 return restore_fn(self.core, data.as_ptr() as *const _, data.len(), true);

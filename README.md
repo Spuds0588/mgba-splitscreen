@@ -76,6 +76,19 @@ npm run tauri build      # production build
 The first build compiles all of `libmgba` from source, which takes a few minutes and
 several GB of RAM; subsequent builds are incremental.
 
+## Web demo (browser, 2–4 players)
+
+A standalone server streams frames to any browser — no install needed:
+
+```bash
+cd DualBoy/src-tauri
+cargo run --bin dualboy-web -- --players 4   # 2, 3, or 4 players
+# then open http://127.0.0.1:8080 in a browser
+```
+
+Load a ROM via the file picker; screens and keyboard controls work the same as the
+desktop app, and saves can be exported/imported per player or as a set.
+
 ## Project status
 
 See [`PROJECT_LOG.md`](PROJECT_LOG.md) for the current state of the project, what's
