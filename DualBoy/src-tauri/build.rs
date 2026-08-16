@@ -35,6 +35,9 @@ fn main() {
     let mgba_path = "../..";
 
     let dst = cmake::Config::new(mgba_path)
+        // Optimized emulation core (Release also defines NDEBUG, which trims debug-only
+        // code paths). The Rust side is optimized separately via `cargo build --release`.
+        .profile("Release")
         .define("LIBMGBA_ONLY", "ON")
         .define("BUILD_STATIC", "ON")
         .define("BUILD_SHARED", "OFF")

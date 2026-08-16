@@ -5,6 +5,28 @@ use tokio::sync::broadcast;
 use crate::gba::GbaInstance;
 use crate::bindings;
 
+/// mGBA installs no default logger by itself; without one, `mLog()` prints every level
+/// (including DEBUG BIOS SWI traces and lockstep chatter) to stdout on every call, which
+/// floods the console and drags performance via synchronous I/O. Install the standard
+/// logger once, restricted to WARN/ERROR/FATAL.
+fn ensure_logger() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| unsafe {
+        let logger: *mut bindings::mStandardLogger =
+            Box::into_raw(Box::new(std::mem::zeroed::<bindings::mStandardLogger>()));
+        bindings::mStandardLoggerInit(logger);
+        (*logger).logToStdout = true;
+        let filter = (*logger).d.filter;
+        if !filter.is_null() {
+            (*filter).defaultLevels = (bindings::mLogLevel_mLOG_WARN
+                | bindings::mLogLevel_mLOG_ERROR
+                | bindings::mLogLevel_mLOG_FATAL) as i32;
+        }
+        bindings::mLogSetDefaultLogger(&mut (*logger).d as *mut bindings::mLogger);
+    });
+}
+
 /// mGBA's lockstep calls `user->sleep`/`wake` to block/resume a player's host thread
 /// while it waits for the others to catch up (e.g. mid-transfer). Our emulation runs
 /// every instance sequentially on one thread, so the callbacks just flip a per-player
@@ -106,6 +128,7 @@ impl EmulationManager {
     /// to `MAX_GBAS` (4) players; the count is clamped to [2, 4].
     pub fn new(count: usize) -> Self {
         let count = count.clamp(2, 4);
+        ensure_logger();
         println!("Creating EmulationManager with {count} instances...");
         let (tx, _) = broadcast::channel(10);
 
@@ -175,7 +198,6 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
     }
 
     pub fn set_keys(&self, player: u8, keys: u32) -> Result<(), String> {
-        println!("[input] player={player} keys=0x{keys:08X}");
         let idx = (player as usize)
             .checked_sub(1)
             .filter(|&i| i < self.instances.len())
@@ -248,14 +270,20 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
         self.sleeping_flags.lock().unwrap()[i]
     }
 
-    pub fn start(&self) {
+    /// Start the emulation loop. Emulation always runs at ~60 FPS so the games keep
+    /// correct speed and the lockstep link stays in sync; video frames are only built
+    /// and broadcast `video_fps` times per second, decoupled from emulation so lowering
+    /// the video rate never slows the game or breaks the link.
+    pub fn start(&self, video_fps: u32) {
         let instances = self.instances.clone();
         let sleeping = self.sleeping_flags.clone();
         let tx = self.frame_sender.clone();
 
         thread::spawn(move || {
             let mut last_frame = Instant::now();
-            let frame_duration = Duration::from_micros(16666); // ~60 FPS
+            let frame_duration = Duration::from_micros(16666); // ~60 FPS emulation
+            let video_every = (60 / video_fps.clamp(1, 60)).max(1);
+            let mut tick = 0u32;
 
             loop {
                 {
@@ -272,12 +300,15 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
                             guards[i].run_frame();
                         }
 
-                        // RGB565: 2 bytes/pixel keeps the stream lean for low-end devices.
-                        let mut combined = Vec::with_capacity(240 * 160 * 2 * guards.len());
-                        for gba in guards.iter() {
-                            combined.extend_from_slice(&gba.get_pixels_rgb565());
+                        tick = tick.wrapping_add(1);
+                        if tick % video_every == 0 {
+                            // RGB565: 2 bytes/pixel keeps the stream lean for low-end devices.
+                            let mut combined = Vec::with_capacity(240 * 160 * 2 * guards.len());
+                            for gba in guards.iter() {
+                                combined.extend_from_slice(&gba.get_pixels_rgb565());
+                            }
+                            let _ = tx.send(combined);
                         }
-                        let _ = tx.send(combined);
                     }
                 }
 

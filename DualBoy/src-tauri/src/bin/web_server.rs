@@ -42,12 +42,24 @@ fn parse_players() -> usize {
     players.clamp(2, 4)
 }
 
+fn parse_fps() -> u32 {
+    let mut fps = 30;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--fps" {
+            fps = args.next().and_then(|v| v.parse().ok()).unwrap_or(30);
+        }
+    }
+    fps.clamp(1, 60)
+}
+
 #[tokio::main]
 async fn main() {
     let players = parse_players();
-    println!("Starting DualBoy web server with {players} players...");
+    let fps = parse_fps();
+    println!("Starting DualBoy web server with {players} players at {fps} video FPS...");
     let manager = Arc::new(EmulationManager::new(players));
-    manager.start();
+    manager.start(fps);
 
     let state = AppState { manager };
 

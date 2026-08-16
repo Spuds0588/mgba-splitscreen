@@ -55,6 +55,14 @@ This repository is a fork of **mGBA** (`Spuds0588/mgba-splitscreen.git`, which t
 - **Link attach before boot**: attach the lockstep SIO driver BEFORE `reset`, so the game
   sees the link cable present at boot (mGBA's Qt multiplayer does the same). Attaching
   after boot made the link appear mid-boot.
+- **mGBA log spam**: mGBA installs NO default logger, so `mLog()` falls back to printing
+  every level (incl. DEBUG BIOS SWI traces + lockstep chatter) to stdout — one short
+  browser session produced 179k lines / 11 MB, a large synchronous-I/O drag. Fix:
+  `ensure_logger()` in `emulation.rs` installs the standard logger restricted to
+  WARN|ERROR|FATAL (one-time, via `Once`).
+- **Video vs emulation rate**: emulation must stay at ~60 FPS for correct game speed and
+  lockstep sync; video is independent and can be throttled without breaking the link.
+  `EmulationManager::start(fps)` decouples them (web server: `--fps`, default 30).
 
 ## Status
 
@@ -91,12 +99,20 @@ Done:
       "MULTI did not receive data" desyncs (the root cause of the multi-pak
       "power off/on" screen). `cargo test` green (128 unit + 2 smoke); full two-player
       runs show zero link errors.
+- [x] **Performance pass** (2026-08-16): installed a WARN-only default logger (killed the
+      ~180k-line BIOS/SIO debug flood), built libmgba in Release (`-O3 -DNDEBUG`), and
+      decoupled video from emulation (emulation 60 FPS, video 30 FPS default via
+      `--fps`). Verified 29.7 FPS video, a 21-line log, and no crash across 35 s of
+      sustained two-player input in both the web server and the Tauri app.
 
 In progress / next:
+- [ ] Root-cause the one observed tokio-worker segfault (`segfault at 4a8` in
+      `dualboy-web`): suspected cross-thread `load_rom` (tokio) vs `run_frame` (std
+      emulation thread), possibly aggravated by the old debug build's log flood. Needs
+      sustained-play re-testing now that logging and build profile are fixed.
 - [ ] Verify Four Swords *enters* an actual 2-player session end-to-end (the link now
       stays clean with zero desyncs; `adaptive_play.py` menu navigation needs tuning).
 - [ ] Audio routing (both instances' audio to the output).
-- [ ] Reduce mGBA debug log spam in the console.
 - [ ] Gamepad support for players 3–4 in the browser (Gamepad API).
 - [ ] Further perf: delta/region compression, buffer reuse (if profiling shows need).
 
@@ -151,13 +167,15 @@ npm install
 npm run tauri dev            # desktop dev (needs a display)
 
 cd src-tauri
-cargo build                  # build everything
+cargo build                  # build everything (libmgba is built Release: -O3 -DNDEBUG)
 cargo test --test smoke      # headless emulation + save round-trip
-cargo run --bin dualboy-web -- --players 4   # web demo on http://127.0.0.1:8080
+cargo run --bin dualboy-web -- --players 4 --fps 30   # web demo on http://127.0.0.1:8080
 ```
 
 Build notes: first `libmgba` build takes minutes and several GB RAM (needs cmake + clang).
-This workspace has 15 GB RAM / 8 cores, which is plenty.
+This workspace has 15 GB RAM / 8 cores, which is plenty. `--fps` sets the video send rate
+(1–60, default 30) independently of emulation speed; use `cargo build --release` for an
+optimized Rust binary too.
 
 ## Handoff notes for future sessions
 
