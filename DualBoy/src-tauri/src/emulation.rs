@@ -148,6 +148,7 @@ impl EmulationManager {
     }
 
     pub fn set_keys(&self, player: u8, keys: u32) -> Result<(), String> {
+        println!("[input] player={player} keys=0x{keys:08X}");
         let idx = (player as usize)
             .checked_sub(1)
             .filter(|&i| i < self.instances.len())

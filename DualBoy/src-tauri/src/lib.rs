@@ -6,7 +6,7 @@ use std::sync::Arc;
 use once_cell::sync::Lazy;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
-use futures_util::SinkExt;
+use futures_util::{SinkExt, StreamExt};
 use crate::emulation::EmulationManager;
 
 static EMULATOR: Lazy<Arc<EmulationManager>> = Lazy::new(|| Arc::new(EmulationManager::new(2)));
@@ -50,18 +50,57 @@ async fn import_save_set(path: String) -> Result<(), String> {
     EMULATOR.import_save_set(&data)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ClientCommand {
+    Keys { player: u8, keys: u32 },
+    LoadRom { path: String },
+}
+
 async fn start_websocket_server() {
     let listener = TcpListener::bind("127.0.0.1:8088").await.expect("Failed to bind WS");
     println!("WebSocket server listening on ws://127.0.0.1:8088");
 
     while let Ok((stream, _)) = listener.accept().await {
-        let mut rx = EMULATOR.frame_sender.subscribe();
+        let emulator = EMULATOR.clone();
         tokio::spawn(async move {
-            let mut ws_stream = tokio_tungstenite::accept_async(stream).await.expect("Error during WS handshake");
-            
-            while let Ok(frame) = rx.recv().await {
-                if ws_stream.send(Message::Binary(frame)).await.is_err() {
-                    break;
+            let mut rx = emulator.frame_sender.subscribe();
+            let mut ws_stream = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("Error during WS handshake");
+            let (mut sender, mut receiver) = ws_stream.split();
+
+            loop {
+                tokio::select! {
+                    frame = rx.recv() => {
+                        match frame {
+                            Ok(data) => {
+                                if sender.send(Message::Binary(data)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    incoming = receiver.next() => {
+                        match incoming {
+                            Some(Ok(Message::Text(text))) => {
+                                if let Ok(cmd) = serde_json::from_str::<ClientCommand>(&text) {
+                                    match cmd {
+                                        ClientCommand::Keys { player, keys } => {
+                                            let _ = emulator.set_keys(player, keys);
+                                        }
+                                        ClientCommand::LoadRom { path } => {
+                                            let _ = emulator.load_rom(&path);
+                                        }
+                                    }
+                                }
+                            }
+                            Some(Ok(Message::Close(_))) => break,
+                            Some(Ok(_)) => {}
+                            Some(Err(_)) | None => break,
+                        }
+                    }
                 }
             }
         });

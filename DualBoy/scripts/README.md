@@ -1,8 +1,40 @@
-# GUI smoke test (headless desktop verification)
+# Test drivers
+
+## ws_play.py — deterministic gameplay driver (preferred)
+
+Drives the desktop app over its WebSocket (`ws://127.0.0.1:8088`): loads a ROM, injects
+GBA button inputs per player, reads the real emulated frames back, and verifies the game
+keeps animating. No display, no GTK dialog, fully deterministic.
+
+```bash
+cd DualBoy/src-tauri
+cargo build
+./target/debug/dualboy &
+python3 ../scripts/ws_play.py "/path/to/rom.gba" \
+  --boot 12 \
+  --seq "A WAIT:2500 A A A A WAIT:600 START WAIT:600 A" \
+  --dump /tmp/frame --watch 3
+```
+
+- Sequence tokens: `[P<N>:]BUTTON[:hold_ms]` (e.g. `P2:START:120`), plus `WAIT:ms`.
+  Buttons: A B SELECT START RIGHT LEFT UP DOWN R L.
+- `--dump /tmp/fs` saves `*_p1_boot.png`, `*_p2_boot.png`, and `*_pN_after.png` (2x
+  scaled) so you can see the game state.
+- Prints frame stats + a peak per-sample pixel delta: a large delta means the game is
+  live-animating ("continues").
+- Requires `websocket-client` and `PIL`: `pip install --target .freebuff/pylibs
+  websocket-client pillow`.
+
+Verified 2026-08-16 against all three `Test Roms/` ROMs (see `PROJECT_LOG.md`).
+
+## gui_smoke.py — GUI smoke test (headless desktop verification)
 
 `gui_smoke.py` drives the real DualBoy Tauri window over X11 to load a ROM through the
 actual GTK file dialog — no code changes needed. It was used to verify the desktop app
 end-to-end on a headless Linux box (XWayland under KDE, `DISPLAY=:1`).
+
+Prefer `ws_play.py` when you need to actually play a game; use this to verify the real
+UI (window, buttons, file dialog) still works.
 
 ## Prerequisites
 

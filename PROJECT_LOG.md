@@ -18,7 +18,10 @@ This repository is a fork of **mGBA** (`Spuds0588/mgba-splitscreen.git`, which t
   one `GBASIOLockstepCoordinator` + two `GBASIOLockstepDriver`s, and a broadcast channel
   that streams combined frame data (instance1 pixels ++ instance2 pixels) at ~60 FPS.
 - `DualBoy/src-tauri/src/lib.rs` — Tauri commands (`load_rom`, `set_keys`) + the
-  WebSocket server (`ws://127.0.0.1:8088`) that pushes frames to the frontend.
+  WebSocket server (`ws://127.0.0.1:8088`) that pushes frames to the frontend **and**
+  accepts the same input protocol as the web demo:
+  `{"type":"load_rom","path":"..."}` / `{"type":"keys","player":N,"keys":bits}`.
+  This makes the desktop app drivable headlessly (see `scripts/ws_play.py`).
 - `DualBoy/src-tauri/src/bindings.rs` — `include!(OUT_DIR/bindings.rs)` (bindgen output).
 - `DualBoy/src-tauri/build.rs` — cmake-builds `libmgba` + runs bindgen over
   `mgba_bindings.h`. NOTE: `mgba_bindings.h` must include
@@ -59,6 +62,16 @@ Done:
       renders, ROM loads through the real GTK file dialog, game runs with live
       animation (112k px differ between frames 2s apart), and lockstep sync is
       active ("Primary waiting for players to ack" / "All players acked").
+- [x] **Played into real games via automated input** (2026-08-16, via `ws_play.py`):
+      - *Four Swords* (ALttP/FS cart): booted → file select → created a new save
+        (typed name `AAAA` through the on-screen keyboard) → `CHOOSE A GAME` → selected
+        Four Swords → reached the multi-pak connection screen with heavy lockstep sync
+        (1300+ "waiting for players to ack" events).
+      - *A Link to the Past*: selected it at `CHOOSE A GAME` → Triforce intro running
+        and animating.
+      - *Super Mario Advance 4*: past the intro to the SMB3 title screen.
+      - *Shining Soul II*: boots and renders (192 colors, full screen).
+      All three test ROMs load, render, and animate; no crashes across all runs.
 
 In progress / next:
 - [ ] Audio routing (both instances' audio to the output).
@@ -92,6 +105,22 @@ Gotchas discovered while writing it (useful if you redo this):
   xwd → png (PIL can't read this xwd variant).
 - Screenshot proof: `xwd -id <win> a.xwd`, wait 2s, `b.xwd`, then `ffmpeg`-convert and
   diff with PIL → 112,515 differing pixels proves live rendering.
+
+### Deterministic gameplay driving (preferred)
+
+Driving the GTK dialog with synthetic X11 events is flaky, so `DualBoy/scripts/ws_play.py`
+drives the emulator directly over the app's WebSocket instead — load a ROM, inject GBA
+button inputs per player, read the real emulated frames back, and verify animation. This
+is deterministic and needs no display. Example (see `DualBoy/scripts/README.md`):
+
+```bash
+./target/debug/dualboy &   # starts ws://127.0.0.1:8088
+python3 DualBoy/scripts/ws_play.py "Test Roms/Legend of Zelda, The - A Link To The Past Four Swords (U) [!].gba" \
+  --boot 12 --seq "A WAIT:2500 A A A A WAIT:600 START WAIT:600 A WAIT:2500 A WAIT:2500 A"
+```
+
+Sequence tokens are `[P<N>:]BUTTON[:hold_ms]` (e.g. `P2:START`), plus `WAIT:ms`.
+This is what proved the full boot→new-save→name-entry→game-select→play flow above.
 
 ## Build & run
 
