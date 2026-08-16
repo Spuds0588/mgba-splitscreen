@@ -28,7 +28,7 @@ cargo build --release
 | D-pad | W A S D | Arrow keys |
 | A / B | K / J | M / N |
 | L / R | H / L | V / B |
-| Start / Select | Enter / Backspace | P / O |
+| Start / Select | Space / Backspace | Enter / O |
 
 The UI is a mouse-driven top menu bar — game keys never navigate it, so there are no
 keyboard conflicts. Click the game area once before playing so key focus lands there.

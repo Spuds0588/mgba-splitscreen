@@ -53,7 +53,7 @@ picker). `Test Roms/` (gitignored) holds the owner's legal ROMs for testing.
 | D-pad | W A S D | Arrow keys |
 | A / B | K / J | M / N |
 | L / R | H / L | V / B |
-| Start / Select | Enter / Backspace | P / O |
+| Start / Select | Space / Backspace | Enter / O |
 
 The UI is mouse-driven (a top menu bar), so game keys never fight the UI. Players
 3–4 are keyboard/gamepad targets for the browser demo (see the backlog in

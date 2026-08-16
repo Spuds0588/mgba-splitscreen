@@ -32,7 +32,7 @@ const P1_MAP = {
   'KeyJ': GBA_BUTTONS.B,
   'KeyL': GBA_BUTTONS.R,
   'KeyH': GBA_BUTTONS.L,
-  'Enter': GBA_BUTTONS.START,
+  'Space': GBA_BUTTONS.START,
   'Backspace': GBA_BUTTONS.SELECT,
 };
 
@@ -45,7 +45,7 @@ const P2_MAP = {
   'KeyN': GBA_BUTTONS.B,
   'KeyV': GBA_BUTTONS.L,
   'KeyB': GBA_BUTTONS.R,
-  'KeyP': GBA_BUTTONS.START,
+  'Enter': GBA_BUTTONS.START,
   'KeyO': GBA_BUTTONS.SELECT,
 };
 
