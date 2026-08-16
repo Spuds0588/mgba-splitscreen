@@ -27,6 +27,36 @@ python3 ../scripts/ws_play.py "/path/to/rom.gba" \
 
 Verified 2026-08-16 against all three `Test Roms/` ROMs (see `PROJECT_LOG.md`).
 
+## step_drive.py — step-by-step input driver (menu mapping)
+
+Sends inputs one at a time and dumps a screenshot after each, so you can observe the
+screen after every input and map out a game's menu navigation. Useful for building
+deterministic input sequences for `ws_play.py`.
+
+```bash
+python3 ../scripts/step_drive.py "/path/to/rom.gba" \
+  --inputs "A WAIT:1500 DOWN A" --tag fs --boot 12 --players 2 --out /tmp
+```
+
+- Same token syntax as `ws_play.py` (`[P<N>:]BUTTON[:hold_ms]`, `WAIT:ms`).
+- Saves `<tag>_sNNN_pN.png` (2x scaled) after every input into `--out`.
+
+## adaptive_play.py — screen-aware Four Swords navigator (experimental)
+
+Blind input sequences are fragile because boot timing varies run to run. This driver
+classifies the current screen by template-matching against reference frames in
+`scripts/refs/` (downscaled to 48x32) and navigates the Four Swords boot → new save →
+name entry → game select → multiplayer flow deterministically.
+
+```bash
+python3 ../scripts/adaptive_play.py "/path/to/rom.gba" --players 2
+```
+
+- `--refs scripts/refs` holds the reference screenshots; regenerate by capturing the
+  screen at each navigation step with `step_drive.py` and naming the PNGs
+  `<label>__<anything>.png` (e.g. `file__file_select.png`, `name__enter_name.png`).
+- Status: classifier self-tests pass; end-to-end menu navigation still being tuned.
+
 ## gui_smoke.py — GUI smoke test (headless desktop verification)
 
 `gui_smoke.py` drives the real DualBoy Tauri window over X11 to load a ROM through the

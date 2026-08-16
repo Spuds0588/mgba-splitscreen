@@ -25,7 +25,14 @@ impl GbaInstance {
         }
     }
 
-    pub fn load_rom(&mut self, path: &str) -> bool {
+    /// Load a ROM and boot it. If `link_driver` is provided, it is attached to the
+    /// link port BEFORE `reset`, so the game sees the link cable present at boot
+    /// (mGBA's own QT multiplayer attaches the driver before the game runs).
+    pub fn load_rom(
+        &mut self,
+        path: &str,
+        link_driver: Option<*mut bindings::GBASIOLockstepDriver>,
+    ) -> bool {
         // Use a relative path in the current working directory
         let temp_name = format!("temp_instance_{}.gba", self.id);
         println!("[GBA {}] Copying ROM to local file: {}...", self.id, temp_name);
@@ -63,6 +70,11 @@ impl GbaInstance {
                 println!("[GBA {}] mCorePreloadFile failed.", self.id);
                 let _ = std::fs::remove_file(temp_name);
                 return false;
+            }
+
+            println!("[GBA {}] Step 4.5: Attaching link driver before boot...", self.id);
+            if let Some(driver) = link_driver {
+                self.set_sio_driver(driver);
             }
 
             println!("[GBA {}] Step 5: Resetting core...", self.id);

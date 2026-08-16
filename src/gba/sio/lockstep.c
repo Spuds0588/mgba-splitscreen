@@ -1090,6 +1090,16 @@ void GBASIOLockstepPlayerSleep(struct GBASIOLockstepPlayer* player) {
 	player->driver->user->sleep(player->driver->user);
 	player->driver->d.p->p->cpu->nextEvent = 0;
 	GBAInterrupt(player->driver->d.p->p);
+
+	// DualBoy runs every player sequentially on one thread, so a sleeping player's
+	// thread never actually blocks (the user->sleep callback returns immediately).
+	// To give the secondary time to deliver its data before this player's transfer
+	// completion event fires (the exact cause of "MULTI did not receive data"), end
+	// the current frame right here: the DualBoy frame loop sees this player asleep
+	// and skips running it until it is woken. Ending the frame via the frame counter
+	// makes `_GBACoreRunFrame` return; the renderer resumes where it left off when
+	// the player runs again.
+	++player->driver->d.p->p->video.frameCounter;
 }
 
 size_t GBASIOLockstepCoordinatorAttached(struct GBASIOLockstepCoordinator* coordinator) {

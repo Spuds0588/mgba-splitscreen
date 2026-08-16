@@ -28,10 +28,14 @@ fn loads_rom_and_renders_frames() {
     mgr.load_rom(&rom).expect("load ROM into all instances");
 
     // Run a couple seconds of frames; the BIOS/title screen should render pixels.
+    // (Skip instances currently waiting on the link cable, like the frame loop does.)
     for _ in 0..60 {
         let mut guards: Vec<_> = mgr.instances.iter().map(|i| i.lock().unwrap()).collect();
-        for gba in guards.iter_mut() {
-            gba.run_frame();
+        for i in 0..guards.len() {
+            if mgr.instance_sleeping(i) {
+                continue;
+            }
+            guards[i].run_frame();
         }
     }
 
@@ -48,11 +52,15 @@ fn save_round_trip() {
     let mgr = EmulationManager::new(2);
     mgr.load_rom(&rom).expect("load ROM");
 
-    // Run a few frames so the game initializes its save memory.
-    for _ in 0..10 {
+    // Run a few seconds of frames so the game initializes its save memory
+    // (frames can be skipped while an instance waits on the link cable).
+    for _ in 0..180 {
         let mut guards: Vec<_> = mgr.instances.iter().map(|i| i.lock().unwrap()).collect();
-        for gba in guards.iter_mut() {
-            gba.run_frame();
+        for i in 0..guards.len() {
+            if mgr.instance_sleeping(i) {
+                continue;
+            }
+            guards[i].run_frame();
         }
     }
 

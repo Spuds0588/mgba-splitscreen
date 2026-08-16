@@ -5,11 +5,29 @@ use tokio::sync::broadcast;
 use crate::gba::GbaInstance;
 use crate::bindings;
 
-/// The lockstep driver calls user->sleep/wake to block/resume the host thread in mGBA's
-/// threaded model. Here all instances run sequentially on one thread, so the frame-level
-/// pause (`nextEvent = 0` + interrupt) is what actually stops a frame; sleep/wake just
-/// need to be non-NULL no-ops.
-unsafe extern "C" fn lockstep_noop(_user: *mut bindings::mLockstepUser) {}
+/// mGBA's lockstep calls `user->sleep`/`wake` to block/resume a player's host thread
+/// while it waits for the others to catch up (e.g. mid-transfer). Our emulation runs
+/// every instance sequentially on one thread, so the callbacks just flip a per-player
+/// flag: `GBASIOLockstepPlayerSleep` (in libmgba) also ends the current frame, and the
+/// frame loop skips any player whose flag is set until it is woken. This is the
+/// sequential-model equivalent of the primary's thread blocking until the secondary
+/// delivers its data, and it keeps the coordinator's own `asleep` bookkeeping honest.
+#[repr(C)]
+struct LockstepUserCtx {
+    base: bindings::mLockstepUser,
+    /// Pointer into `EmulationManager::sleeping_flags` (Vec buffer is heap-stable).
+    sleep_flag: *mut bool,
+}
+
+unsafe extern "C" fn lockstep_sleep(user: *mut bindings::mLockstepUser) {
+    let ctx = user as *mut LockstepUserCtx;
+    *(*ctx).sleep_flag = true;
+}
+
+unsafe extern "C" fn lockstep_wake(user: *mut bindings::mLockstepUser) {
+    let ctx = user as *mut LockstepUserCtx;
+    *(*ctx).sleep_flag = false;
+}
 
 /// Save-set file format: all instances' battery saves in one file.
 /// Layout: b"DUALSAVE" | version:u32(1) | count:u32 | (size:u32, bytes)*
@@ -69,8 +87,13 @@ impl Drop for LockstepCoordinator {
 pub struct EmulationManager {
     pub instances: Vec<Arc<Mutex<GbaInstance>>>,
     pub frame_sender: broadcast::Sender<Vec<u8>>,
+    /// Per-player "waiting for the link" flag, flipped by the lockstep sleep/wake
+    /// callbacks (via raw pointers into this Vec's heap buffer). The frame loop
+    /// skips a player while its flag is set.
+    sleeping_flags: Arc<Mutex<Vec<bool>>>,
     drivers: Vec<*mut bindings::GBASIOLockstepDriver>,
-    _users: Vec<Box<bindings::mLockstepUser>>,
+    // Kept alive for the manager's lifetime: the drivers hold raw pointers to these.
+    _users: Vec<Box<LockstepUserCtx>>,
     // Boxed so its address is stable: the lockstep drivers hold a raw pointer to it.
     coordinator: LockstepCoordinator,
 }
@@ -97,17 +120,21 @@ impl EmulationManager {
             instances.push(Arc::new(Mutex::new(GbaInstance::new((i + 1) as u8))));
         }
 
+let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
+        let flags_buf = sleeping_flags.lock().unwrap().as_mut_ptr();
+
         let mut drivers = Vec::with_capacity(count);
         let mut users = Vec::with_capacity(count);
-        for _ in 0..count {
+        for i in 0..count {
             unsafe {
                 let driver =
                     Box::into_raw(Box::new(std::mem::zeroed::<bindings::GBASIOLockstepDriver>()));
-                let mut user = Box::new(std::mem::zeroed::<bindings::mLockstepUser>());
-                user.sleep = Some(lockstep_noop);
-                user.wake = Some(lockstep_noop);
+                let mut user = Box::new(std::mem::zeroed::<LockstepUserCtx>());
+                user.base.sleep = Some(lockstep_sleep);
+                user.base.wake = Some(lockstep_wake);
+                user.sleep_flag = flags_buf.add(i);
 
-                bindings::GBASIOLockstepDriverCreate(driver, &mut *user);
+                bindings::GBASIOLockstepDriverCreate(driver, &mut user.base);
                 bindings::GBASIOLockstepCoordinatorAttach(&mut *coordinator, driver);
 
                 drivers.push(driver);
@@ -118,6 +145,7 @@ impl EmulationManager {
         EmulationManager {
             instances,
             frame_sender: tx,
+            sleeping_flags,
             drivers,
             _users: users,
             coordinator: LockstepCoordinator(coordinator),
@@ -128,7 +156,8 @@ impl EmulationManager {
         self.instances.len()
     }
 
-    /// Load the same ROM into every instance, then attach the link-cable drivers.
+    /// Load the same ROM into every instance, attaching each instance's link-cable
+    /// driver BEFORE the ROM boots so games detect the link at boot.
     pub fn load_rom(&self, path: &str) -> Result<(), String> {
         let mut guards: Vec<_> = self
             .instances
@@ -136,14 +165,12 @@ impl EmulationManager {
             .map(|i| i.lock().map_err(|e| e.to_string()))
             .collect::<Result<_, _>>()?;
 
-        for gba in guards.iter_mut() {
-            if !gba.load_rom(path) {
+        for (gba, driver) in guards.iter_mut().zip(&self.drivers) {
+            if !gba.load_rom(path, Some(*driver)) {
                 return Err("Failed to load ROM in one or more instances".into());
             }
         }
         drop(guards);
-
-        self.attach_drivers();
         Ok(())
     }
 
@@ -215,15 +242,15 @@ impl EmulationManager {
         Ok(())
     }
 
-    fn attach_drivers(&self) {
-        let mut guards: Vec<_> = self.instances.iter().map(|i| i.lock().unwrap()).collect();
-        for (gba, driver) in guards.iter_mut().zip(&self.drivers) {
-            gba.set_sio_driver(*driver);
-        }
+    /// Is a given instance (0-based) currently waiting on the link (skipped by the
+    /// frame loop)? Used by tests that drive frames directly.
+    pub fn instance_sleeping(&self, i: usize) -> bool {
+        self.sleeping_flags.lock().unwrap()[i]
     }
 
     pub fn start(&self) {
         let instances = self.instances.clone();
+        let sleeping = self.sleeping_flags.clone();
         let tx = self.frame_sender.clone();
 
         thread::spawn(move || {
@@ -236,8 +263,13 @@ impl EmulationManager {
                         instances.iter().map(|i| i.lock().unwrap()).collect();
 
                     if guards.iter().all(|g| g.is_running) {
-                        for gba in guards.iter_mut() {
-                            gba.run_frame();
+                        // Skip players waiting on the link (their frame ended early at
+                        // the sync point); they resume once the other player wakes them.
+                        for i in 0..guards.len() {
+                            if sleeping.lock().unwrap()[i] {
+                                continue;
+                            }
+                            guards[i].run_frame();
                         }
 
                         // RGB565: 2 bytes/pixel keeps the stream lean for low-end devices.

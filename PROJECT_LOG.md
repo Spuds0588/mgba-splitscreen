@@ -43,6 +43,18 @@ This repository is a fork of **mGBA** (`Spuds0588/mgba-splitscreen.git`, which t
 - **Pixel format**: `mCore.setVideoBuffer` fills a `u32` buffer in XBGR8888 order;
   `GbaInstance::get_pixels_raw` swizzles to RGBA bytes.
 - **Test ROMs**: `Test Roms/` (gitignored) holds the owner's legal ROMs for testing.
+- **Lockstep sleep = thread block**: mGBA's lockstep expects the primary's *thread* to
+  block inside `user->sleep` until the secondary catches up (the threaded model). DualBoy
+  runs all instances sequentially on one thread, so a no-op `sleep` let the primary run
+  straight past its transfer-completion event → "MULTI did not receive data" → games
+  showed the multi-pak "turn power OFF/ON" screen. Fix (2026-08-16):
+  `GBASIOLockstepPlayerSleep` now ends the current frame early
+  (`++player->...->video.frameCounter`) and the frame loop skips a player while its sleep
+  flag is set (flipped by `user->sleep`/`wake` in `emulation.rs`) — the sequential-model
+  equivalent of the primary's thread blocking.
+- **Link attach before boot**: attach the lockstep SIO driver BEFORE `reset`, so the game
+  sees the link cable present at boot (mGBA's Qt multiplayer does the same). Attaching
+  after boot made the link appear mid-boot.
 
 ## Status
 
@@ -72,12 +84,21 @@ Done:
       - *Super Mario Advance 4*: past the intro to the SMB3 title screen.
       - *Shining Soul II*: boots and renders (192 colors, full screen).
       All three test ROMs load, render, and animate; no crashes across all runs.
+- [x] **Link driver attached before boot** (2026-08-16) — games now see the virtual
+      link cable at boot instead of mid-boot (mGBA's Qt multiplayer ordering).
+- [x] **Cooperative lockstep sleep** (2026-08-16) — a sleeping player ends its frame
+      early and is skipped by the frame loop until woken, eliminating
+      "MULTI did not receive data" desyncs (the root cause of the multi-pak
+      "power off/on" screen). `cargo test` green (128 unit + 2 smoke); full two-player
+      runs show zero link errors.
 
 In progress / next:
+- [ ] Verify Four Swords *enters* an actual 2-player session end-to-end (the link now
+      stays clean with zero desyncs; `adaptive_play.py` menu navigation needs tuning).
 - [ ] Audio routing (both instances' audio to the output).
-- [ ] Further perf: delta/region compression, buffer reuse (if profiling shows need).
-- [ ] Gamepad support for players 3–4 in the browser (Gamepad API).
 - [ ] Reduce mGBA debug log spam in the console.
+- [ ] Gamepad support for players 3–4 in the browser (Gamepad API).
+- [ ] Further perf: delta/region compression, buffer reuse (if profiling shows need).
 
 ## Headless desktop-app verification (how we tested it)
 
