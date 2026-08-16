@@ -19,7 +19,7 @@ import websocket
 from PIL import Image
 
 GBA_W, GBA_H = 240, 160
-FRAME_BYTES = GBA_W * GBA_H * 2
+FRAME_BYTES = GBA_W * GBA_H * 4
 
 BUTTONS = {
     "A": 1 << 0, "B": 1 << 1, "SELECT": 1 << 2, "START": 1 << 3,
@@ -79,14 +79,8 @@ class Client:
         return None
 
 
-def save_png(rgb565, path):
-    img = Image.new("RGB", (GBA_W, GBA_H))
-    px = img.load()
-    for y in range(GBA_H):
-        for x in range(GBA_W):
-            i = (y * GBA_W + x) * 2
-            c = (rgb565[i + 1] << 8) | rgb565[i]
-            px[x, y] = (((c >> 11) & 0x1F) << 3, ((c >> 5) & 0x3F) << 2, (c & 0x1F) << 3)
+def save_png(rgba, path):
+    img = Image.frombytes("RGBA", (GBA_W, GBA_H), rgba).convert("RGB")
     img.resize((GBA_W * 2, GBA_H * 2), Image.NEAREST).save(path)
 
 

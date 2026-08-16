@@ -8,8 +8,8 @@ keeps animating. No display, no GTK dialog, fully deterministic.
 
 ```bash
 cd DualBoy/src-tauri
-cargo build
-./target/debug/dualboy &
+cargo build --release
+./target/release/dualboy &
 python3 ../scripts/ws_play.py "/path/to/rom.gba" \
   --boot 12 \
   --seq "A WAIT:2500 A A A A WAIT:600 START WAIT:600 A" \
@@ -22,6 +22,7 @@ python3 ../scripts/ws_play.py "/path/to/rom.gba" \
   scaled) so you can see the game state.
 - Prints frame stats + a peak per-sample pixel delta: a large delta means the game is
   live-animating ("continues").
+- Frames are RGBA8888 (4 bytes/pixel) since 2026-08-16; `FRAME_BYTES = 240*160*4`.
 - Requires `websocket-client` and `PIL`: `pip install --target .freebuff/pylibs
   websocket-client pillow`.
 
@@ -81,7 +82,7 @@ export DISPLAY=:1 \
        WEBKIT_DISABLE_COMPOSITING_MODE=1 \
        WEBKIT_DISABLE_DMABUF_RENDERER=1 \
        LIBGL_ALWAYS_SOFTWARE=1
-./target/debug/dualboy >/tmp/dualboy_app.log 2>&1 &
+./target/release/dualboy >/tmp/dualboy_app.log 2>&1 &
 sleep 15   # let WebKit init
 python3 /path/to/gui_smoke.py "/path/to/Test Roms/Legend of Zelda, The - A Link To The Past Four Swords (U) [!].gba"
 ```

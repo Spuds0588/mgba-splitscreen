@@ -27,8 +27,9 @@ This repository is a fork of **mGBA** (`Spuds0588/mgba-splitscreen.git`, which t
   `mgba_bindings.h`. NOTE: `mgba_bindings.h` must include
   `<mgba/internal/gba/sio/lockstep.h>` for the `GBASIOLockstep*` API (upstream moved it
   out of the public `core/lockstep.h`).
-- `DualBoy/src/main.js` — frontend: canvas rendering + keyboard → `set_keys` via Tauri
-  invoke, frames via WebSocket.
+- `DualBoy/src/main.js` — frontend: top menu bar + video-call grid of canvases, RGBA
+  frames fed straight into `putImageData`, keyboard → `set_keys` via Tauri invoke or
+  the WebSocket.
 - `DualBoy/src-tauri/target/` — build output (gitignored); `libmgba.a` + bindings are
   cached here so incremental builds are fast.
 
@@ -41,7 +42,8 @@ This repository is a fork of **mGBA** (`Spuds0588/mgba-splitscreen.git`, which t
 - **Lockstep bindings**: after the upstream "migrate includes" merge, `GBASIOLockstep*`
   lives in `include/mgba/internal/gba/sio/lockstep.h`. `mgba_bindings.h` must include it.
 - **Pixel format**: `mCore.setVideoBuffer` fills a `u32` buffer in XBGR8888 order;
-  `GbaInstance::get_pixels_raw` swizzles to RGBA bytes.
+  `GbaInstance::get_pixels_rgba` re-packs it to RGBA8888 (alpha OR'd in) — the exact
+  format `putImageData` wants, so the frontend does zero per-pixel decode.
 - **Test ROMs**: `Test Roms/` (gitignored) holds the owner's legal ROMs for testing.
 - **Lockstep sleep = thread block**: mGBA's lockstep expects the primary's *thread* to
   block inside `user->sleep` until the secondary catches up (the threaded model). DualBoy
@@ -77,7 +79,8 @@ Done:
 - [x] Web demo: standalone server (`cargo run --bin dualboy-web -- --players N`)
       serving the same frontend in a browser over HTTP + WebSocket.
 - [x] Headless smoke tests against `Test Roms/` (load + render + save round-trip).
-- [x] RGB565 frame streaming (2 bytes/pixel) to halve bandwidth for low-end devices.
+- [x] ~~RGB565 frame streaming~~ — replaced by RGBA8888 (2026-08-16): the bandwidth
+      saving wasn't worth the per-pixel JS decode it forced on every frame.
 - [x] **Desktop app verified end-to-end on a real display (Xvfb/XWayland)**: window
       renders, ROM loads through the real GTK file dialog, game runs with live
       animation (112k px differ between frames 2s apart), and lockstep sync is
@@ -104,6 +107,14 @@ Done:
       decoupled video from emulation (emulation 60 FPS, video 30 FPS default via
       `--fps`). Verified 29.7 FPS video, a 21-line log, and no crash across 35 s of
       sustained two-player input in both the web server and the Tauri app.
+- [x] **Performance pass 2** (2026-08-16): the desktop/browser were still running an
+      unoptimized **223 MB debug Rust binary** (no release build existed) and the
+      frontend decoded RGB565 per-pixel on every frame. Now: an optimized release
+      profile (`opt-level=3`, thin LTO, `strip` → 11 MB binary), RGBA8888 streaming
+      straight into `putImageData` (no JS decode), and a video-call layout with a top
+      menu bar (no scrolling, no keyboard-focus conflicts). `bench` shows 4 synced
+      instances of *Shining Soul II* emulate at ~4,000 FPS on one thread (0.24
+      ms/frame) — **emulation is not the bottleneck**, rendering/UI was.
 
 In progress / next:
 - [ ] Root-cause the one observed tokio-worker segfault (`segfault at 4a8` in
@@ -114,7 +125,9 @@ In progress / next:
       stays clean with zero desyncs; `adaptive_play.py` menu navigation needs tuning).
 - [ ] Audio routing (both instances' audio to the output).
 - [ ] Gamepad support for players 3–4 in the browser (Gamepad API).
-- [ ] Further perf: delta/region compression, buffer reuse (if profiling shows need).
+- [ ] If the WebView still can't composite 30 FPS on low-end hardware, add a native
+      (non-webview) renderer for the desktop app. Emulation is ~4,000 FPS, so a native
+      canvas/GPU path is the only remaining performance lever.
 
 ## Headless desktop-app verification (how we tested it)
 
@@ -162,20 +175,18 @@ This is what proved the full boot→new-save→name-entry→game-select→play f
 ## Build & run
 
 ```bash
-cd DualBoy
-npm install
-npm run tauri dev            # desktop dev (needs a display)
+cd DualBoy/src-tauri
+cargo build --release        # ALWAYS release: the Rust frame pipeline is ~10x faster
+./target/release/dualboy     # desktop window (needs a display)
 
-cd src-tauri
-cargo build                  # build everything (libmgba is built Release: -O3 -DNDEBUG)
-cargo test --test smoke      # headless emulation + save round-trip
-cargo run --bin dualboy-web -- --players 4 --fps 30   # web demo on http://127.0.0.1:8080
+cargo test --release         # 128 unit + 2 smoke tests (needs Test Roms/)
+cargo run --release --bin dualboy-web -- --players 4 --fps 30  # http://127.0.0.1:8080
+cargo run --release --bin bench -- <rom.gba> [players]         # emulation speed only
 ```
 
 Build notes: first `libmgba` build takes minutes and several GB RAM (needs cmake + clang).
 This workspace has 15 GB RAM / 8 cores, which is plenty. `--fps` sets the video send rate
-(1–60, default 30) independently of emulation speed; use `cargo build --release` for an
-optimized Rust binary too.
+(1–60, default 30) independently of emulation speed; always use `cargo build --release`.
 
 ## Handoff notes for future sessions
 

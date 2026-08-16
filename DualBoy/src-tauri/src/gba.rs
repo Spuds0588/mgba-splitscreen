@@ -121,31 +121,15 @@ impl GbaInstance {
         }
     }
 
-    pub fn get_pixels_raw(&self) -> Vec<u8> {
+    /// Pack the frame as RGBA8888 (4 bytes/pixel). The frontend feeds this buffer
+    /// straight into `putImageData`, so sending RGBA means zero per-pixel decode work
+    /// in JS (the old RGB565 path forced a per-pixel bit-swizzle on every frame in the
+    /// browser, which was a bigger cost than the extra bandwidth on loopback/LAN).
+    /// mGBA's `u32` buffer is already R,G,B in the low three bytes; OR the alpha in.
+    pub fn get_pixels_rgba(&self) -> Vec<u8> {
         let mut pixels = Vec::with_capacity(240 * 160 * 4);
         for &pixel in &self.video_buffer {
-            let r = (pixel & 0xFF) as u8;
-            let g = ((pixel >> 8) & 0xFF) as u8;
-            let b = ((pixel >> 16) & 0xFF) as u8;
-            pixels.push(r);
-            pixels.push(g);
-            pixels.push(b);
-            pixels.push(255); // Alpha
-        }
-        pixels
-    }
-
-    /// Pack the frame as RGB565 (2 bytes/pixel) for efficient streaming.
-    /// Halves bandwidth and allocation vs RGBA; the frontend decodes it back.
-    pub fn get_pixels_rgb565(&self) -> Vec<u8> {
-        let mut pixels = Vec::with_capacity(240 * 160 * 2);
-        for &pixel in &self.video_buffer {
-            let r = (pixel & 0xFF) as u16;
-            let g = ((pixel >> 8) & 0xFF) as u16;
-            let b = ((pixel >> 16) & 0xFF) as u16;
-            let rgb565 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
-            pixels.push((rgb565 & 0xFF) as u8);
-            pixels.push((rgb565 >> 8) as u8);
+            pixels.extend_from_slice(&(pixel | 0xFF00_0000).to_le_bytes());
         }
         pixels
     }

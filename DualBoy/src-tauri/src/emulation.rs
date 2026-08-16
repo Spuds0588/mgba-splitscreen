@@ -302,10 +302,11 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
 
                         tick = tick.wrapping_add(1);
                         if tick % video_every == 0 {
-                            // RGB565: 2 bytes/pixel keeps the stream lean for low-end devices.
-                            let mut combined = Vec::with_capacity(240 * 160 * 2 * guards.len());
+                            // RGBA8888: 4 bytes/pixel so the frontend can putImageData
+                            // directly with no per-pixel decode.
+                            let mut combined = Vec::with_capacity(240 * 160 * 4 * guards.len());
                             for gba in guards.iter() {
-                                combined.extend_from_slice(&gba.get_pixels_rgb565());
+                                combined.extend_from_slice(&gba.get_pixels_rgba());
                             }
                             let _ = tx.send(combined);
                         }

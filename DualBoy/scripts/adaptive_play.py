@@ -22,7 +22,7 @@ import websocket
 from PIL import Image
 
 GBA_W, GBA_H = 240, 160
-FRAME_BYTES = GBA_W * GBA_H * 2
+FRAME_BYTES = GBA_W * GBA_H * 4
 
 BUTTONS = {
     "A": 1 << 0, "B": 1 << 1, "SELECT": 1 << 2, "START": 1 << 3,
@@ -49,15 +49,9 @@ def load_refs(dirpath):
     print("loaded refs:", {k: len(v) for k, v in REFS.items()})
 
 
-def classify(frame_rgb565):
+def classify(frame_rgba):
     """Return (label, score) for the best-matching reference screen."""
-    im = Image.new("RGB", (GBA_W, GBA_H))
-    px = im.load()
-    for y in range(GBA_H):
-        for x in range(GBA_W):
-            i = (y * GBA_W + x) * 2
-            c = (frame_rgb565[i + 1] << 8) | frame_rgb565[i]
-            px[x, y] = (((c >> 11) & 0x1F) << 3, ((c >> 5) & 0x3F) << 2, (c & 0x1F) << 3)
+    im = Image.frombytes("RGBA", (GBA_W, GBA_H), frame_rgba).convert("RGB")
     im.thumbnail((48, 32))
     best_label, best_score = None, 1e18
     for label, refs in REFS.items():
@@ -158,13 +152,7 @@ def main():
     def snap(p, name):
         f = c.player_frame(p)
         if f is not None:
-            im = Image.new("RGB", (GBA_W, GBA_H))
-            impx = im.load()
-            for y in range(GBA_H):
-                for x in range(GBA_W):
-                    i = (y * GBA_W + x) * 2
-                    v = (f[i + 1] << 8) | f[i]
-                    impx[x, y] = (((v >> 11) & 0x1F) << 3, ((v >> 5) & 0x3F) << 2, (v & 0x1F) << 3)
+            im = Image.frombytes("RGBA", (GBA_W, GBA_H), f).convert("RGB")
             im.resize((GBA_W * 2, GBA_H * 2), Image.NEAREST).save(f"{args.dump}/{name}.png")
 
     # Per-player navigation state machine.

@@ -39,7 +39,7 @@ fn loads_rom_and_renders_frames() {
         }
     }
 
-    let pixels = mgr.instances[0].lock().unwrap().get_pixels_raw();
+    let pixels = mgr.instances[0].lock().unwrap().get_pixels_rgba();
     let any_rendered = pixels
         .chunks_exact(4)
         .any(|px| px[0] != 0 || px[1] != 0 || px[2] != 0);

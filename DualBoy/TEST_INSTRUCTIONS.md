@@ -2,47 +2,52 @@
 
 Follow these steps to test the current build of the DualBoy split-screen GBA emulator.
 
-## 1. Launching the App
-Open your terminal and run:
+## 1. Launch the app
+
+Build and run a **release** binary (the debug build is ~10x slower):
+
 ```bash
-cd "/home/coreyb/Coding Projects/Applications/mgba-splitscreen/DualBoy"
-npm run tauri dev
+cd DualBoy/src-tauri
+cargo build --release
+./target/release/dualboy          # desktop window on your display
+# or, for the browser demo:
+./target/release/dualboy-web --players 2 --fps 30   # http://127.0.0.1:8080
 ```
 
-## 2. Loading a Game
-1. Click the **"Load ROM"** button.
-2. Select a `.gba` file from your computer.
-3. The game should appear on **both** screens simultaneously.
+## 2. Load a game
 
-## 3. Control Mapping (Laptop Optimized)
-Both players can play on the same keyboard using the following layout:
+1. Click **File → Load ROM…** (desktop: native file dialog; browser: file picker).
+2. Pick a `.gba` from `Test Roms/`.
+3. The screens tile into a video-call-style grid (2/3/4 equal cells) and every
+   instance shows the same game.
 
-### Player 1 (Left Hand Cluster)
-*   **D-Pad**: `W`, `A`, `S`, `D`
-*   **A Button**: `K`
-*   **B Button**: `J`
-*   **L Trigger**: `H`
-*   **R Trigger**: `L`
-*   **Start**: `Enter`
-*   **Select**: `Backspace`
+## 3. Control mapping (laptop optimized)
 
-### Player 2 (Right Hand / Arrows Cluster)
-*   **D-Pad**: `Arrow Keys`
-*   **A Button**: `M`
-*   **B Button**: `N`
-*   **L Trigger**: `V`
-*   **R Trigger**: `B`
-*   **Start**: `P`
-*   **Select**: `O`
+| | Player 1 | Player 2 |
+|---|---|---|
+| D-pad | W A S D | Arrow keys |
+| A / B | K / J | M / N |
+| L / R | H / L | V / B |
+| Start / Select | Enter / Backspace | P / O |
 
-## 4. Verification Checklist
-*   [ ] **Visuals**: Are both screens running at a smooth 60FPS?
-*   [ ] **Sync**: Do both instances stay in perfect sync (e.g., when walking in circles)?
-*   [ ] **Multiplayer**: Try to enter a "Multiplayer" or "Trade" menu in-game to verify the **Virtual Link Cable** architecture is working.
-*   [ ] **Input**: Do both sets of keys respond without delay?
+The UI is a mouse-driven top menu bar — game keys never navigate it, so there are no
+keyboard conflicts. Click the game area once before playing so key focus lands there.
 
-## 5. Providing Feedback
-Please report any issues with:
-1. **Performance**: Any stuttering or screen tearing?
-2. **Sync**: Did the games ever disconnect or drift apart?
-3. **Controls**: Do these new mappings feel comfortable on your laptop?
+## 4. Verification checklist
+
+- [ ] **Layout**: menu bar on top; screens split into 2/3/4 equal cells with no scrolling.
+- [ ] **Speed**: smooth animation, input responds without lag. (Expect ~30 FPS video;
+      emulation itself runs far faster.)
+- [ ] **Sync**: both instances stay in lockstep (e.g. identical cutscenes; no
+      "turn the power OFF/ON" multi-pak error).
+- [ ] **Multiplayer**: in *Four Swords*, boot → `CHOOSE A FILE` → create a save →
+      `CHOOSE A GAME` → Four Swords → both players reach the connection screen.
+- [ ] **Saves**: **Saves → Export/Import Save P1/P2** and **File → Export/Import All
+      Saves…** round-trip.
+
+## 5. Reporting feedback
+
+Report issues with:
+1. **Performance** — stutter or slow frames (and which game).
+2. **Sync** — disconnect or drift between instances.
+3. **Controls** — key mapping comfort or focus conflicts.

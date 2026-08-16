@@ -1,8 +1,14 @@
 const IS_TAURI = typeof window.__TAURI__ !== 'undefined';
+// Tauri v2 exposes commands as window.__TAURI__.core.invoke; grab it once so the
+// keyboard path doesn't rely on an undefined bare `invoke`.
+const invoke = IS_TAURI ? window.__TAURI__.core.invoke : null;
 
 const GBA_WIDTH = 240;
 const GBA_HEIGHT = 160;
-const FRAME_SIZE = GBA_WIDTH * GBA_HEIGHT * 2; // RGB565: 2 bytes/pixel
+// RGBA8888: the backend sends frames already in the format putImageData wants,
+// so the frontend copies each frame straight into a preallocated ImageData with
+// no per-pixel decode work.
+const FRAME_SIZE = GBA_WIDTH * GBA_HEIGHT * 4;
 
 const GBA_BUTTONS = {
   A: 1 << 0,
@@ -47,12 +53,43 @@ const P2_MAP = {
 const PLAYER_MAPS = [P1_MAP, P2_MAP];
 
 let playerCount = 2;
-let screens = []; // { canvas, ctx }
+let screens = []; // { canvas, ctx, imgData }
 let keyStates = [];
 let socket = null;
 
 function setStatus(text) {
   document.getElementById('status').textContent = text;
+}
+
+// ---- Menu bar ----
+
+function closeMenus() {
+  document.querySelectorAll('.menu[open]').forEach((m) => m.removeAttribute('open'));
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+}
+
+function menuOpen() {
+  return !!document.querySelector('.menu[open]');
+}
+
+// Close any open menu on an outside click; the per-action handlers below call
+// closeMenus() themselves and blur, so keyboard focus never lingers on a menu
+// button and steals Enter/Space from the emulator.
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.menu')) closeMenus();
+});
+
+// ---- Screen grid (video-call style) ----
+
+function layout(count) {
+  const el = document.getElementById('screens');
+  const wide = window.innerWidth >= window.innerHeight;
+  let cols, rows;
+  if (count === 2) { cols = wide ? 2 : 1; rows = wide ? 1 : 2; }
+  else if (count === 3) { cols = wide ? 3 : 1; rows = wide ? 1 : 3; }
+  else { cols = 2; rows = 2; }
+  el.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  el.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
 }
 
 function initScreens(count) {
@@ -62,55 +99,57 @@ function initScreens(count) {
   screens = [];
   keyStates = new Array(count).fill(0);
 
-  const select = document.getElementById('player-select');
-  select.innerHTML = '';
+  const saveMenu = document.getElementById('save-menu');
+  saveMenu.innerHTML = '';
 
   for (let i = 0; i < count; i++) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'screen-wrapper';
+    const cell = document.createElement('div');
+    cell.className = 'screen-cell';
 
-    const label = document.createElement('h2');
-    label.textContent = `Player ${i + 1}`;
+    const label = document.createElement('div');
+    label.className = 'screen-label';
+    label.textContent = `P${i + 1}`;
 
     const canvas = document.createElement('canvas');
     canvas.width = GBA_WIDTH;
     canvas.height = GBA_HEIGHT;
 
-    wrapper.appendChild(label);
-    wrapper.appendChild(canvas);
-    container.appendChild(wrapper);
-    screens.push({ canvas, ctx: canvas.getContext('2d') });
+    cell.appendChild(canvas);
+    cell.appendChild(label);
+    container.appendChild(cell);
 
-    const option = document.createElement('option');
-    option.value = i + 1;
-    option.textContent = `Player ${i + 1}`;
-    select.appendChild(option);
+    const ctx = canvas.getContext('2d');
+    screens.push({ canvas, ctx, imgData: ctx.createImageData(GBA_WIDTH, GBA_HEIGHT) });
+
+    const exportBtn = document.createElement('button');
+    exportBtn.textContent = `Export Save P${i + 1}\u2026`;
+    exportBtn.addEventListener('click', () => {
+      closeMenus();
+      IS_TAURI ? exportSaveTauri(i + 1) : exportSaveBrowser(i + 1);
+    });
+
+    const importBtn = document.createElement('button');
+    importBtn.textContent = `Import Save P${i + 1}\u2026`;
+    importBtn.addEventListener('click', () => {
+      closeMenus();
+      IS_TAURI ? importSaveTauri(i + 1) : importSaveBrowser(i + 1);
+    });
+
+    saveMenu.appendChild(exportBtn);
+    saveMenu.appendChild(importBtn);
   }
+
+  layout(count);
 }
 
 function onFrame(data) {
   const bytes = new Uint8ClampedArray(data);
-  const pixelCount = GBA_WIDTH * GBA_HEIGHT;
   for (let i = 0; i < playerCount; i++) {
     if (data.byteLength < FRAME_SIZE * (i + 1)) break;
-    const frame = bytes.subarray(i * FRAME_SIZE, (i + 1) * FRAME_SIZE);
-
-    // Decode RGB565 -> RGBA for putImageData.
-    const rgba = new Uint8ClampedArray(pixelCount * 4);
-    for (let p = 0; p < pixelCount; p++) {
-      const c = (frame[p * 2 + 1] << 8) | frame[p * 2];
-      const o = p * 4;
-      rgba[o] = ((c >> 11) & 0x1f) << 3;
-      rgba[o + 1] = ((c >> 5) & 0x3f) << 2;
-      rgba[o + 2] = (c & 0x1f) << 3;
-      rgba[o + 3] = 255;
-    }
-    screens[i].ctx.putImageData(new ImageData(rgba, GBA_WIDTH, GBA_HEIGHT), 0, 0);
+    const off = i * FRAME_SIZE;
+    screens[i].imgData.data.set(bytes.subarray(off, off + FRAME_SIZE));
+    screens[i].ctx.putImageData(screens[i].imgData, 0, 0);
   }
-}
-
-function selectedPlayer() {
-  return parseInt(document.getElementById('player-select').value, 10);
 }
 
 async function setKeys(player, keys) {
@@ -122,22 +161,30 @@ async function setKeys(player, keys) {
 }
 
 async function handleKey(e, isDown) {
+  // A menu is open: let the menu have the keys; don't also drive the game.
+  if (menuOpen()) return;
+
+  let handled = false;
   for (let p = 0; p < playerCount; p++) {
     const map = PLAYER_MAPS[p];
     if (!map) continue;
     const bit = map[e.code];
     if (bit === undefined) continue;
 
+    handled = true;
     if (isDown) keyStates[p] |= bit;
     else keyStates[p] &= ~bit;
     await setKeys(p + 1, keyStates[p]);
   }
+  // Stop browser defaults (scrolling, focused-button activation) for every key
+  // the emulator uses, so game input never leaks into the UI.
+  if (handled) e.preventDefault();
 }
 
 // ---- ROM loading ----
 
 async function pickRomTauri() {
-  const { invoke } = window.__TAURI__.core;
+  closeMenus();
   const { open } = window.__TAURI__.dialog;
   const selected = await open({
     multiple: false,
@@ -148,9 +195,11 @@ async function pickRomTauri() {
     await invoke('load_rom', { path: selected });
     setStatus('Running: ' + selected);
   }
+  closeMenus();
 }
 
 function pickRomBrowser() {
+  closeMenus();
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.gba';
@@ -161,6 +210,7 @@ function pickRomBrowser() {
     const resp = await fetch('/load_rom', { method: 'POST', body: file });
     if (resp.ok) setStatus('Running: ' + file.name);
     else setStatus('Error: ' + (await resp.text()));
+    closeMenus();
   };
   input.click();
 }
@@ -168,7 +218,6 @@ function pickRomBrowser() {
 // ---- Save import/export ----
 
 async function exportSaveTauri(player) {
-  const { invoke } = window.__TAURI__.core;
   const { save } = window.__TAURI__.dialog;
   const path = await save({
     filters: [{ name: 'GBA Save', extensions: ['sav'] }],
@@ -196,7 +245,6 @@ async function exportSaveBrowser(player) {
 }
 
 async function importSaveTauri(player) {
-  const { invoke } = window.__TAURI__.core;
   const { open } = window.__TAURI__.dialog;
   const selected = await open({
     multiple: false,
@@ -222,7 +270,7 @@ function importSaveBrowser(player) {
 }
 
 async function exportSetTauri() {
-  const { invoke } = window.__TAURI__.core;
+  closeMenus();
   const { save } = window.__TAURI__.dialog;
   const path = await save({
     filters: [{ name: 'DualBoy Save Set', extensions: ['dualbysave'] }],
@@ -232,9 +280,11 @@ async function exportSetTauri() {
     await invoke('export_save_set', { path });
     setStatus(`Saved all saves to ${path}`);
   }
+  closeMenus();
 }
 
 async function exportSetBrowser() {
+  closeMenus();
   const resp = await fetch('/save_set');
   if (!resp.ok) {
     setStatus('Error: ' + (await resp.text()));
@@ -250,7 +300,7 @@ async function exportSetBrowser() {
 }
 
 async function importSetTauri() {
-  const { invoke } = window.__TAURI__.core;
+  closeMenus();
   const { open } = window.__TAURI__.dialog;
   const selected = await open({
     multiple: false,
@@ -260,9 +310,11 @@ async function importSetTauri() {
     await invoke('import_save_set', { path: selected });
     setStatus('Imported save set');
   }
+  closeMenus();
 }
 
 function importSetBrowser() {
+  closeMenus();
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.dualbysave';
@@ -287,7 +339,6 @@ function connectWebSocket() {
 
 window.addEventListener('DOMContentLoaded', async () => {
   if (IS_TAURI) {
-    const { invoke } = window.__TAURI__.core;
     try {
       playerCount = await invoke('player_count');
     } catch {
@@ -305,10 +356,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('load-rom').addEventListener('click', () =>
     IS_TAURI ? pickRomTauri() : pickRomBrowser());
-  document.getElementById('export-save').addEventListener('click', () =>
-    IS_TAURI ? exportSaveTauri(selectedPlayer()) : exportSaveBrowser(selectedPlayer()));
-  document.getElementById('import-save').addEventListener('click', () =>
-    IS_TAURI ? importSaveTauri(selectedPlayer()) : importSaveBrowser(selectedPlayer()));
   document.getElementById('export-set').addEventListener('click', () =>
     IS_TAURI ? exportSetTauri() : exportSetBrowser());
   document.getElementById('import-set').addEventListener('click', () =>
@@ -316,6 +363,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   window.addEventListener('keydown', (e) => handleKey(e, true));
   window.addEventListener('keyup', (e) => handleKey(e, false));
+  window.addEventListener('resize', () => layout(playerCount));
 
   connectWebSocket();
 });

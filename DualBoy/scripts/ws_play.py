@@ -28,7 +28,7 @@ import websocket
 from PIL import Image
 
 GBA_W, GBA_H = 240, 160
-FRAME_BYTES = GBA_W * GBA_H * 2  # RGB565, per player
+FRAME_BYTES = GBA_W * GBA_H * 4  # RGBA8888, per player
 
 BUTTONS = {
     "A": 1 << 0, "B": 1 << 1, "SELECT": 1 << 2, "START": 1 << 3,
@@ -91,33 +91,27 @@ class Client:
         return None
 
 
-def frame_stats(p1):
+def frame_stats(rgba):
     colors = set()
     nonblack = 0
-    for i in range(0, len(p1), 2):
-        c = (p1[i + 1] << 8) | p1[i]
-        colors.add(c)
-        if c != 0:
+    for i in range(0, len(rgba), 4):
+        r, g, b = rgba[i], rgba[i + 1], rgba[i + 2]
+        colors.add((r >> 4, g >> 4, b >> 4))
+        if r or g or b:
             nonblack += 1
     return len(colors), nonblack
 
 
 def frame_diff(a, b):
     n = 0
-    for i in range(0, min(len(a), len(b)), 2):
-        if a[i] != b[i] or a[i + 1] != b[i + 1]:
+    for i in range(0, min(len(a), len(b)), 4):
+        if a[i] != b[i] or a[i + 1] != b[i + 1] or a[i + 2] != b[i + 2]:
             n += 1
     return n
 
 
-def save_png(rgb565, path):
-    img = Image.new("RGB", (GBA_W, GBA_H))
-    px = img.load()
-    for y in range(GBA_H):
-        for x in range(GBA_W):
-            i = (y * GBA_W + x) * 2
-            c = (rgb565[i + 1] << 8) | rgb565[i]
-            px[x, y] = (((c >> 11) & 0x1F) << 3, ((c >> 5) & 0x3F) << 2, (c & 0x1F) << 3)
+def save_png(rgba, path):
+    img = Image.frombytes("RGBA", (GBA_W, GBA_H), rgba).convert("RGB")
     img.resize((GBA_W * 2, GBA_H * 2), Image.NEAREST).save(path)
 
 
