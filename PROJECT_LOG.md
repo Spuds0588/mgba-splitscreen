@@ -55,12 +55,43 @@ Done:
       serving the same frontend in a browser over HTTP + WebSocket.
 - [x] Headless smoke tests against `Test Roms/` (load + render + save round-trip).
 - [x] RGB565 frame streaming (2 bytes/pixel) to halve bandwidth for low-end devices.
+- [x] **Desktop app verified end-to-end on a real display (Xvfb/XWayland)**: window
+      renders, ROM loads through the real GTK file dialog, game runs with live
+      animation (112k px differ between frames 2s apart), and lockstep sync is
+      active ("Primary waiting for players to ack" / "All players acked").
 
 In progress / next:
 - [ ] Audio routing (both instances' audio to the output).
 - [ ] Further perf: delta/region compression, buffer reuse (if profiling shows need).
 - [ ] Gamepad support for players 3–4 in the browser (Gamepad API).
 - [ ] Reduce mGBA debug log spam in the console.
+
+## Headless desktop-app verification (how we tested it)
+
+The Tauri app was verified on a headless Linux box with a virtual display
+(`DISPLAY=:1`, XWayland under KDE). No new system packages were needed: WebKitGTK,
+GTK3, librsvg and libsoup were already present. Tooling used (all in the gitignored
+`.freebuff/` scratch dir):
+
+- `pip install --target .freebuff/pylibs python-xlib` (pure-Python, no root) for
+  XTEST synthetic input + XGetImage window grabs.
+- `DualBoy/scripts/gui_smoke.py` (committed copy of `.freebuff/drive.py`) — drives the
+  app: focuses the window, scrolls the webview with the End key (wheel events don't
+  reach it), clicks the teal `Load ROM` button (found by grabbing the window and
+  locating teal pixels), then in the GTK `Open File` dialog: Ctrl+L → paste the
+  directory path via an X11 CLIPBOARD selection owner + Ctrl+V → Enter, then Escape,
+  End x2 (selects the last row — the oldest ROM), then Enter to open. Full usage in
+  `DualBoy/scripts/README.md`.
+
+Gotchas discovered while writing it (useful if you redo this):
+- This XWayland's core keyboard map has ONE keysym per keycode, so typing punctuation
+  or shifted characters via XTEST is unreliable → use clipboard paste instead.
+- The window's absolute origin must come from `root.translate_coords(win, 0, 0)`;
+  `win.translate_coords(root, 0, 0)` returns the inverse.
+- The GTK dialog is titled `Open File`; `xwd -id` captures it, and `ffmpeg` converts
+  xwd → png (PIL can't read this xwd variant).
+- Screenshot proof: `xwd -id <win> a.xwd`, wait 2s, `b.xwd`, then `ffmpeg`-convert and
+  diff with PIL → 112,515 differing pixels proves live rendering.
 
 ## Build & run
 
