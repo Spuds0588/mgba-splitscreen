@@ -1012,7 +1012,18 @@ void _lockstepEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) 
 	}
 	MutexUnlock(&coordinator->mutex);
 
-	mASSERT_DEBUG(nextEvent > 0);
+	// A non-positive delay means this player is at or ahead of the shared clock
+	// (or its 32-bit local time wrapped relative to the coordinator). Scheduling
+	// the event at a non-positive delay fires it immediately on the next tick,
+	// re-entering _lockstepEvent forever and busy-spinning the emulation thread.
+	// Clamp to a short positive delay so we re-check sync soon instead. The
+	// player is throttled by GBASIOLockstepPlayerSleep (its host thread is
+	// skipped by the frame loop) rather than by spinning here.
+	if (nextEvent <= 0) {
+		mLOG(GBA_SIO, DEBUG, "Lockstep: clamping non-positive sync delay %d (pid %d)",
+		     nextEvent, player->playerId);
+		nextEvent = 4;
+	}
 	mTimingSchedule(timing, &lockstep->event, nextEvent);
 }
 
@@ -1092,16 +1103,14 @@ void GBASIOLockstepPlayerSleep(struct GBASIOLockstepPlayer* player) {
 	GBAInterrupt(player->driver->d.p->p);
 
 	// DualBoy runs every player sequentially on one thread, so a sleeping player's
-	// thread never actually blocks (the user->sleep callback returns immediately).
-	// Only the PRIMARY's frame ends early here: it must pause at the transfer wait
-	// until the secondaries ack, or it would run straight past the transfer finish
-	// ("MULTI did not receive data"). Secondaries must NOT end their frames — they
-	// keep running to completion on the shared thread so they can deliver their data
-	// and wake the primary; ending a secondary's frame early starves the whole
-	// pipeline (primary asleep + secondary spinning = emulation crawls).
-	if (player->playerId == 0) {
-		++player->driver->d.p->p->video.frameCounter;
-	}
+	// host thread never actually blocks (the user->sleep callback returns
+	// immediately). The frame loop honours the sleep flag: it skips a sleeping
+	// player and instead steps the other player until it wakes this one back up.
+	// `cpu->nextEvent = 0` + `GBAInterrupt` above make the current `runLoop` step
+	// return promptly so the frame loop can switch players mid-frame. We do NOT
+	// bump the video frame counter here: doing so split the player's ROM frame
+	// across two ticks (the next frame boundary then landed one scanline before
+	// the ROM's own vblank wait) and ran that player at half speed.
 }
 
 size_t GBASIOLockstepCoordinatorAttached(struct GBASIOLockstepCoordinator* coordinator) {

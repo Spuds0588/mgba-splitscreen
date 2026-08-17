@@ -99,6 +99,36 @@ impl GbaInstance {
         }
     }
 
+    /// Advance the core by ONE scheduling step (until its next timing event, ~1232
+    /// cycles = one GBA scanline). This is the fine-grained step the frame loop uses
+    /// to cooperatively switch between players mid-frame: a player that sleeps during
+    /// the step has its sleep flag set and is skipped until the other player wakes it.
+    pub fn run_loop(&mut self) {
+        unsafe {
+            if let Some(run_loop_fn) = (*self.core).runLoop {
+                run_loop_fn(self.core);
+            }
+        }
+    }
+
+    /// Current emulated cycle count (wrapping i32). The frame loop uses wrapping
+    /// subtraction to measure per-step progress; that stays correct across the 2^31
+    /// wrap as long as the measured span is well under 2^31 cycles (a frame is ~280k).
+    pub fn current_time(&self) -> i32 {
+        unsafe { bindings::mTimingCurrentTime((*self.core).timing) }
+    }
+
+    /// Video frame counter (increments once per rendered frame at vblank start).
+    pub fn frame_counter(&self) -> u32 {
+        unsafe {
+            if let Some(frame_counter_fn) = (*self.core).frameCounter {
+                frame_counter_fn(self.core)
+            } else {
+                0
+            }
+        }
+    }
+
     pub fn set_sio_driver(&mut self, driver: *mut bindings::GBASIOLockstepDriver) {
         unsafe {
             println!("Attaching SIO driver to core...");

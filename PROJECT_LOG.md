@@ -165,6 +165,33 @@ Done:
       - ROM load auto-starts emulation (`load_rom` sets `is_running`); no extra
         "start" action needed — confirmed from the log (`ROM loaded` → frames flow
         the same second).
+- [x] **GBA link-test ROM** (2026-08-17, `DualBoy/linktest/`): a two-player MULTI
+      link instrument that shows, in near-real-time, the data each side sends and
+      receives (`SIOMLT_SEND`/`SIOMULTI0-3`), the round-trip/gap in frames, current
+      + partner + expected state, a STALL counter, and a live sparkline. Built with
+      bare `clang`/`ld.lld` (no devkitARM needed; see `build.sh`). Its `FRM` counter
+      (game frames since boot) is the key desync probe — the two screens must advance
+      in lockstep. Two ROM bugs were found while building it: RCNT must be cleared
+      (`REG_RCNT = 0`) before MULTI mode or mGBA's mode decode (`(rcnt & 0xC000) |
+      (siocnt & 0x3000) >> 12`) reads GPIO instead of MULTI (dead link), and the
+      framebuffer must be cleared each frame or changing glyphs accumulate into
+      solid blocks.
+- [x] **Lockstep desync + 128s crash fix** (2026-08-17): the linktest exposed that
+      the primary ran at ~half the secondary's speed (`FRM 130` vs `234`), and the
+      link died/spun at ~128 s. Root cause: mGBA's lockstep `user->sleep` is meant
+      to BLOCK a player's host thread, but DualBoy runs both players on one thread,
+      so the old `++video.frameCounter` early-exit hack split the primary's ROM frame
+      across two 60 Hz ticks (half speed) while the secondary — whose sleep flag the
+      frame loop ignored — ran ahead until its 32-bit cycle clock wrapped and
+      `_untilNextSync` returned a negative delay (infinite re-entry spin / assert).
+      Fixed by replacing whole-`runFrame` pacing with cooperative stepping: the frame
+      loop advances each player one timing event at a time (`runLoop`) up to a
+      280896-cycle frame budget, skipping any player whose sleep flag is set until
+      the other player's work wakes it. `GBASIOLockstepPlayerSleep` no longer bumps
+      the frame counter (that was the half-speed cause), and `_lockstepEvent` clamps
+      a non-positive sync delay to 4 cycles instead of asserting. Verified on the
+      linktest: both players hold 60.0 fps with `FRM` in exact parity, STALL 0, and
+      no crash past the old 128 s wrap point (264 s+ observed).
 
 In progress / next:
 - [ ] Root-cause the one observed tokio-worker segfault (`segfault at 4a8` in

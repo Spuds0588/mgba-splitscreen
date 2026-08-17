@@ -380,20 +380,50 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
 
                     any_running = guards.iter().all(|g| g.is_running);
                     if any_running {
-                        // Only the primary (instance 0) pauses while waiting on the
-                        // link. Secondaries always keep running even when the
-                        // coordinator marks them asleep: if a secondary were skipped
-                        // at the same time as the primary, nobody would be left to
-                        // deliver its data and wake the primary — a permanent freeze
-                        // (both players asleep, `_verifyAwake` invariant violated).
-                        // This mirrors mGBA's threaded model, where only the primary
-                        // blocks while secondaries run independently.
-                        for i in 0..guards.len() {
-                            if i == 0 && sleeping.lock().unwrap()[i] {
-                                continue;
+                        // Cooperative stepping: each tick advances every player by one
+                        // video frame (~280896 cycles), switching between players
+                        // whenever one sleeps on the lockstep link. This is the
+                        // sequential equivalent of mGBA's threaded lockstep (a player's
+                        // host thread blocks in user->sleep until another wakes it): a
+                        // sleeping player is skipped, and the other player's work —
+                        // delivering transfer data / acking — is what wakes it. Stepping
+                        // one timing event at a time (instead of whole frames) lets a
+                        // player pause mid-frame and resume exactly where it left off,
+                        // so neither player's ROM frame gets split across ticks and
+                        // both hold a steady ~60 fps.
+                        const FRAME_CYCLES: i32 = 280_896; // GBA VIDEO_TOTAL_LENGTH
+                        let frames_before: Vec<u32> =
+                            guards.iter().map(|g| g.frame_counter()).collect();
+                        let mut budgets = vec![FRAME_CYCLES; n];
+
+                        let mut made_progress = true;
+                        let mut steps = 0u32;
+                        while made_progress && steps < 100_000 {
+                            made_progress = false;
+                            for i in 0..guards.len() {
+                                if budgets[i] <= 0 {
+                                    continue;
+                                }
+                                if sleeping.lock().unwrap()[i] {
+                                    // Waiting on the link; skip until woken.
+                                    continue;
+                                }
+                                made_progress = true;
+                                let before = guards[i].current_time();
+                                guards[i].run_loop();
+                                let delta = guards[i]
+                                    .current_time()
+                                    .wrapping_sub(before)
+                                    .max(1);
+                                budgets[i] -= delta;
+                                steps += 1;
                             }
-                            guards[i].run_frame();
-                            emu_frames[i] += 1;
+                        }
+
+                        for i in 0..guards.len() {
+                            emu_frames[i] += guards[i]
+                                .frame_counter()
+                                .wrapping_sub(frames_before[i]) as u64;
                         }
 
                         tick_no = tick_no.wrapping_add(1);
