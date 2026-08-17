@@ -54,6 +54,13 @@ This repository is a fork of **mGBA** (`Spuds0588/mgba-splitscreen.git`, which t
   (`++player->...->video.frameCounter`) and the frame loop skips a player while its sleep
   flag is set (flipped by `user->sleep`/`wake` in `emulation.rs`) — the sequential-model
   equivalent of the primary's thread blocking.
+- **Lockstep crawl (2026-08-16, commit e1e98006d)**: ending the frame early in
+  `PlayerSleep` must apply to the PRIMARY ONLY (`playerId == 0`). Ending a secondary's
+  frame early starves the pipeline — the primary sleeps at the transfer wait while the
+  secondary spins and never completes its frame, so emulation crawls at 2–3 FPS even
+  though video still broadcasts at 30 FPS. Secondaries keep running to completion so they
+  can deliver data and wake the primary. Symptom to watch for: log clean + low CPU + 30
+  FPS broadcast but static game content = the wrong player's frame is being ended early.
 - **Link attach before boot**: attach the lockstep SIO driver BEFORE `reset`, so the game
   sees the link cable present at boot (mGBA's Qt multiplayer does the same). Attaching
   after boot made the link appear mid-boot.
