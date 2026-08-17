@@ -1,0 +1,4 @@
+# Build artifacts (reproducible via build.sh)
+*.o
+*.elf
+*.gba
