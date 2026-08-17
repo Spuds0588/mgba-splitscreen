@@ -45,6 +45,7 @@ typedef unsigned char  u8;
 #define REG_DISPCNT    (*(vu16*)0x04000000)
 #define REG_VCOUNT     (*(vu16*)0x04000006)
 #define REG_SIOCNT     (*(vu16*)0x04000128)
+#define REG_RCNT       (*(vu16*)0x04000134)
 #define REG_SIOMULTI0  (*(vu16*)0x04000120)
 #define REG_SIOMULTI1  (*(vu16*)0x04000122)
 #define REG_SIOMULTI2  (*(vu16*)0x04000124)
@@ -116,6 +117,14 @@ static void wait_vblank_end(void) {
 static void put_px(int x, int y, u16 color) {
     if (x < 0 || x >= 240 || y < 0 || y >= 160) return;
     VRAM[y * 240 + x] = color;
+}
+
+/* Fill the whole framebuffer with black. MUST be called every frame before
+   draw_ui: dynamic values change each frame, and without a clear their old
+   glyph pixels accumulate until every cell is a solid block. */
+static void clear_screen(void) {
+    int i;
+    for (i = 0; i < 240 * 160; i++) VRAM[i] = C_BLACK;
 }
 
 /* ---- 5x7 font: 7 rows of 5 columns, '1' = lit ---- */
@@ -464,11 +473,13 @@ int main(void) {
     for (i = 0; i < 64; i++) send_frame[i] = 0xFFFF;
     for (i = 0; i < 40; i++) spark[i] = 0;
 
-    /* Enter MULTI mode. The core stamps SIOCNT with our player id (bits 4-5)
-       and the slave bit (bit 2) on every write, but the lockstep coordinator
-       only assigns real ids after the boot-time mode-set negotiation settles —
-       at boot both devices read id 0. Role is therefore re-derived every
-       frame in the main loop, not here. */
+    /* Enter MULTI mode. IMPORTANT: mGBA's SIO mode decode combines RCNT bits
+       14-15 with SIOCNT bits 12-13 ((rcnt & 0xC000) | (siocnt & 0x3000)) >> 12.
+       RCNT resets to 0x8000 (SC bit 15 set), so WITHOUT clearing it every
+       SIOCNT value decodes to GPIO (8), never MULTI — the game would sit in
+       GPIO mode forever, no id/slave bits stamped, no transfers started. Real
+       GBA homebrew clears RCNT before MULTI mode, and so must we. */
+    REG_RCNT = 0;
     REG_SIOCNT = SI_MULTI_MODE;
     cnt = REG_SIOCNT;
     is_master = 1;
@@ -497,12 +508,15 @@ int main(void) {
         wait_vblank_start();
         g_frame++;
         stall++;
+        clear_screen();
 
-        /* Re-stamp SIOCNT in MULTI mode and re-derive our role. The core
+        /* Re-stamp RCNT (keep bits 14-15 clear so the mode decode stays MULTI)
+           and SIOCNT in MULTI mode, then re-derive our role. The core
            recomputes the id (bits 4-5) and slave (bit 2) bits on every write,
            but the lockstep coordinator assigns real ids only after the
            boot-time mode-set negotiation settles — so role must be sampled
            here, every frame, not once at boot. */
+        REG_RCNT = 0;
         REG_SIOCNT = SI_MULTI_MODE;
         cnt = REG_SIOCNT;
         is_master = (((cnt >> 4) & 3) == 0) && !(cnt & 0x0004);
