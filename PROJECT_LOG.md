@@ -70,8 +70,14 @@ This repository is a fork of **mGBA** (`Spuds0588/mgba-splitscreen.git`, which t
   `ensure_logger()` in `emulation.rs` installs the standard logger restricted to
   WARN|ERROR|FATAL (one-time, via `Once`).
 - **Video vs emulation rate**: emulation must stay at ~60 FPS for correct game speed and
-  lockstep sync; video is independent and can be throttled without breaking the link.
-  `EmulationManager::start(fps)` decouples them (web server: `--fps`, default 30).
+  lockstep sync; video is decoupled so throttling it never breaks the link. By default
+  EVERY emulated frame is broadcast (video 60) so frames render at speed; `--fps` can
+  only LOWER the send rate for bandwidth-constrained headless use. The wrapper must
+  never drop frames on the producer side — that was the bug where the log counted
+  ~58 emu fps but the frontend only ever saw 29.7 (half of every emulated frame was
+  thrown away by the integer `video_every` tick). Slow consumers drop on the consumer
+  side instead: the tokio broadcast channel drops for lagging receivers, and the
+  frontend coalesces to `requestAnimationFrame` showing the latest frame.
 
 ## Status
 
@@ -128,6 +134,19 @@ Done:
       asleep + secondary spinning → emulation crawled at 2–3 FPS (clean log, low CPU,
       but static content). After: both players animate continuously (verified 13–14/14
       observation windows), 30 FPS broadcast, zero link errors, 4.7% CPU.
+- [x] **Render frames at speed** (2026-08-16): the per-second log exposed the wrapper
+      bug — `emu P1=[57.5] P2=[59.5] fps | video:29.7 fps` counted ~58 emulated frames
+      but broadcast exactly half (the 30 FPS `video_every=2` default dropped every
+      other frame on the producer side). Fixed by broadcasting every emulated frame
+      (video default 60 in both the desktop app and web server), replacing the
+      per-frame `sleep(16.6 ms − work)` pacing with a deadline-based limiter against a
+      fixed 60 Hz clock (mGBA frame-limiter style: overshoot eats the next tick's
+      budget instead of accumulating drift; large gaps snap forward so a host
+      suspend/resume doesn't fast-forward the game), and making the frontend drop
+      stale frames (`requestAnimationFrame` latest-frame coalescing) instead of
+      queueing them behind a slow compositor. Emulation stays decoupled from the
+      consumer — the broadcast channel drops for lagging receivers, so "fine with
+      dropping frames to stay synced" is the built-in contract.
 - [x] **Observability** (2026-08-16, commit xxx):
       - Per-second stats line for every instance, streamed to stdout AND the frontend:
         `[t=52s] emu P1=[57.4] P2=[59.4] fps | sleep:[.T] | video:29.7 fps` — frame
@@ -213,13 +232,15 @@ cargo build --release        # ALWAYS release: the Rust frame pipeline is ~10x f
 ./target/release/dualboy     # desktop window (needs a display)
 
 cargo test --release         # 128 unit + 2 smoke tests (needs Test Roms/)
-cargo run --release --bin dualboy-web -- --players 4 --fps 30  # http://127.0.0.1:8080
+cargo run --release --bin dualboy-web -- --players 4            # http://127.0.0.1:8080 (video 60)
+cargo run --release --bin dualboy-web -- --players 4 --fps 30   # headless: throttle video to 30
 cargo run --release --bin bench -- <rom.gba> [players]         # emulation speed only
 ```
 
 Build notes: first `libmgba` build takes minutes and several GB RAM (needs cmake + clang).
 This workspace has 15 GB RAM / 8 cores, which is plenty. `--fps` sets the video send rate
-(1–60, default 30) independently of emulation speed; always use `cargo build --release`.
+(1–60, default 60: every emulated frame) independently of emulation speed; lowering it
+never slows emulation. Always use `cargo build --release`.
 
 ## Handoff notes for future sessions
 

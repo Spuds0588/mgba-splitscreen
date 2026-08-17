@@ -43,11 +43,14 @@ fn parse_players() -> usize {
 }
 
 fn parse_fps() -> u32 {
-    let mut fps = 30;
+    // Default 60: broadcast every emulated frame so frames are rendered at speed.
+    // Lower values drop frames on the producer side for bandwidth-constrained
+    // headless testing; they never slow emulation.
+    let mut fps = 60;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--fps" {
-            fps = args.next().and_then(|v| v.parse().ok()).unwrap_or(30);
+            fps = args.next().and_then(|v| v.parse().ok()).unwrap_or(60);
         }
     }
     fps.clamp(1, 60)

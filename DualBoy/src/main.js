@@ -153,14 +153,30 @@ function initScreens(count) {
   layout(count);
 }
 
+// The backend broadcasts every emulated frame at 60 FPS and never blocks on us.
+// Rendering is coalesced to the display refresh rate with requestAnimationFrame
+// and always shows the LATEST frame: if the compositor can't keep up, stale
+// frames are dropped (not queued), so the video never lags behind real-time.
+let pendingFrame = null;
+let renderScheduled = false;
+
 function onFrame(data) {
-  const bytes = new Uint8ClampedArray(data);
-  for (let i = 0; i < playerCount; i++) {
-    if (data.byteLength < FRAME_SIZE * (i + 1)) break;
-    const off = i * FRAME_SIZE;
-    screens[i].imgData.data.set(bytes.subarray(off, off + FRAME_SIZE));
-    screens[i].ctx.putImageData(screens[i].imgData, 0, 0);
-  }
+  pendingFrame = data;
+  if (renderScheduled) return;
+  renderScheduled = true;
+  requestAnimationFrame(() => {
+    renderScheduled = false;
+    const frame = pendingFrame;
+    pendingFrame = null;
+    if (!frame) return;
+    const bytes = new Uint8ClampedArray(frame);
+    for (let i = 0; i < playerCount; i++) {
+      if (frame.byteLength < FRAME_SIZE * (i + 1)) break;
+      const off = i * FRAME_SIZE;
+      screens[i].imgData.data.set(bytes.subarray(off, off + FRAME_SIZE));
+      screens[i].ctx.putImageData(screens[i].imgData, 0, 0);
+    }
+  });
 }
 
 // ---- Debug overlay (backend status text frames) ----

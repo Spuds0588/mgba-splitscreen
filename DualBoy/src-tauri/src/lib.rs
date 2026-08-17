@@ -134,9 +134,10 @@ async fn start_websocket_server() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     println!("Starting emulation manager...");
-    // Start emulation thread at full 60 FPS; video is broadcast at 30 FPS to keep the
-    // link fast and the UI light (see EmulationManager::start).
-    EMULATOR.start(30);
+    // Emulation at 60 FPS with every emulated frame broadcast (video 60). The
+    // frontend renders each one and drops only what its compositor can't keep up
+    // with (see EmulationManager::start).
+    EMULATOR.start(60);
     println!("Emulation manager started.");
 
     println!("Starting WebSocket server...");

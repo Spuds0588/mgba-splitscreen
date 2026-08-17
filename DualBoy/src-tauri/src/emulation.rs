@@ -328,10 +328,15 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
         self.sleeping_flags.lock().unwrap()[i]
     }
 
-    /// Start the emulation loop. Emulation always runs at ~60 FPS so the games keep
-    /// correct speed and the lockstep link stays in sync; video frames are only built
-    /// and broadcast `video_fps` times per second, decoupled from emulation so lowering
-    /// the video rate never slows the game or breaks the link.
+    /// Start the emulation loop. Emulation runs at a steady ~60 FPS (deadline-paced
+    /// against a global 60 Hz clock, mGBA frame-limiter style) so the games keep
+    /// correct speed and the lockstep link stays in sync. Every emulated frame is
+    /// broadcast to the frontend (video default 60), so frames are rendered at speed
+    /// instead of half of them being dropped by the wrapper. `video_fps` can only
+    /// LOWER the send rate (every Nth frame) for bandwidth-constrained headless use;
+    /// it never slows emulation. Slow consumers don't hold up emulation either — the
+    /// broadcast channel drops frames for lagging receivers, which is the
+    /// "drop frames to stay synced" contract.
     pub fn start(&self, video_fps: u32) {
         let instances = self.instances.clone();
         let sleeping = self.sleeping_flags.clone();
@@ -341,10 +346,18 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
 
         thread::spawn(move || {
             use std::io::Write;
-            let mut last_frame = Instant::now();
-            let frame_duration = Duration::from_micros(16666); // ~60 FPS emulation
+            // 60 Hz emulation pace. Each tick targets the next 16666 µs boundary from
+            // a FIXED start, not "sleep 16.6 ms minus work" measured from the previous
+            // tick's end: per-tick sleep overshoot (Linux ~1 ms granularity) just eats
+            // into the next tick's budget instead of accumulating as drift, so the
+            // average rate stays exactly 60 FPS (the old loop measured 57.5–59.5).
+            let tick = Duration::from_micros(16666); // ~60 FPS
+            let started = Instant::now();
+            let mut next_deadline = started + tick;
+            // video_fps=60 → every emulated frame is broadcast. Lower values drop
+            // whole frames on the producer side (constrained headless use only).
             let video_every = (60 / video_fps.clamp(1, 60)).max(1);
-            let mut tick = 0u32;
+            let mut tick_no = 0u32;
 
             // Per-second instrumentation: cumulative emu/video frame counters, snapshotted
             // once per second to derive per-instance FPS. A line is printed (and sent to
@@ -383,8 +396,8 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
                             emu_frames[i] += 1;
                         }
 
-                        tick = tick.wrapping_add(1);
-                        if tick % video_every == 0 {
+                        tick_no = tick_no.wrapping_add(1);
+                        if tick_no % video_every == 0 {
                             // RGBA8888: 4 bytes/pixel so the frontend can putImageData
                             // directly with no per-pixel decode.
                             let mut combined = Vec::with_capacity(240 * 160 * 4 * guards.len());
@@ -397,11 +410,18 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
                     }
                 }
 
-                let elapsed = last_frame.elapsed();
-                if elapsed < frame_duration {
-                    thread::sleep(frame_duration - elapsed);
+                // Wait for the next 60 Hz boundary. Small overruns (one slow frame)
+                // just eat into the next tick's budget so the average rate stays 60;
+                // only a large gap (host suspend/resume or a multi-second stall)
+                // snaps the clock forward instead of fast-forwarding the game to
+                // "catch up" after the resume.
+                let now = Instant::now();
+                if now < next_deadline {
+                    thread::sleep(next_deadline - now);
+                } else if now - next_deadline > Duration::from_millis(250) {
+                    next_deadline = now;
                 }
-                last_frame = Instant::now();
+                next_deadline += tick;
 
                 // ---- Per-second stats line (also streamed to the overlay) ----
                 let now = Instant::now();
