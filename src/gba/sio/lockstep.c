@@ -1093,13 +1093,15 @@ void GBASIOLockstepPlayerSleep(struct GBASIOLockstepPlayer* player) {
 
 	// DualBoy runs every player sequentially on one thread, so a sleeping player's
 	// thread never actually blocks (the user->sleep callback returns immediately).
-	// To give the secondary time to deliver its data before this player's transfer
-	// completion event fires (the exact cause of "MULTI did not receive data"), end
-	// the current frame right here: the DualBoy frame loop sees this player asleep
-	// and skips running it until it is woken. Ending the frame via the frame counter
-	// makes `_GBACoreRunFrame` return; the renderer resumes where it left off when
-	// the player runs again.
-	++player->driver->d.p->p->video.frameCounter;
+	// Only the PRIMARY's frame ends early here: it must pause at the transfer wait
+	// until the secondaries ack, or it would run straight past the transfer finish
+	// ("MULTI did not receive data"). Secondaries must NOT end their frames — they
+	// keep running to completion on the shared thread so they can deliver their data
+	// and wake the primary; ending a secondary's frame early starves the whole
+	// pipeline (primary asleep + secondary spinning = emulation crawls).
+	if (player->playerId == 0) {
+		++player->driver->d.p->p->video.frameCounter;
+	}
 }
 
 size_t GBASIOLockstepCoordinatorAttached(struct GBASIOLockstepCoordinator* coordinator) {

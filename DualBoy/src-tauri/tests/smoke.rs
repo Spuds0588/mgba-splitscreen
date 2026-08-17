@@ -28,11 +28,12 @@ fn loads_rom_and_renders_frames() {
     mgr.load_rom(&rom).expect("load ROM into all instances");
 
     // Run a couple seconds of frames; the BIOS/title screen should render pixels.
-    // (Skip instances currently waiting on the link cable, like the frame loop does.)
+    // (Only the primary pauses on the link cable; secondaries always run so they
+    // can deliver data and wake it — matching the emulation loop.)
     for _ in 0..60 {
         let mut guards: Vec<_> = mgr.instances.iter().map(|i| i.lock().unwrap()).collect();
         for i in 0..guards.len() {
-            if mgr.instance_sleeping(i) {
+            if i == 0 && mgr.instance_sleeping(i) {
                 continue;
             }
             guards[i].run_frame();
@@ -53,11 +54,11 @@ fn save_round_trip() {
     mgr.load_rom(&rom).expect("load ROM");
 
     // Run a few seconds of frames so the game initializes its save memory
-    // (frames can be skipped while an instance waits on the link cable).
+    // (only the primary pauses on the link cable; secondaries keep running).
     for _ in 0..180 {
         let mut guards: Vec<_> = mgr.instances.iter().map(|i| i.lock().unwrap()).collect();
         for i in 0..guards.len() {
-            if mgr.instance_sleeping(i) {
+            if i == 0 && mgr.instance_sleeping(i) {
                 continue;
             }
             guards[i].run_frame();

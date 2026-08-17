@@ -291,10 +291,16 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
                         instances.iter().map(|i| i.lock().unwrap()).collect();
 
                     if guards.iter().all(|g| g.is_running) {
-                        // Skip players waiting on the link (their frame ended early at
-                        // the sync point); they resume once the other player wakes them.
+                        // Only the primary (instance 0) pauses while waiting on the
+                        // link. Secondaries always keep running even when the
+                        // coordinator marks them asleep: if a secondary were skipped
+                        // at the same time as the primary, nobody would be left to
+                        // deliver its data and wake the primary — a permanent freeze
+                        // (both players asleep, `_verifyAwake` invariant violated).
+                        // This mirrors mGBA's threaded model, where only the primary
+                        // blocks while secondaries run independently.
                         for i in 0..guards.len() {
-                            if sleeping.lock().unwrap()[i] {
+                            if i == 0 && sleeping.lock().unwrap()[i] {
                                 continue;
                             }
                             guards[i].run_frame();

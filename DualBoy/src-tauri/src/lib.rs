@@ -9,7 +9,18 @@ use tokio_tungstenite::tungstenite::Message;
 use futures_util::{SinkExt, StreamExt};
 use crate::emulation::EmulationManager;
 
-static EMULATOR: Lazy<Arc<EmulationManager>> = Lazy::new(|| Arc::new(EmulationManager::new(2)));
+/// Player count for the desktop app is configurable via `--players N` (2-4),
+/// defaulting to 2, so 3- and 4-player link testing doesn't need a code change.
+static EMULATOR: Lazy<Arc<EmulationManager>> = Lazy::new(|| {
+    let mut players = 2usize;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--players" {
+            players = args.next().and_then(|v| v.parse().ok()).unwrap_or(2);
+        }
+    }
+    Arc::new(EmulationManager::new(players.clamp(2, 4)))
+});
 
 #[tauri::command]
 async fn load_rom(path: String) -> Result<(), String> {
