@@ -1,18 +1,32 @@
-use std::sync::{Arc, Mutex};
+use std::os::raw::{c_char, c_int};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use crate::gba::GbaInstance;
 use crate::bindings;
 
+/// Broadcast channel for status/overlay messages (one string per event). The frame
+/// loop publishes per-second stats and stall warnings; mGBA WARN/ERROR/FATAL lines are
+/// forwarded here too (see `overlay_log`). WS servers relay these to the frontend,
+/// which renders them as an on-screen debug overlay.
+static OVERLAY_TX: OnceLock<broadcast::Sender<String>> = OnceLock::new();
+
 /// mGBA installs no default logger by itself; without one, `mLog()` prints every level
 /// (including DEBUG BIOS SWI traces and lockstep chatter) to stdout on every call, which
 /// floods the console and drags performance via synchronous I/O. Install the standard
-/// logger once, restricted to WARN/ERROR/FATAL.
+/// logger once, restricted to WARN/ERROR/FATAL, and:
+/// 1. Make C's stdout UNBUFFERED so mGBA's log lines hit the log file immediately even
+///    if the process crashes (C stdout is fully buffered when redirected to a file, so
+///    lines could be lost in a buffer on a hard crash).
+/// 2. Override the log callback so WARN+ lines are also forwarded to the on-screen
+///    debug overlay (OVERLAY_TX).
 fn ensure_logger() {
     use std::sync::Once;
     static INIT: Once = Once::new();
     INIT.call_once(|| unsafe {
+        bindings::setvbuf(bindings::stdout, std::ptr::null_mut(), bindings::_IONBF as c_int, 0);
+
         let logger: *mut bindings::mStandardLogger =
             Box::into_raw(Box::new(std::mem::zeroed::<bindings::mStandardLogger>()));
         bindings::mStandardLoggerInit(logger);
@@ -23,8 +37,40 @@ fn ensure_logger() {
                 | bindings::mLogLevel_mLOG_ERROR
                 | bindings::mLogLevel_mLOG_FATAL) as i32;
         }
+        (*logger).d.log = Some(overlay_log);
         bindings::mLogSetDefaultLogger(&mut (*logger).d as *mut bindings::mLogger);
     });
+}
+
+/// mLogger callback: formats the message (mGBA passes a printf-style format + va_list),
+/// prints it to stdout, and forwards it to the on-screen overlay channel.
+unsafe extern "C" fn overlay_log(
+    _logger: *mut bindings::mLogger,
+    _category: c_int,
+    _level: bindings::mLogLevel,
+    format: *const c_char,
+    args: *mut bindings::__va_list_tag,
+) {
+    if format.is_null() {
+        return;
+    }
+    let mut buf = [0i8; 2048];
+    let n = bindings::vsnprintf(
+        buf.as_mut_ptr(),
+        buf.len() as std::os::raw::c_ulong,
+        format,
+        args,
+    );
+    if n <= 0 {
+        return;
+    }
+    let msg = std::ffi::CStr::from_ptr(buf.as_ptr())
+        .to_string_lossy()
+        .into_owned();
+    println!("[mGBA] {msg}");
+    if let Some(tx) = OVERLAY_TX.get() {
+        let _ = tx.send(format!("[mGBA] {msg}"));
+    }
 }
 
 /// mGBA's lockstep calls `user->sleep`/`wake` to block/resume a player's host thread
@@ -109,6 +155,8 @@ impl Drop for LockstepCoordinator {
 pub struct EmulationManager {
     pub instances: Vec<Arc<Mutex<GbaInstance>>>,
     pub frame_sender: broadcast::Sender<Vec<u8>>,
+    /// Status/overlay events (per-second stats, stall warnings, mGBA WARN+ lines).
+    pub status_sender: broadcast::Sender<String>,
     /// Per-player "waiting for the link" flag, flipped by the lockstep sleep/wake
     /// callbacks (via raw pointers into this Vec's heap buffer). The frame loop
     /// skips a player while its flag is set.
@@ -128,6 +176,8 @@ impl EmulationManager {
     /// to `MAX_GBAS` (4) players; the count is clamped to [2, 4].
     pub fn new(count: usize) -> Self {
         let count = count.clamp(2, 4);
+        let (status_tx, _) = broadcast::channel(64);
+        let _ = OVERLAY_TX.set(status_tx.clone());
         ensure_logger();
         println!("Creating EmulationManager with {count} instances...");
         let (tx, _) = broadcast::channel(10);
@@ -168,6 +218,7 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
         EmulationManager {
             instances,
             frame_sender: tx,
+            status_sender: status_tx,
             sleeping_flags,
             drivers,
             _users: users,
@@ -194,6 +245,13 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
             }
         }
         drop(guards);
+        if let Some(tx) = OVERLAY_TX.get() {
+            let name = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path);
+            let _ = tx.send(format!("ROM loaded: {name}"));
+        }
         Ok(())
     }
 
@@ -278,19 +336,37 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
         let instances = self.instances.clone();
         let sleeping = self.sleeping_flags.clone();
         let tx = self.frame_sender.clone();
+        let status_tx = self.status_sender.clone();
+        let n = instances.len();
 
         thread::spawn(move || {
+            use std::io::Write;
             let mut last_frame = Instant::now();
             let frame_duration = Duration::from_micros(16666); // ~60 FPS emulation
             let video_every = (60 / video_fps.clamp(1, 60)).max(1);
             let mut tick = 0u32;
+
+            // Per-second instrumentation: cumulative emu/video frame counters, snapshotted
+            // once per second to derive per-instance FPS. A line is printed (and sent to
+            // the overlay) every second so the log always has fresh data and frame drops
+            // are visible when they happen.
+            let started = Instant::now();
+            let mut emu_frames = vec![0u64; n];
+            let mut video_frames = 0u64;
+            let mut last_stats = Instant::now();
+            let mut prev_emu = emu_frames.clone();
+            let mut prev_video = 0u64;
+            let mut any_running;
+            let mut stall_streak = 0u32;
+            let mut was_stalled = false;
 
             loop {
                 {
                     let mut guards: Vec<_> =
                         instances.iter().map(|i| i.lock().unwrap()).collect();
 
-                    if guards.iter().all(|g| g.is_running) {
+                    any_running = guards.iter().all(|g| g.is_running);
+                    if any_running {
                         // Only the primary (instance 0) pauses while waiting on the
                         // link. Secondaries always keep running even when the
                         // coordinator marks them asleep: if a secondary were skipped
@@ -304,6 +380,7 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
                                 continue;
                             }
                             guards[i].run_frame();
+                            emu_frames[i] += 1;
                         }
 
                         tick = tick.wrapping_add(1);
@@ -315,6 +392,7 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
                                 combined.extend_from_slice(&gba.get_pixels_rgba());
                             }
                             let _ = tx.send(combined);
+                            video_frames += 1;
                         }
                     }
                 }
@@ -324,6 +402,66 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
                     thread::sleep(frame_duration - elapsed);
                 }
                 last_frame = Instant::now();
+
+                // ---- Per-second stats line (also streamed to the overlay) ----
+                let now = Instant::now();
+                if now.duration_since(last_stats) >= Duration::from_secs(1) {
+                    let dt = now.duration_since(last_stats).as_secs_f64().max(0.001);
+                    let per: Vec<String> = emu_frames
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &f)| {
+                            format!("P{}=[{:.1}]", i + 1, (f - prev_emu[i]) as f64 / dt)
+                        })
+                        .collect();
+                    let sleep: String = {
+                        let s = sleeping.lock().unwrap();
+                        s.iter().map(|&b| if b { "T" } else { "." }).collect()
+                    };
+                    let vfps = (video_frames - prev_video) as f64 / dt;
+                    let line = format!(
+                        "[t={:.0}s] emu {} fps | sleep:[{}] | video:{:.1} fps",
+                        started.elapsed().as_secs_f64(),
+                        per.join(" "),
+                        sleep,
+                        vfps
+                    );
+                    println!("{line}");
+                    let _ = std::io::stdout().flush();
+                    let _ = status_tx.send(line);
+
+                    // Stall detection: with a ROM loaded, any instance under 30 emu fps
+                    // for 2+ consecutive seconds is a real slowdown (lockstep stall).
+                    let min_emu = emu_frames
+                        .iter()
+                        .zip(&prev_emu)
+                        .map(|(&f, &p)| (f - p) as f64 / dt)
+                        .fold(f64::MAX, f64::min);
+                    if any_running && min_emu < 30.0 {
+                        stall_streak += 1;
+                        if stall_streak >= 2 && !was_stalled {
+                            was_stalled = true;
+                            let msg = format!(
+                                "WARN STALL: emulation under 30 fps for {stall_streak}s \
+                                 (sleep:[{sleep}] min_emu={min_emu:.1} fps)"
+                            );
+                            println!("{msg}");
+                            let _ = std::io::stdout().flush();
+                            let _ = status_tx.send(msg);
+                        }
+                    } else if was_stalled {
+                        was_stalled = false;
+                        stall_streak = 0;
+                        let msg = "OK recovered: emulation back above 30 fps".to_string();
+                        println!("{msg}");
+                        let _ = std::io::stdout().flush();
+                        let _ = status_tx.send(msg);
+                    }
+
+                    prev_emu = emu_frames.clone();
+                    prev_video = video_frames;
+                    last_stats = now;
+                }
             }
         });
     }

@@ -41,5 +41,9 @@
     <!-- Screens fill the rest of the window; grid cells are laid out like a
          video call (2/3/4 equal regions, letterboxed to the GBA 3:2 ratio). -->
     <main id="screens" class="screen-container"></main>
+
+    <!-- Debug overlay: live per-second stats + mGBA WARN/ERROR lines streamed
+         from the backend over the WebSocket (text frames). -->
+    <div id="overlay" class="overlay"></div>
   </body>
 </html>

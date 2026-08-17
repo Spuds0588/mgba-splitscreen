@@ -122,12 +122,38 @@ Done:
       menu bar (no scrolling, no keyboard-focus conflicts). `bench` shows 4 synced
       instances of *Shining Soul II* emulate at ~4,000 FPS on one thread (0.24
       ms/frame) — **emulation is not the bottleneck**, rendering/UI was.
+- [x] **Lockstep crawl fix** (2026-08-16, commit e1e98006d): only the PRIMARY ends its
+      frame early at a lockstep sleep; secondaries run to completion so they deliver
+      data and wake the primary. Before: both players ended frames early → primary
+      asleep + secondary spinning → emulation crawled at 2–3 FPS (clean log, low CPU,
+      but static content). After: both players animate continuously (verified 13–14/14
+      observation windows), 30 FPS broadcast, zero link errors, 4.7% CPU.
+- [x] **Observability** (2026-08-16, commit xxx):
+      - Per-second stats line for every instance, streamed to stdout AND the frontend:
+        `[t=52s] emu P1=[57.4] P2=[59.4] fps | sleep:[.T] | video:29.7 fps` — frame
+        drops are visible the second they happen (`sleep:[T.]` = primary waiting on
+        the link). Stall detection warns on-screen and in the log if any instance runs
+        under 30 emu fps for 2+ s, and reports recovery.
+      - C stdout is unbuffered (`setvbuf(_IONBF)`) so mGBA WARN/ERROR lines hit the log
+        file immediately even on a hard crash (C stdout is fully buffered when
+        redirected to a file, so lines were previously lost in the buffer).
+      - mGBA WARN/ERROR/FATAL lines are forwarded over the WebSocket as text frames
+        and rendered as an on-screen debug overlay (bottom ticker, last 6 lines),
+        colored by severity. Implemented as a custom `mLogger` callback that formats
+        the printf-style message via `vsnprintf` (bindings already expose it).
+      - Player color coding like a video call: P1 red, P2 blue, P3 green, P4 orange
+        border around each tile + matching bottom-right tag.
+      - ROM load auto-starts emulation (`load_rom` sets `is_running`); no extra
+        "start" action needed — confirmed from the log (`ROM loaded` → frames flow
+        the same second).
 
 In progress / next:
 - [ ] Root-cause the one observed tokio-worker segfault (`segfault at 4a8` in
       `dualboy-web`): suspected cross-thread `load_rom` (tokio) vs `run_frame` (std
       emulation thread), possibly aggravated by the old debug build's log flood. Needs
-      sustained-play re-testing now that logging and build profile are fixed.
+      sustained-play re-testing now that logging and build profile are fixed. The new
+      per-second stats + unbuffered stdout make a recurrence visible immediately in
+      `/tmp/dualboy_app.log` before any crash.
 - [ ] Verify Four Swords *enters* an actual 2-player session end-to-end (the link now
       stays clean with zero desyncs; `adaptive_play.py` menu navigation needs tuning).
 - [ ] Audio routing (both instances' audio to the output).

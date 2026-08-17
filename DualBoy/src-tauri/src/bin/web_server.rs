@@ -86,6 +86,7 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
     let mut frames = state.manager.frame_sender.subscribe();
+    let mut status_rx = state.manager.status_sender.subscribe();
 
     loop {
         tokio::select! {
@@ -96,6 +97,18 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             break;
                         }
                     }
+                    Err(_) => break,
+                }
+            }
+            status = status_rx.recv() => {
+                match status {
+                    Ok(text) => {
+                        // Overlay/stats line: text frame, distinct from binary pixels.
+                        if sender.send(Message::Text(text.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(_) => break,
                 }
             }

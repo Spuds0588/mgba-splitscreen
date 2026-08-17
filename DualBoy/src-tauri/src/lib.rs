@@ -76,6 +76,7 @@ async fn start_websocket_server() {
         let emulator = EMULATOR.clone();
         tokio::spawn(async move {
             let mut rx = emulator.frame_sender.subscribe();
+            let mut status_rx = emulator.status_sender.subscribe();
             let mut ws_stream = tokio_tungstenite::accept_async(stream)
                 .await
                 .expect("Error during WS handshake");
@@ -90,6 +91,18 @@ async fn start_websocket_server() {
                                     break;
                                 }
                             }
+                            Err(_) => break,
+                        }
+                    }
+                    status = status_rx.recv() => {
+                        match status {
+                            Ok(text) => {
+                                // Overlay/stats line: text frame, distinct from binary pixels.
+                                if sender.send(Message::Text(text.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                             Err(_) => break,
                         }
                     }

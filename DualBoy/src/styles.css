@@ -140,3 +140,58 @@ body {
   letter-spacing: 0.04em;
   pointer-events: none;
 }
+
+/* ---- Player color coding (like name borders on a video call) ---- */
+.screen-cell.player-1 { outline: 3px solid #ff4444; outline-offset: -3px; }
+.screen-cell.player-2 { outline: 3px solid #4488ff; outline-offset: -3px; }
+.screen-cell.player-3 { outline: 3px solid #2eaa44; outline-offset: -3px; }
+.screen-cell.player-4 { outline: 3px solid #e08a1e; outline-offset: -3px; }
+
+/* Bottom-right player tag, matching the border color. */
+.screen-tag {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fff;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+.screen-tag.player-1 { background: #ff4444; }
+.screen-tag.player-2 { background: #4488ff; }
+.screen-tag.player-3 { background: #2eaa44; }
+.screen-tag.player-4 { background: #e08a1e; }
+
+/* ---- Debug overlay (bottom ticker, pointer-transparent) ---- */
+.overlay {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 200;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+}
+
+.overlay .line {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.78);
+  color: #9fe8ff;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-shadow: 0 1px 2px #000;
+}
+.overlay .line.warn { color: #ffb066; }
+.overlay .line.err  { color: #ff6f6f; }
+.overlay .line.ok   { color: #7dff8a; }

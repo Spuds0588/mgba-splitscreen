@@ -52,6 +52,11 @@ const P2_MAP = {
 // One entry per player; extended if the backend runs more than two instances.
 const PLAYER_MAPS = [P1_MAP, P2_MAP];
 
+// Player color coding (like name borders on a video call): P1 red, P2 blue,
+// P3 green, P4 orange. Same palette for the border and the bottom-right tag.
+const PLAYER_TAGS = ['player-1', 'player-2', 'player-3', 'player-4'];
+
+const OVERLAY_MAX = 6;
 let playerCount = 2;
 let screens = []; // { canvas, ctx, imgData }
 let keyStates = [];
@@ -104,11 +109,16 @@ function initScreens(count) {
 
   for (let i = 0; i < count; i++) {
     const cell = document.createElement('div');
-    cell.className = 'screen-cell';
+    cell.className = 'screen-cell ' + (PLAYER_TAGS[i] || '');
 
     const label = document.createElement('div');
     label.className = 'screen-label';
     label.textContent = `P${i + 1}`;
+
+    // Bottom-right tag, colored to match the tile border.
+    const tag = document.createElement('div');
+    tag.className = 'screen-tag ' + (PLAYER_TAGS[i] || '');
+    tag.textContent = `P${i + 1}`;
 
     const canvas = document.createElement('canvas');
     canvas.width = GBA_WIDTH;
@@ -116,6 +126,7 @@ function initScreens(count) {
 
     cell.appendChild(canvas);
     cell.appendChild(label);
+    cell.appendChild(tag);
     container.appendChild(cell);
 
     const ctx = canvas.getContext('2d');
@@ -150,6 +161,20 @@ function onFrame(data) {
     screens[i].imgData.data.set(bytes.subarray(off, off + FRAME_SIZE));
     screens[i].ctx.putImageData(screens[i].imgData, 0, 0);
   }
+}
+
+// ---- Debug overlay (backend status text frames) ----
+
+function pushOverlay(text) {
+  const el = document.getElementById('overlay');
+  const line = document.createElement('div');
+  line.className = 'line';
+  if (text.startsWith('WARN') || text.startsWith('[mGBA]')) line.className += ' warn';
+  else if (text.startsWith('ERROR') || text.includes('fail')) line.className += ' err';
+  else if (text.startsWith('OK') || text.startsWith('ROM loaded')) line.className += ' ok';
+  line.textContent = text;
+  el.appendChild(line);
+  while (el.children.length > OVERLAY_MAX) el.removeChild(el.firstChild);
 }
 
 async function setKeys(player, keys) {
@@ -333,7 +358,11 @@ function connectWebSocket() {
   const url = IS_TAURI ? 'ws://127.0.0.1:8088' : 'ws://127.0.0.1:8080/ws';
   socket = new WebSocket(url);
   socket.binaryType = 'arraybuffer';
-  socket.onmessage = (event) => onFrame(event.data);
+  socket.onmessage = (event) => {
+    // Text frames are backend status/overlay lines; binary frames are pixels.
+    if (typeof event.data === 'string') pushOverlay(event.data);
+    else onFrame(event.data);
+  };
   socket.onclose = () => setTimeout(connectWebSocket, 1000);
 }
 
