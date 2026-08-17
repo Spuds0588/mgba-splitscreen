@@ -219,6 +219,74 @@ Done:
       clear) instead of reading the live mid-frame buffer. `cargo test` green
       (128 unit + 2 smoke).
 
+## Player-count selector (1–4) + real-game linked test
+
+- **UI:** new **Players** menu in the top bar lets you pick 1–4 linked instances
+  (solo = single GBA with no link driver). The menu highlights the active count, and
+  changing it restarts the emulator with that many instances. Backend: `set_player_count`
+  command on `lib.rs`; the emulation manager now stops/rebuilds its instance set at
+  runtime instead of taking the count only from the `--players` CLI flag (still honored
+  as the initial default). Works in both the Tauri app and `dualboy-web`.
+- **P3/P4 keyboard maps** were added earlier for 4P (`DualBoy/src/main.js`), disjoint
+  from P1/P2.
+- **Real-game linked test (2P, Four Swords):** drove both players through the full
+  flow — boot → name entry (AAAA) → save → file select → CHOOSE A GAME → Four Swords
+  → FS title → character select → in-game story/pause screens — entirely over the WS
+  with `nav_fs.py` + manual button pushes. The character-select screen that used to
+  crawl now runs at full speed. Both players held **60.0 fps for 672+ seconds** with
+  zero stalls, and per-player inputs are independent and responsive (P1-only START
+  changed only P1's frame). The earlier "stuck at title"/"alttp" readings were OCR
+  misdetections of FS's bright title/character-select screens, not a hang.
+
+## Four Swords link handshake — root cause (2026-08-17, still OPEN upstream)
+
+The FS linking screen ("Linking with other systems… Please wait a moment") does
+**not** establish the link — it hangs there. This is a real bug, not a nav
+misdetection. Root-caused as far as practical with player-tagged SIO tracing
+(value-change-gated reads/writes of SIOCNT/SIOMLT_SEND/SIOMULTI + the lockstep
+MODE_SET/TRANSFER_START/READY/hard-sync event flow):
+
+- **The data path is correct.** Both players reach MULTI mode, correct IDs
+  (P0=parent `200B`/id 0, P1=child `601F`/id 1), ready bit (SD) = 1. 12,741
+  transfers complete, and every `MULTI transfer finished` value matches exactly
+  what each side wrote to `SIOMLT_SEND` (verified: `FEFE 0000` → `0068 006A` →
+  `FF89 0000` → `0000 0000`…). No corruption, no 4-bit-vs-16-bit issue — GBATEK
+  confirms MULTI sends the full 16-bit SIOMLT_SEND per player.
+- **The game still retries forever.** The handshake is `FEFE` probe → value →
+  checksum (value + checksum = 0xFFF1, a validity pair) → idle `0000`s → next
+  `FEFE`. 984 `FEFE` probes in one capture = 984 failed attempts. In one attempt
+  both sides sent IDENTICAL value+checksum (`006A`/`FF87`) and it still reset, so
+  it is not a value mismatch — the master/slave state machines desynchronize.
+- **The game reads SIOCNT only** (confirmed zero `RCNT` reads), so the failure is
+  in a SIOCNT bit it polls (busy/ready/ID) or in the timing of transfer completion
+  relative to the game's poll — not in an unmodeled RCNT SC bit.
+- **Our C SIO code is upstream-identical.** `diff` vs `mgba-emu/mgba` master shows
+  `sio.c`/`io.c` byte-identical and `lockstep.c` differing only by the committed
+  non-positive-delay clamp (for the 128s wrap) — so this is **upstream mGBA
+  issue #3286** ("can't get past the Linking screen", still open, `blocked: needs
+  retest`), not a DualBoy wrapper regression. It reproduces in stock mGBA.
+- **Most promising lead:** upstream's `a0647ffac` "Loosen timing where possible"
+  (UNLOCKED_INTERVAL 4096→8192; delay hard sync while `waiting`; reset
+  `nextHardSync` in `AckPlayer`) was an attempt at exactly this kind of handshake
+  race and was REVERTED (`ea50b5e87`). Re-applying it (or otherwise thinning the
+  hard-sync cadence during a transfer burst) is the next thing to try, but do it
+  as a git branch and re-verify the linktest FRM parity + the 128s crash first —
+  the revert was intentional upstream.
+
+Next time, reproduce with the linktest ROM first (see handoff notes) to confirm
+lockstep health, then attack the handshake timing above.
+
+## Future dev options (documented, not yet built)
+
+- **2×2 link groups** — two independent 2-player links (P1–P2, P3–P4) in one process,
+  or arbitrary combinations of linked/independent cores, so users can run two separate
+  pairs or the same game independently without linking.
+- **Per-player screen toggle** — show one player's screen at a time (switchable), so
+  RetroAchievements/netplay-style play where each player watches their own screen is
+  possible before any RetroArch port.
+- **Pop-out windows** — spawn each player's screen as its own OS window for multi-screen
+  setups or custom streamer layouts.
+
 In progress / next:
 - [ ] Root-cause the one observed tokio-worker segfault (`segfault at 4a8` in
       `dualboy-web`): suspected cross-thread `load_rom` (tokio) vs `run_frame` (std
@@ -226,8 +294,8 @@ In progress / next:
       sustained-play re-testing now that logging and build profile are fixed. The new
       per-second stats + unbuffered stdout make a recurrence visible immediately in
       `/tmp/dualboy_app.log` before any crash.
-- [ ] Verify Four Swords *enters* an actual 2-player session end-to-end (the link now
-      stays clean with zero desyncs; `adaptive_play.py` menu navigation needs tuning).
+- [ ] Drive Four Swords to *actual gameplay* (past the story intro) at 4P and confirm
+      the link-heavy title select stays smooth there too.
 - [ ] Audio routing (both instances' audio to the output).
 - [ ] Gamepad support for players 3–4 in the browser (Gamepad API).
 - [ ] If the WebView still can't composite 30 FPS on low-end hardware, add a native

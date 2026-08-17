@@ -80,6 +80,8 @@ body {
   cursor: pointer;
 }
 .menu-items button:hover { background: #24c8db; color: #06262a; }
+.menu-items button.active { background: #1a6b77; color: #fff; }
+.menu-items button.active:hover { background: #24c8db; color: #06262a; }
 
 .menu-note {
   padding: 6px 10px;

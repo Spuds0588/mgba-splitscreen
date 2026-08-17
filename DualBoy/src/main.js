@@ -252,6 +252,28 @@ async function handleKey(e, isDown) {
   if (handled) e.preventDefault();
 }
 
+// ---- Player count (1-4 linked instances) ----
+
+function highlightPlayersMenu(count) {
+  document.querySelectorAll('#player-menu button').forEach((btn) => {
+    btn.classList.toggle('active', parseInt(btn.dataset.players, 10) === count);
+  });
+}
+
+async function setPlayerCount(n) {
+  if (n < 1 || n > 4) return;
+  if (IS_TAURI) {
+    await invoke('set_player_count', { n });
+    playerCount = await invoke('player_count');
+  } else {
+    await fetch('/set_player_count', { method: 'POST', body: String(n) });
+    playerCount = parseInt(await (await fetch('/player_count')).text(), 10) || n;
+  }
+  initScreens(playerCount);
+  highlightPlayersMenu(playerCount);
+  setStatus(`${playerCount} linked player${playerCount > 1 ? 's' : ''} selected\u2014load a ROM`);
+}
+
 // ---- ROM loading ----
 
 async function pickRomTauri() {
@@ -428,6 +450,14 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
   }
   initScreens(playerCount);
+  highlightPlayersMenu(playerCount);
+
+  document.querySelectorAll('#player-menu button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      closeMenus();
+      setPlayerCount(parseInt(btn.dataset.players, 10));
+    });
+  });
 
   document.getElementById('load-rom').addEventListener('click', () =>
     IS_TAURI ? pickRomTauri() : pickRomBrowser());

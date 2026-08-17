@@ -27,11 +27,25 @@
         <div class="menu-items" id="save-menu"></div>
       </details>
 
+      <!-- Choose how many linked GBA instances to run (1-4). Changing this
+           restarts emulation and reloads the current ROM at the new count. -->
+      <details class="menu">
+        <summary>Players</summary>
+        <div class="menu-items" id="player-menu">
+          <button data-players="1">1 Player</button>
+          <button data-players="2">2 Players</button>
+          <button data-players="3">3 Players</button>
+          <button data-players="4">4 Players</button>
+        </div>
+      </details>
+
       <details class="menu">
         <summary>Help</summary>
         <div class="menu-items">
           <div class="menu-note">P1: WASD + K/J + L/H + Space/Backspace</div>
           <div class="menu-note">P2: Arrows + M/N + V/B + Enter/O</div>
+          <div class="menu-note">P3: T/G/F/R + Y/U + Z/X + 1/2</div>
+          <div class="menu-note">P4: I/Q/C/E + P/[ + ,/. + 3/4</div>
         </div>
       </details>
 

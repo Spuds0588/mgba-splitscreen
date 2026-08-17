@@ -15,7 +15,7 @@ fn main() {
     let rom = args
         .get(1)
         .expect("usage: bench <rom.gba> [players=2] [frames=600]");
-    let players: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(2).clamp(2, 4);
+    let players: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(2).clamp(1, 4);
     let frames: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(600);
 
     let mgr = EmulationManager::new(players);

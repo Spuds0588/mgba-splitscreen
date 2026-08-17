@@ -5,7 +5,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::{
     body::Bytes,
@@ -22,7 +22,9 @@ use serde::Deserialize;
 
 #[derive(Clone)]
 struct AppState {
-    manager: Arc<EmulationManager>,
+    /// Mutex-wrapped so `/set_player_count` can swap in a new manager at a new
+    /// count; WS clients stay subscribed thanks to the global frame/status channels.
+    manager: Arc<Mutex<Arc<EmulationManager>>>,
 }
 
 #[derive(Deserialize)]
@@ -39,7 +41,7 @@ fn parse_players() -> usize {
             players = args.next().and_then(|v| v.parse().ok()).unwrap_or(2);
         }
     }
-    players.clamp(2, 4)
+    players.clamp(1, 4)
 }
 
 fn parse_fps() -> u32 {
@@ -64,12 +66,15 @@ async fn main() {
     let manager = Arc::new(EmulationManager::new(players));
     manager.start(fps);
 
-    let state = AppState { manager };
+    let state = AppState {
+        manager: Arc::new(Mutex::new(manager)),
+    };
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .route("/load_rom", post(load_rom_handler))
         .route("/player_count", get(player_count_handler))
+        .route("/set_player_count", post(set_player_count_handler))
         .route("/save/:player", get(get_save_handler).post(post_save_handler))
         .route("/save_set", get(get_save_set_handler).post(post_save_set_handler))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
@@ -88,8 +93,9 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
-    let mut frames = state.manager.frame_sender.subscribe();
-    let mut status_rx = state.manager.status_sender.subscribe();
+    let manager = state.manager.lock().unwrap().clone();
+    let mut frames = manager.frame_sender.subscribe();
+    let mut status_rx = manager.status_sender.subscribe();
 
     loop {
         tokio::select! {
@@ -119,7 +125,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         if let Ok(ClientCommand::Keys { player, keys }) = serde_json::from_str(&text) {
-                            let _ = state.manager.set_keys(player, keys);
+                            let _ = state.manager.lock().unwrap().set_keys(player, keys);
                         }
                     }
                     Some(Ok(Message::Close(_))) => break,
@@ -136,21 +142,44 @@ async fn load_rom_handler(State(state): State<AppState>, body: Bytes) -> impl In
     if let Err(e) = std::fs::write(&path, &body) {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("write failed: {e}")).into_response();
     }
-    match state.manager.load_rom(path.to_str().unwrap_or("")) {
+    match state.manager.lock().unwrap().load_rom(path.to_str().unwrap_or("")) {
         Ok(()) => "ok".into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
     }
 }
 
 async fn player_count_handler(State(state): State<AppState>) -> String {
-    state.manager.player_count().to_string()
+    state.manager.lock().unwrap().player_count().to_string()
+}
+
+/// Change the linked-instance count (1-4), restarting the loop and auto-reloading
+/// the loaded ROM at the new count — mirrors the Tauri `set_player_count` command.
+async fn set_player_count_handler(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
+    let n = String::from_utf8_lossy(&body)
+        .trim()
+        .parse::<usize>()
+        .unwrap_or(2)
+        .clamp(1, 4);
+    let mut guard = state.manager.lock().unwrap();
+    if guard.player_count() == n {
+        return "ok".into_response();
+    }
+    let rom = guard.loaded_rom_path();
+    let old = std::mem::replace(&mut *guard, Arc::new(EmulationManager::new(n)));
+    old.stop_and_join();
+    drop(old);
+    guard.start(60);
+    if let Some(path) = rom {
+        let _ = guard.load_rom(&path);
+    }
+    "ok".into_response()
 }
 
 async fn get_save_handler(
     State(state): State<AppState>,
     Path(player): Path<u8>,
 ) -> impl IntoResponse {
-    match state.manager.export_save(player) {
+    match state.manager.lock().unwrap().export_save(player) {
         Ok(data) => (
             [(header::CONTENT_TYPE, "application/octet-stream")],
             data,
@@ -165,14 +194,14 @@ async fn post_save_handler(
     Path(player): Path<u8>,
     body: Bytes,
 ) -> impl IntoResponse {
-    match state.manager.import_save(player, &body) {
+    match state.manager.lock().unwrap().import_save(player, &body) {
         Ok(()) => "ok".into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
     }
 }
 
 async fn get_save_set_handler(State(state): State<AppState>) -> impl IntoResponse {
-    match state.manager.export_save_set() {
+    match state.manager.lock().unwrap().export_save_set() {
         Ok(data) => (
             [(header::CONTENT_TYPE, "application/octet-stream")],
             data,
@@ -183,7 +212,7 @@ async fn get_save_set_handler(State(state): State<AppState>) -> impl IntoRespons
 }
 
 async fn post_save_set_handler(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
-    match state.manager.import_save_set(&body) {
+    match state.manager.lock().unwrap().import_save_set(&body) {
         Ok(()) => "ok".into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
     }

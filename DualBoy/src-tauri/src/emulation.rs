@@ -1,4 +1,5 @@
 use std::os::raw::{c_char, c_int};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -11,6 +12,20 @@ use crate::bindings;
 /// forwarded here too (see `overlay_log`). WS servers relay these to the frontend,
 /// which renders them as an on-screen debug overlay.
 static OVERLAY_TX: OnceLock<broadcast::Sender<String>> = OnceLock::new();
+
+/// Broadcast channel for video frames (per player: one RGBA8888 buffer of
+/// 240*160*4 bytes, all players concatenated per broadcast). Kept GLOBAL (OnceLock)
+/// so WebSocket clients stay subscribed across `set_player_count` recreations of the
+/// EmulationManager: the manager publishes to this channel and the WS relay
+/// subscribes to it, so swapping in a new manager doesn't strand existing
+/// connections on a dead per-manager channel.
+static FRAME_TX: OnceLock<broadcast::Sender<Vec<u8>>> = OnceLock::new();
+
+/// Broadcast channel for status/overlay lines. Global for the same reason as
+/// FRAME_TX. `OVERLAY_TX` is a clone of this channel (set in `EmulationManager::new`),
+/// so mGBA WARN+ lines and per-second stats share one stream that WS clients
+/// subscribe to once and keep receiving across manager recreations.
+static STATUS_TX: OnceLock<broadcast::Sender<String>> = OnceLock::new();
 
 /// mGBA installs no default logger by itself; without one, `mLog()` prints every level
 /// (including DEBUG BIOS SWI traces and lockstep chatter) to stdout on every call, which
@@ -154,65 +169,98 @@ impl Drop for LockstepCoordinator {
 
 pub struct EmulationManager {
     pub instances: Vec<Arc<Mutex<GbaInstance>>>,
+    /// Clone of the global FRAME_TX channel (see the statics above); the frame loop
+    /// publishes here and the WS relay subscribes here. Kept as a field so tests and
+    /// the standalone web server can subscribe without touching the statics.
     pub frame_sender: broadcast::Sender<Vec<u8>>,
     /// Status/overlay events (per-second stats, stall warnings, mGBA WARN+ lines).
+    /// Clone of the global STATUS_TX channel, for the same reason as `frame_sender`.
     pub status_sender: broadcast::Sender<String>,
     /// Per-player "waiting for the link" flag, flipped by the lockstep sleep/wake
     /// callbacks (via raw pointers into this Vec's heap buffer). The frame loop
     /// skips a player while its flag is set.
     sleeping_flags: Arc<Mutex<Vec<bool>>>,
+    /// Lockstep drivers, one per instance — EMPTY for solo (1-player) mode, where no
+    /// cable is attached and games see "not connected".
     drivers: Vec<*mut bindings::GBASIOLockstepDriver>,
     // Kept alive for the manager's lifetime: the drivers hold raw pointers to these.
     _users: Vec<Box<LockstepUserCtx>>,
-    // Boxed so its address is stable: the lockstep drivers hold a raw pointer to it.
-    coordinator: LockstepCoordinator,
+    // Some when linked play is active (count >= 2). Boxed so its address is stable:
+    // the lockstep drivers hold a raw pointer to it.
+    coordinator: Option<LockstepCoordinator>,
+    /// Path of the ROM most recently loaded into every instance. `set_player_count`
+    /// reads it to auto-reload the same game at the new count.
+    loaded_rom: Mutex<Option<String>>,
+    /// Set by `stop_and_join`; the frame-loop thread checks it each tick and exits.
+    stop_flag: Arc<AtomicBool>,
+    /// Join handle for the frame-loop thread (taken + joined by `stop_and_join`).
+    thread: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 unsafe impl Send for EmulationManager {}
 unsafe impl Sync for EmulationManager {}
 
 impl EmulationManager {
-    /// Create `count` GBA instances linked over the virtual link cable. GBA supports up
-    /// to `MAX_GBAS` (4) players; the count is clamped to [2, 4].
+    /// Create `count` GBA instances. 2-4 instances are linked over the virtual link
+    /// cable (GBA supports up to `MAX_GBAS` = 4 players); 1 instance runs SOLO with
+    /// no cable attached (authentic single-GBA behavior — link games show
+    /// "not connected"). The count is clamped to [1, 4].
     pub fn new(count: usize) -> Self {
-        let count = count.clamp(2, 4);
-        let (status_tx, _) = broadcast::channel(64);
+        let count = count.clamp(1, 4);
+        // Broadcast channels are global so WebSocket clients stay subscribed when
+        // `set_player_count` swaps in a new manager (see the channel statics above).
+        let status_tx = STATUS_TX
+            .get_or_init(|| {
+                let (tx, _) = broadcast::channel(64);
+                tx
+            })
+            .clone();
         let _ = OVERLAY_TX.set(status_tx.clone());
         ensure_logger();
         println!("Creating EmulationManager with {count} instances...");
-        let (tx, _) = broadcast::channel(10);
-
-        let mut coordinator =
-            Box::new(unsafe { std::mem::zeroed::<bindings::GBASIOLockstepCoordinator>() });
-        unsafe {
-            bindings::GBASIOLockstepCoordinatorInit(&mut *coordinator);
-        }
+        let tx = FRAME_TX
+            .get_or_init(|| {
+                let (tx, _) = broadcast::channel(10);
+                tx
+            })
+            .clone();
 
         let mut instances = Vec::with_capacity(count);
         for i in 0..count {
             instances.push(Arc::new(Mutex::new(GbaInstance::new((i + 1) as u8))));
         }
 
-let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
-        let flags_buf = sleeping_flags.lock().unwrap().as_mut_ptr();
+        let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
 
-        let mut drivers = Vec::with_capacity(count);
-        let mut users = Vec::with_capacity(count);
-        for i in 0..count {
+        // Lockstep coordinator + drivers exist only for linked play (2-4 players).
+        let mut coordinator = None;
+        let mut drivers = Vec::with_capacity(count.saturating_sub(1));
+        let mut users = Vec::with_capacity(count.saturating_sub(1));
+        if count >= 2 {
+            let mut coord =
+                Box::new(unsafe { std::mem::zeroed::<bindings::GBASIOLockstepCoordinator>() });
             unsafe {
-                let driver =
-                    Box::into_raw(Box::new(std::mem::zeroed::<bindings::GBASIOLockstepDriver>()));
-                let mut user = Box::new(std::mem::zeroed::<LockstepUserCtx>());
-                user.base.sleep = Some(lockstep_sleep);
-                user.base.wake = Some(lockstep_wake);
-                user.sleep_flag = flags_buf.add(i);
-
-                bindings::GBASIOLockstepDriverCreate(driver, &mut user.base);
-                bindings::GBASIOLockstepCoordinatorAttach(&mut *coordinator, driver);
-
-                drivers.push(driver);
-                users.push(user);
+                bindings::GBASIOLockstepCoordinatorInit(&mut *coord);
             }
+            let flags_buf = sleeping_flags.lock().unwrap().as_mut_ptr();
+            for i in 0..count {
+                unsafe {
+                    let driver = Box::into_raw(Box::new(std::mem::zeroed::<
+                        bindings::GBASIOLockstepDriver,
+                    >()));
+                    let mut user = Box::new(std::mem::zeroed::<LockstepUserCtx>());
+                    user.base.sleep = Some(lockstep_sleep);
+                    user.base.wake = Some(lockstep_wake);
+                    user.sleep_flag = flags_buf.add(i);
+
+                    bindings::GBASIOLockstepDriverCreate(driver, &mut user.base);
+                    bindings::GBASIOLockstepCoordinatorAttach(&mut *coord, driver);
+
+                    drivers.push(driver);
+                    users.push(user);
+                }
+            }
+            coordinator = Some(LockstepCoordinator(coord));
         }
 
         EmulationManager {
@@ -222,7 +270,10 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
             sleeping_flags,
             drivers,
             _users: users,
-            coordinator: LockstepCoordinator(coordinator),
+            coordinator,
+            loaded_rom: Mutex::new(None),
+            stop_flag: Arc::new(AtomicBool::new(false)),
+            thread: Mutex::new(None),
         }
     }
 
@@ -230,8 +281,25 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
         self.instances.len()
     }
 
+    /// Path of the ROM currently loaded in every instance (None before first load).
+    /// Used by `set_player_count` to auto-reload the same game at the new count.
+    pub fn loaded_rom_path(&self) -> Option<String> {
+        self.loaded_rom.lock().unwrap().clone()
+    }
+
+    /// Stop the frame-loop thread and wait for it to exit. Called by
+    /// `set_player_count` before dropping a manager so an old loop never runs
+    /// alongside the new one. Idempotent.
+    pub fn stop_and_join(&self) {
+        self.stop_flag.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.thread.lock().unwrap().take() {
+            let _ = handle.join();
+        }
+    }
+
     /// Load the same ROM into every instance, attaching each instance's link-cable
-    /// driver BEFORE the ROM boots so games detect the link at boot.
+    /// driver BEFORE the ROM boots so games detect the link at boot. Solo (1-player)
+    /// loads attach no driver — there's no cable, which is how single-GBA play works.
     pub fn load_rom(&self, path: &str) -> Result<(), String> {
         let mut guards: Vec<_> = self
             .instances
@@ -239,12 +307,19 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
             .map(|i| i.lock().map_err(|e| e.to_string()))
             .collect::<Result<_, _>>()?;
 
-        for (gba, driver) in guards.iter_mut().zip(&self.drivers) {
-            if !gba.load_rom(path, Some(*driver)) {
-                return Err("Failed to load ROM in one or more instances".into());
+        if self.drivers.is_empty() {
+            if !guards[0].load_rom(path, None) {
+                return Err("Failed to load ROM".into());
+            }
+        } else {
+            for (gba, driver) in guards.iter_mut().zip(&self.drivers) {
+                if !gba.load_rom(path, Some(*driver)) {
+                    return Err("Failed to load ROM in one or more instances".into());
+                }
             }
         }
         drop(guards);
+        *self.loaded_rom.lock().unwrap() = Some(path.to_string());
         if let Some(tx) = OVERLAY_TX.get() {
             let name = std::path::Path::new(path)
                 .file_name()
@@ -344,7 +419,9 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
         let status_tx = self.status_sender.clone();
         let n = instances.len();
 
-        thread::spawn(move || {
+        self.stop_flag.store(false, Ordering::Relaxed);
+        let stop_flag = self.stop_flag.clone();
+        let handle = thread::spawn(move || {
             use std::io::Write;
             // 60 Hz emulation pace. Each tick targets the next 16666 µs boundary from
             // a FIXED start, not "sleep 16.6 ms minus work" measured from the previous
@@ -389,6 +466,11 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
             let mut last_fc: Vec<u32> = vec![u32::MAX; n];
 
             loop {
+                // Stop check: `set_player_count` sets this flag and joins this
+                // thread, so the old manager's loop never runs after the swap.
+                if stop_flag.load(Ordering::Relaxed) {
+                    break;
+                }
                 {
                     let mut guards: Vec<_> =
                         instances.iter().map(|i| i.lock().unwrap()).collect();
@@ -538,5 +620,6 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
                 }
             }
         });
+        *self.thread.lock().unwrap() = Some(handle);
     }
 }
