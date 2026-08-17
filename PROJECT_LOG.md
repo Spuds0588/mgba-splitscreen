@@ -165,17 +165,19 @@ Done:
       - ROM load auto-starts emulation (`load_rom` sets `is_running`); no extra
         "start" action needed — confirmed from the log (`ROM loaded` → frames flow
         the same second).
-- [x] **GBA link-test ROM** (2026-08-17, `DualBoy/linktest/`): a two-player MULTI
-      link instrument that shows, in near-real-time, the data each side sends and
-      receives (`SIOMLT_SEND`/`SIOMULTI0-3`), the round-trip/gap in frames, current
-      + partner + expected state, a STALL counter, and a live sparkline. Built with
-      bare `clang`/`ld.lld` (no devkitARM needed; see `build.sh`). Its `FRM` counter
-      (game frames since boot) is the key desync probe — the two screens must advance
-      in lockstep. Two ROM bugs were found while building it: RCNT must be cleared
-      (`REG_RCNT = 0`) before MULTI mode or mGBA's mode decode (`(rcnt & 0xC000) |
-      (siocnt & 0x3000) >> 12`) reads GPIO instead of MULTI (dead link), and the
-      framebuffer must be cleared each frame or changing glyphs accumulate into
-      solid blocks.
+- [x] **GBA link-test ROM** (2026-08-17, `DualBoy/linktest/`): a MULTI-mode
+      link instrument (v2.0 supports up to 4 linked units; v1.0 was 2-player) that
+      shows, in near-real-time, the data each unit sends and receives
+      (`SIOMLT_SEND`/`SIOMULTI0-3`, all four slots), the per-slave round-trip time
+      (master) / ping cadence (slaves) in frames, current + partner + expected
+      state, a STALL counter, a live PEERS count on the master, and a live
+      sparkline. Built with bare `clang` + `arm-none-eabi-ld` (no devkitARM
+      needed; see `build.sh`). Its `FRM` counter (game frames since boot) is the
+      key desync probe — ALL screens must advance in lockstep. Two ROM bugs were
+      found while building it: RCNT must be cleared (`REG_RCNT = 0`) before MULTI
+      mode or mGBA's mode decode (`(rcnt & 0xC000) | (siocnt & 0x3000) >> 12`)
+      reads GPIO instead of MULTI (dead link), and the framebuffer must be cleared
+      each frame or changing glyphs accumulate into solid blocks.
 - [x] **Lockstep desync + 128s crash fix** (2026-08-17): the linktest exposed that
       the primary ran at ~half the secondary's speed (`FRM 130` vs `234`), and the
       link died/spun at ~128 s. Root cause: mGBA's lockstep `user->sleep` is meant
@@ -192,6 +194,14 @@ Done:
       a non-positive sync delay to 4 cycles instead of asserting. Verified on the
       linktest: both players hold 60.0 fps with `FRM` in exact parity, STALL 0, and
       no crash past the old 128 s wrap point (264 s+ observed).
+- [x] **4-player linktest verified** (2026-08-17): `--players 4` runs four instances;
+      the v2.0 linktest shows P1 MASTER + P2/P3/P4 SLAVE (SIOCNT ids 0x1/0x2/0x3,
+      slave bit set), all four slots S0-S3 live with each slave's echo, master RTT
+      ~2f to every slave, and FRM in exact parity across all four (3100==3100==3100
+      ==3100 after ~7 min). All four hold 60.0 fps, zero stalls, no crash — the
+      cooperative-stepping fix scales cleanly to the full 4-player lockstep. The
+      desktop app also gained P3/P4 keyboard maps (`--players 3|4` is fully
+      playable from one keyboard).
 
 In progress / next:
 - [ ] Root-cause the one observed tokio-worker segfault (`segfault at 4a8` in
@@ -273,5 +283,18 @@ never slows emulation. Always use `cargo build --release`.
 
 - Read this file + `DualBoy/src-tauri/src/*.rs` and `DualBoy/src/main.js`; the rest of
   the repo is upstream mGBA.
+- **Troubleshoot link/perf issues with the linktest ROM FIRST.** When anything smells
+  like a lockstep/desync/performance bug — a game crawling on a link-heavy screen
+  (e.g. Four Swords title select), "MULTI did not receive data", the multi-pak
+  power-off/on screen, or FRM counters diverging — load
+  `DualBoy/linktest/linktest.gba` (rebuild with `./build.sh` if you touched it) and
+  watch the on-screen readout on every player before touching game-specific tuning:
+  roles (MASTER/SLAVE), all four slots S0-S3, per-slave RTT, STALL, PEERS, and —
+  most importantly — that all FRM counters advance at the same rate. Run with
+  `--players 2|3|4` to reproduce at the same scale as the failing scenario. This ROM
+  is a link-heavy MULTI-mode game by design, so any wrapper-level frame starvation
+  shows up here as an FRM divergence or a rising STALL, and it is far easier to
+  reason about than a real game. (See `DualBoy/linktest/main.c` header for the full
+  protocol + expected readouts.)
 - Commit + push frequently (history has been lost to VM OOM before).
 - Follow YAGNI; prefer small, single-purpose changes.

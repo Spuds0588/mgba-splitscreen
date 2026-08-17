@@ -1,35 +1,41 @@
 /*
- * DualBoy GBA link test ROM (v1.0)
+ * DualBoy GBA link test ROM (v2.0)
  *
- * What this is for: DualBoy runs two GBA instances on one thread and syncs them
- * over mGBA's lockstep link cable. The backend log can count run_frame() calls
+ * What this is for: DualBoy runs two or more GBA instances on one thread and syncs
+ * them over mGBA's lockstep link cable. The backend log can count run_frame() calls
  * and video broadcasts, but it cannot see what the GAMES are doing inside those
  * frames — so when the game itself crawls (e.g. Four Swords on the link-heavy
  * title-select screen) while the log reads a healthy "emu 58 video 60", nothing
  * in the log explains it. This ROM is that missing instrument.
  *
  * It programs the GBA link port in MULTI mode (the same mode Four Swords'
- * multi-pak uses), pings the partner every frame, and renders live diagnostics:
+ * multi-pak uses) and renders live diagnostics. Up to 4 linked units are
+ * supported (DualBoy: launch with `--players 2|3|4`); the display adapts:
  *
  *   - a per-device GAME frame counter (advances once per emulated frame; this is
  *     the number that reveals whether a device's game time is running at speed)
- *   - TX/RX transfer counters (data actually transferred between the two GBAs)
- *   - round-trip time in frames (master: ping sent -> echo received; slave:
- *     ping arrival cadence), with best/worst
+ *   - all four link slots S0-S3, so you can see exactly what data each unit put
+ *     on the wire
+ *   - TX/RX transfer counters (data actually transferred between the GBAs)
+ *   - the MASTER measures round-trip time per slave (ping sent -> echo received,
+ *     in frames) with best/worst; each SLAVE measures the master's ping cadence
  *   - the current device state machine (ME), the partner's last reported state
  *     (PEER, carried in the link data), and the expected partner state (EXP)
  *   - a stall counter (frames since the last completed transfer) + a live
  *     sparkline of recent round-trip times
+ *   - on the master, a live "PEERS" count of slaves that have echoed at least once
  *
  * Expected healthy readouts in the DualBoy wrapper:
- *   - Master RTT ~2 frames (ping leaves in transfer N, echo returns in N+2),
+ *   - Master RTT ~2 frames per slave (ping leaves in transfer N, echo returns in
+ *     N+2) for every connected peer,
  *   - stall stays 0,
  *   - TX/RX climb together,
- *   - and crucially: BOTH devices' FRM counters climb at the same rate.
+ *   - and crucially: ALL devices' FRM counters climb at the same rate.
  *
- * If one device's FRM counter runs visibly slower than the other's, that
- * device's game time is being starved by the wrapper (frames cut short), which
- * is exactly the kind of thing the backend log cannot show.
+ * If one device's FRM counter runs visibly slower than the others', that device's
+ * game time is being starved by the wrapper (frames cut short), which is exactly
+ * the kind of thing the backend log cannot show. With 3-4 units attached, this
+ * ROM is the fastest way to see whether the wrapper keeps every instance in step.
  *
  * No libc, no interrupts: pure register access + polling, mode 3 framebuffer.
  * Build with build.sh (clang targeting arm-none-eabi + arm-none-eabi-ld).
@@ -91,18 +97,23 @@ static const char* const ST_NAMES[7] = {
 
 /* ---- globals ---- */
 static int is_master;
+static u8  my_id;                /* 0-3 player id from SIOCNT bits 4-5 */
 static u32 g_frame;              /* game frames since boot (one per vblank) */
 static u8  ping;                 /* master: current ping counter */
-static u8  last_ping;            /* slave: last ping seen */
-static u8  last_echo;            /* master: last echoed ping */
+static u8  last_ping;            /* slave: last ping seen from the master */
+static u8  last_echo[4];         /* master: last echoed ping per slot */
 static u16 send_frame[64];       /* master: frame each ping was sent */
 static u32 tx_count, rx_count;
-static u32 rtt, rtt_best, rtt_worst;   /* master: round-trip in frames */
+static u32 rtt[4];               /* master: round-trip in frames, per slot */
+static u32 rtt_best[4], rtt_worst[4];
 static u32 gap, gap_best, gap_worst;   /* slave: frames between ping arrivals */
 static u32 last_ping_frame;            /* slave: frame the previous ping arrived */
 static u32 stall;                /* frames since last completed transfer */
 static u8  my_state, peer_state, exp_state;
-static u8  spark[40];            /* recent rtt/edly history for the bar graph */
+static u8  slot_state[4];        /* state byte carried in each link slot */
+static u8  connected[4];         /* master: has slot echoed at least once */
+static int n_connected;          /* master: how many slaves have echoed */
+static u8  spark[40];            /* recent rtt/cadence history for the bar graph */
 static u8  spark_pos;
 
 /* ---- tiny helpers ---- */
@@ -133,7 +144,7 @@ static void clear_screen(void) {
 #define FONT_COLS 5
 
 static const char FONT_CHARS[] =
-    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ :[]-<>._!?*/+=,'()#|%";
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ :[]-<>._!?*/+=,'()#|%\"";
 
 static const char* const FONT_GLYPHS[] = {
     /* 0 */ "01110" "10001" "10011" "10101" "11001" "10001" "01110",
@@ -233,7 +244,7 @@ static void draw_str(int x, int y, const char* s, u16 color) {
     }
 }
 
-/* decimal, fixed 4/6/8 width, right-aligned */
+/* decimal, fixed width, right-aligned */
 static void draw_dec(int x, int y, u32 v, int width, u16 color) {
     char buf[12];
     int n = 0, i;
@@ -272,36 +283,53 @@ static void draw_sparkline(int x, int y, u16 color) {
 
 /* ---- link protocol ---- */
 
-static void master_tick(u16 d1) {
-    u8 echo = (u8)(d1 >> 8);
-    u8 pstate = (u8)(d1 & 0xFF);
-    peer_state = pstate;
+/* Master: process the echo slots (S1-S3) left over from the transfer that
+   completed at the start of this frame, and measure per-slot round-trip time. */
+static void master_tick(u16 s1, u16 s2, u16 s3) {
+    u16 slots[3] = { s1, s2, s3 };
+    int i;
     if (REG_SIOCNT & SI_BUSY) {
-        /* transfer from last frame still in flight: the partner hasn't
+        /* transfer from last frame still in flight: the partners haven't
            delivered yet — this is where wrapper-induced delay shows up */
         my_state = ST_WAIT;
     }
-    if (echo != 0xFF) {
-        u32 sent = send_frame[echo & 63];
-        if (sent != 0xFFFF && echo != last_echo) {
-            u32 rt = g_frame - sent;
-            if (rt < 64) {
-                rtt = rt;
-                if (rtt_best == 0 || rt < rtt_best) rtt_best = rt;
-                if (rt > rtt_worst) rtt_worst = rt;
-                spark[spark_pos] = (u8)rt;
-                spark_pos = (spark_pos + 1) % 40;
-                last_echo = echo;
-                rx_count++;
-                stall = 0;
-                my_state = ST_GOT;
+    peer_state = ST_IDLE;
+    for (i = 0; i < 3; i++) {
+        int slot = i + 1;
+        u8 e = (u8)(slots[i] >> 8);
+        u8 pstate = (u8)(slots[i] & 0xFF);
+        slot_state[slot] = pstate;
+        if (e != 0xFF && e != last_echo[slot]) {
+            u32 sent = send_frame[e & 63];
+            if (sent != 0xFFFF && sent < g_frame) {
+                u32 rt = g_frame - sent;
+                if (rt < 64) {
+                    rtt[slot] = rt;
+                    if (rtt_best[slot] == 0 || rt < rtt_best[slot]) rtt_best[slot] = rt;
+                    if (rt > rtt_worst[slot]) rtt_worst[slot] = rt;
+                    last_echo[slot] = e;
+                    if (!connected[slot]) {
+                        connected[slot] = 1;
+                        n_connected++;
+                    }
+                    rx_count++;
+                    stall = 0;
+                    my_state = ST_GOT;
+                    spark[spark_pos] = (u8)rt;
+                    spark_pos = (spark_pos + 1) % 40;
+                }
             }
         }
-    } else {
-        peer_state = ST_IDLE;
+        /* peer_state: the first slave that has connected */
+        if (connected[slot] && peer_state == ST_IDLE) {
+            peer_state = slot_state[slot];
+        }
     }
 }
 
+/* Master: bump the ping, put it in our own slot (S0), and start the transfer.
+   MUST be the last link action of the frame: the lockstep ends the primary's
+   frame here while it waits for the slaves to deliver their slot data. */
 static void master_send(void) {
     ping++;
     if (ping == 0) ping = 1;
@@ -315,10 +343,13 @@ static void master_send(void) {
     my_state = ST_SEND;
 }
 
+/* Slave: read the master's slot (S0) and echo the latest ping back in our own
+   slot. Every slave does this, so the master can measure RTT to each of us. */
 static void slave_tick(u16 d0) {
     u8 p = (u8)(d0 >> 8);
     u8 pstate = (u8)(d0 & 0xFF);
     peer_state = pstate;
+    slot_state[0] = pstate;
     if (p != 0xFF && p != last_ping) {
         /* ping arrival cadence: 1 = the master's transfers land every frame */
         u32 g = g_frame - last_ping_frame;
@@ -365,17 +396,31 @@ static void compute_exp(void) {
 /* ---- display ---- */
 
 static void draw_ui(void) {
-    u16 role_color = is_master ? C_RED : C_BLUE;
+    u16 role_color = is_master ? C_RED
+                   : (my_id == 1 ? C_BLUE
+                   : (my_id == 2 ? C_GREEN : C_ORANGE));
     u16 warn_color = C_WHITE;
     u16 state_color = C_GREEN;
 
     /* header */
-    draw_str(2, 1, "LINK TEST v1.1", role_color);
-    if (is_master) draw_str(2, 10, "P1 MASTER", role_color);
-    else draw_str(2, 10, "P2 SLAVE ", role_color);
-    draw_str(140, 10, "MULTI 2P", C_GRAY);
+    draw_str(2, 1, "LINK TEST v2.0", role_color);
+    if (is_master) {
+        draw_str(2, 10, "P1 MASTER", role_color);
+        draw_str(120, 10, "PEERS", C_GRAY);
+        draw_dec(162, 10, n_connected, 1, C_WHITE);
+    } else {
+        char role[16];
+        role[0] = 'P';
+        role[1] = (char)('1' + my_id);
+        role[2] = ' ';
+        role[3] = 'S'; role[4] = 'L'; role[5] = 'A'; role[6] = 'V'; role[7] = 'E';
+        role[8] = (char)('0' + my_id);
+        role[9] = 0;
+        draw_str(2, 10, role, role_color);
+        draw_str(140, 10, "MULTI 4P", C_GRAY);
+    }
 
-    /* raw link registers */
+    /* raw link registers: all four slots */
     draw_str(2, 19, "SIOCNT", C_GRAY);
     draw_hex(54, 19, REG_SIOCNT, 4, C_WHITE);
     draw_str(2, 28, "S0", C_GRAY);
@@ -387,7 +432,7 @@ static void draw_ui(void) {
     draw_str(158, 28, "S3", C_GRAY);
     draw_hex(180, 28, REG_SIOMULTI3, 4, C_WHITE);
 
-    /* THE readout: game frames since boot — compare the two devices' rates */
+    /* THE readout: game frames since boot — compare the devices' rates */
     draw_str(2, 37, "FRM", C_GRAY);
     draw_dec(36, 37, g_frame, 8, C_CYAN);
     draw_str(104, 37, "GAME FRAMES", C_DIM);
@@ -400,17 +445,20 @@ static void draw_ui(void) {
 
     /* round trip / echo delay */
     if (is_master) {
-        if (rtt <= 2) warn_color = C_GREEN;
-        else if (rtt <= 4) warn_color = C_YELLOW;
-        else warn_color = C_RED;
-        draw_str(2, 55, "RTT", C_GRAY);
-        draw_dec(36, 55, rtt, 2, warn_color);
-        draw_char(54, 55, 'f', C_WHITE);
-        draw_char(60, 55, 'r', C_WHITE);
-        draw_str(78, 55, "BEST", C_GRAY);
-        draw_dec(114, 55, rtt_best, 2, C_WHITE);
-        draw_str(150, 55, "WRST", C_GRAY);
-        draw_dec(186, 55, rtt_worst, 2, C_WHITE);
+        int slot;
+        for (slot = 1; slot <= 3; slot++) {
+            int x = 2 + (slot - 1) * 74;
+            char label[3] = { 'R', (char)('0' + slot), 0 };
+            draw_str(x, 55, label, C_GRAY);
+            if (connected[slot]) {
+                u16 c = rtt[slot] <= 2 ? C_GREEN
+                      : rtt[slot] <= 4 ? C_YELLOW : C_RED;
+                draw_dec(x + 24, 55, rtt[slot], 2, c);
+                draw_char(x + 38, 55, 'f', c);
+            } else {
+                draw_str(x + 24, 55, "--", C_DIM);
+            }
+        }
     } else {
         draw_str(2, 55, "GAP", C_GRAY);
         draw_dec(36, 55, gap, 2, C_GREEN);
@@ -442,14 +490,31 @@ static void draw_ui(void) {
     }
     draw_str(92, 73, "PING", C_GRAY);
     draw_dec(128, 73, ping, 3, C_WHITE);
-    draw_str(152, 73, "ECHO", C_GRAY);
-    draw_dec(188, 73, last_echo, 3, C_WHITE);
+    if (is_master) {
+        draw_str(152, 73, "PEERS", C_GRAY);
+        draw_dec(196, 73, n_connected, 1, C_WHITE);
+    } else {
+        draw_str(152, 73, "ECHO", C_GRAY);
+        draw_dec(188, 73, last_ping, 3, C_WHITE);
+    }
 
     /* live status line */
     if (stall > 30) {
-        draw_str(2, 82, "NO LINK - PARTNER NOT RESPONDING", C_RED);
+        draw_str(2, 82, "NO LINK - NO PARTNER RESPONDING", C_RED);
     } else if (stall > 0) {
         draw_str(2, 82, "LINK IDLE - WAITING FOR TRANSFER", C_YELLOW);
+    } else if (is_master) {
+        char s[24];
+        int n = 0;
+        s[n++] = 'L'; s[n++] = 'I'; s[n++] = 'N'; s[n++] = 'K';
+        s[n++] = ' '; s[n++] = 'A'; s[n++] = 'C'; s[n++] = 'T';
+        s[n++] = 'I'; s[n++] = 'V'; s[n++] = 'E'; s[n++] = ' ';
+        s[n++] = '-'; s[n++] = ' ';
+        s[n++] = (char)('0' + n_connected + 1);
+        s[n++] = ' '; s[n++] = 'P';
+        if (n_connected + 1 > 1) s[n++] = 'S';
+        s[n] = 0;
+        draw_str(2, 82, s, state_color);
     } else {
         draw_str(2, 82, "LINK ACTIVE - TRANSFERS FLOWING", state_color);
     }
@@ -459,7 +524,7 @@ static void draw_ui(void) {
     draw_sparkline(2, 98, warn_color);
 
     /* footer */
-    draw_str(2, 150, "DUALBOY LINKTEST v1.1 - watch FRM rates", C_DIM);
+    draw_str(2, 150, "DUALBOY LINKTEST v2.0 - 4P LINK - watch FRM rates", C_DIM);
 }
 
 /* ---- main ---- */
@@ -472,6 +537,14 @@ int main(void) {
     font_init();
     for (i = 0; i < 64; i++) send_frame[i] = 0xFFFF;
     for (i = 0; i < 40; i++) spark[i] = 0;
+    for (i = 0; i < 4; i++) {
+        last_echo[i] = 0;
+        rtt[i] = 0;
+        rtt_best[i] = 0;
+        rtt_worst[i] = 0;
+        connected[i] = 0;
+        slot_state[i] = ST_IDLE;
+    }
 
     /* Enter MULTI mode. IMPORTANT: mGBA's SIO mode decode combines RCNT bits
        14-15 with SIOCNT bits 12-13 ((rcnt & 0xC000) | (siocnt & 0x3000)) >> 12.
@@ -483,27 +556,25 @@ int main(void) {
     REG_SIOCNT = SI_MULTI_MODE;
     cnt = REG_SIOCNT;
     is_master = 1;
+    my_id = 0;
     my_state = ST_IDLE;
     peer_state = ST_IDLE;
     exp_state = ST_IDLE;
     ping = 0;
     last_ping = 0;
-    last_echo = 0;
     g_frame = 0;
     tx_count = 0;
     rx_count = 0;
-    rtt = 0;
-    rtt_best = 0;
-    rtt_worst = 0;
     gap = 0;
     gap_best = 0;
     gap_worst = 0;
     last_ping_frame = 0;
     stall = 0;
     spark_pos = 0;
+    n_connected = 0;
 
     while (1) {
-        u16 d0, d1;
+        u16 d0, d1, d2, d3;
 
         wait_vblank_start();
         g_frame++;
@@ -519,13 +590,16 @@ int main(void) {
         REG_RCNT = 0;
         REG_SIOCNT = SI_MULTI_MODE;
         cnt = REG_SIOCNT;
-        is_master = (((cnt >> 4) & 3) == 0) && !(cnt & 0x0004);
+        my_id = (u8)((cnt >> 4) & 3);
+        is_master = (my_id == 0) && !(cnt & 0x0004);
 
         d0 = REG_SIOMULTI0;
         d1 = REG_SIOMULTI1;
+        d2 = REG_SIOMULTI2;
+        d3 = REG_SIOMULTI3;
 
         if (is_master) {
-            master_tick(d1);          /* read echo from the transfer that
+            master_tick(d1, d2, d3);  /* read echoes from the transfer that
                                          completed at the start of this frame */
             if (stall > 30 && my_state != ST_NOLNK) {
                 my_state = ST_NOLNK;

@@ -49,8 +49,38 @@ const P2_MAP = {
   'KeyO': GBA_BUTTONS.SELECT,
 };
 
-// One entry per player; extended if the backend runs more than two instances.
-const PLAYER_MAPS = [P1_MAP, P2_MAP];
+// P3/P4 maps: one keyboard, four players, no overlap with P1/P2 bindings.
+// P1 uses W/S/A/D + K/J/L/H; P2 uses arrows + M/N/V/B + Enter/O; P3/P4 use the
+// T/G/F/R + Y/U + digits and I/Q/C/E + P/brackets/comma/period clusters.
+const P3_MAP = {
+  'KeyT': GBA_BUTTONS.UP,
+  'KeyG': GBA_BUTTONS.DOWN,
+  'KeyF': GBA_BUTTONS.LEFT,
+  'KeyR': GBA_BUTTONS.RIGHT,
+  'KeyY': GBA_BUTTONS.A,
+  'KeyU': GBA_BUTTONS.B,
+  'KeyZ': GBA_BUTTONS.L,
+  'KeyX': GBA_BUTTONS.R,
+  'Digit1': GBA_BUTTONS.START,
+  'Digit2': GBA_BUTTONS.SELECT,
+};
+
+const P4_MAP = {
+  'KeyI': GBA_BUTTONS.UP,
+  'KeyQ': GBA_BUTTONS.DOWN,
+  'KeyC': GBA_BUTTONS.LEFT,
+  'KeyE': GBA_BUTTONS.RIGHT,
+  'KeyP': GBA_BUTTONS.A,
+  'BracketLeft': GBA_BUTTONS.B,
+  'Comma': GBA_BUTTONS.L,
+  'Period': GBA_BUTTONS.R,
+  'Digit3': GBA_BUTTONS.START,
+  'Digit4': GBA_BUTTONS.SELECT,
+};
+
+// One entry per player; the backend runs 2-4 instances (--players N), so all four
+// maps are always defined and the frame loop only uses the first playerCount.
+const PLAYER_MAPS = [P1_MAP, P2_MAP, P3_MAP, P4_MAP];
 
 // Player color coding (like name borders on a video call): P1 red, P2 blue,
 // P3 green, P4 orange. Same palette for the border and the bottom-right tag.
