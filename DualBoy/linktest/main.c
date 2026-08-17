@@ -37,6 +37,17 @@
  * the kind of thing the backend log cannot show. With 3-4 units attached, this
  * ROM is the fastest way to see whether the wrapper keeps every instance in step.
  *
+ * Performance notes (both matter for a faithful instrument):
+ *   - SIOCNT baud is set to 3 (fastest MULTI clock). At the default baud 0 a
+ *     4-player transfer takes ~126k cycles, and the master's transfer + hard-sync
+ *     pushed its loop to 2 frames while the slaves still ran 1 — FRM showed a
+ *     false 30/60 desync that looked like a wrapper bug. Fast baud keeps the
+ *     transfer tiny so all devices hold ~60 fps and FRM stays in parity.
+ *   - Static labels are drawn ONCE at boot and only the live value cells are
+ *     cleared+redrawn each frame. The first version cleared all 38,400 pixels
+ *     and redrew ~250 glyphs every frame, which spilled vblank, hit mode-3
+ *     bitmap VRAM contention, and ran the whole instrument at ~8 fps.
+ *
  * No libc, no interrupts: pure register access + polling, mode 3 framebuffer.
  * Build with build.sh (clang targeting arm-none-eabi + arm-none-eabi-ld).
  */
@@ -64,7 +75,7 @@ typedef unsigned char  u8;
 
 /* ---- MULTI-mode SIOCNT bits (mGBA layout: busy = bit 7, irq = bit 14,
        mode select = bits 12-13, player id = bits 4-5) ---- */
-#define SI_MULTI_MODE  0x2000   /* bits 12-13 = 0b10 -> GBA_SIO_MULTI */
+#define SI_MULTI_MODE  0x2003   /* bits 12-13 = MULTI, bits 0-1 = 256Kbps (fastest baud) */
 #define SI_BUSY        0x0080
 #define SI_IRQ         0x4000
 
@@ -130,13 +141,12 @@ static void put_px(int x, int y, u16 color) {
     VRAM[y * 240 + x] = color;
 }
 
-/* Fill the whole framebuffer with black. MUST be called every frame before
-   draw_ui: dynamic values change each frame, and without a clear their old
-   glyph pixels accumulate until every cell is a solid block. */
-static void clear_screen(void) {
-    int i;
-    for (i = 0; i < 240 * 160; i++) VRAM[i] = C_BLACK;
-}
+/* NOTE: there is intentionally no per-frame full-screen clear. The old version
+   cleared all 38,400 pixels and redrew ~250 glyphs every frame, which spilled
+   vblank and hit mode-3 bitmap VRAM contention, running the game at ~8 fps.
+   Static labels are drawn once and only the dynamic value cells are cleared and
+   redrawn each frame (see draw_dynamic), which fits in vblank and holds 60 fps.
+*/
 
 /* ---- 5x7 font: 7 rows of 5 columns, '1' = lit ---- */
 
@@ -271,10 +281,12 @@ static void draw_hex(int x, int y, u32 v, int width, u16 color) {
 }
 
 static void draw_sparkline(int x, int y, u16 color) {
-    int i;
+    int i, h;
+    for (i = 0; i < 40; i++) {
+        for (h = 0; h <= 6; h++) put_px(x + i, y + h, C_BLACK);
+    }
     for (i = 0; i < 40; i++) {
         int v = spark[(spark_pos + i) % 40];
-        int h;
         if (v > 7) v = 7;
         for (h = 0; h < v; h++) put_px(x + i, y + 6 - h, color);
         if (v == 0) put_px(x + i, y + 6, C_DIM);
@@ -395,136 +407,230 @@ static void compute_exp(void) {
 
 /* ---- display ---- */
 
-static void draw_ui(void) {
+/* Clear a cell of `nchars` glyphs (nchars*6 px wide, 7 px tall) so a value's
+   old glyph pixels never accumulate into a solid block. */
+static void clear_cell(int x, int y, int nchars) {
+    int cx, cy;
+    for (cy = 0; cy < FONT_ROWS; cy++) {
+        for (cx = 0; cx < nchars * 6; cx++) {
+            put_px(x + cx, y + cy, C_BLACK);
+        }
+    }
+}
+
+static void draw_dec_c(int x, int y, u32 v, int width, u16 color) {
+    clear_cell(x, y, width);
+    draw_dec(x, y, v, width, color);
+}
+
+static void draw_hex_c(int x, int y, u32 v, int width, u16 color) {
+    clear_cell(x, y, width);
+    draw_hex(x, y, v, width, color);
+}
+
+static void draw_str_c(int x, int y, const char* s, u16 color) {
+    int n = 0;
+    while (s[n]) n++;
+    clear_cell(x, y, n);
+    draw_str(x, y, s, color);
+}
+
+/* Static labels: drawn ONCE at boot. They are never cleared, which is why the
+   per-frame work fits inside vblank. */
+static void draw_static(void) {
+    draw_str(2, 1, "LINK TEST v2.0", C_WHITE);
+    draw_str(2, 19, "SIOCNT", C_GRAY);
+    draw_str(2, 28, "S0", C_GRAY);
+    draw_str(54, 28, "S1", C_GRAY);
+    draw_str(106, 28, "S2", C_GRAY);
+    draw_str(158, 28, "S3", C_GRAY);
+    draw_str(2, 37, "FRM", C_GRAY);
+    draw_str(104, 37, "GAME FRAMES", C_DIM);
+    draw_str(2, 46, "TX", C_GRAY);
+    draw_str(104, 46, "RX", C_GRAY);
+    draw_str(2, 64, "ME", C_GRAY);
+    draw_str(74, 64, "PEER", C_GRAY);
+    draw_str(146, 64, "EXP", C_GRAY);
+    draw_str(2, 73, "STALL", C_GRAY);
+    draw_str(92, 73, "PING", C_GRAY);
+    draw_str(2, 150, "DUALBOY LINKTEST v2.0 - 4P LINK - watch FRM rates", C_DIM);
+}
+
+/* Last-drawn values for fields that only change occasionally. Redrawing them
+   only on change keeps the per-frame pixel budget to just the always-changing
+   counters (FRM/TX/RX/PING), so the whole readout stays live without spilling
+   vblank. */
+static u16 cache_siocnt = 0xFFFF;
+static u16 cache_slot[4] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
+static u16 cache_role = 0xFFFF;
+static u8  cache_my_state = 0xFF;
+static u8  cache_peer_state = 0xFF;
+static u8  cache_exp_state = 0xFF;
+static u32 cache_rtt[4] = { 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
+static u8  cache_conn[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
+static u32 cache_gap = 0xFFFFFFFF;
+static u32 cache_gap_best = 0xFFFFFFFF;
+static u32 cache_gap_worst = 0xFFFFFFFF;
+static u8  cache_n_connected = 0xFF;
+static u8  cache_last_ping = 0xFF;
+static u32 cache_stall = 0xFFFFFFFF;
+static u8  cache_status = 0xFF;
+static u8  cache_status_count = 0xFF;
+
+static void draw_dynamic(void) {
     u16 role_color = is_master ? C_RED
                    : (my_id == 1 ? C_BLUE
                    : (my_id == 2 ? C_GREEN : C_ORANGE));
-    u16 warn_color = C_WHITE;
-    u16 state_color = C_GREEN;
+    u16 role_code = (u16)((my_id << 1) | (is_master ? 1 : 0));
+    int slot;
 
-    /* header */
-    draw_str(2, 1, "LINK TEST v2.0", role_color);
-    if (is_master) {
-        draw_str(2, 10, "P1 MASTER", role_color);
-        draw_str(120, 10, "PEERS", C_GRAY);
-        draw_dec(162, 10, n_connected, 1, C_WHITE);
-    } else {
-        char role[16];
-        role[0] = 'P';
-        role[1] = (char)('1' + my_id);
-        role[2] = ' ';
-        role[3] = 'S'; role[4] = 'L'; role[5] = 'A'; role[6] = 'V'; role[7] = 'E';
-        role[8] = (char)('0' + my_id);
-        role[9] = 0;
-        draw_str(2, 10, role, role_color);
-        draw_str(140, 10, "MULTI 4P", C_GRAY);
+    /* role line + role-specific labels: drawn once, when the role settles */
+    if (cache_role != role_code) {
+        cache_role = role_code;
+        if (is_master) {
+            draw_str_c(2, 10, "P1 MASTER", role_color);
+            draw_str_c(120, 10, "PEERS", C_GRAY);
+            draw_str_c(2, 55, "R1", C_GRAY);
+            draw_str_c(76, 55, "R2", C_GRAY);
+            draw_str_c(150, 55, "R3", C_GRAY);
+            draw_str_c(152, 73, "PEERS", C_GRAY);
+            draw_str_c(2, 91, "RTT HISTORY (fr)", C_GRAY);
+        } else {
+            char role[16];
+            role[0] = 'P';
+            role[1] = (char)('1' + my_id);
+            role[2] = ' ';
+            role[3] = 'S'; role[4] = 'L'; role[5] = 'A'; role[6] = 'V'; role[7] = 'E';
+            role[8] = (char)('0' + my_id);
+            role[9] = 0;
+            draw_str_c(2, 10, role, role_color);
+            draw_str_c(140, 10, "MULTI 4P", C_GRAY);
+            draw_str_c(2, 55, "GAP", C_GRAY);
+            draw_str_c(78, 55, "BEST", C_GRAY);
+            draw_str_c(150, 55, "WRST", C_GRAY);
+            draw_str_c(152, 73, "ECHO", C_GRAY);
+            draw_str_c(2, 91, "PING CADENCE (fr)", C_GRAY);
+        }
+        /* force every value cell to redraw alongside the new labels */
+        cache_siocnt = 0xFFFF;
+        cache_slot[0] = cache_slot[1] = cache_slot[2] = cache_slot[3] = 0xFFFF;
+        cache_conn[1] = cache_conn[2] = cache_conn[3] = 0xFF;
+        cache_gap = cache_gap_best = cache_gap_worst = 0xFFFFFFFF;
+        cache_n_connected = 0xFF;
+        cache_last_ping = 0xFF;
+        cache_stall = 0xFFFFFFFF;
+        cache_status = 0xFF;
     }
 
-    /* raw link registers: all four slots */
-    draw_str(2, 19, "SIOCNT", C_GRAY);
-    draw_hex(54, 19, REG_SIOCNT, 4, C_WHITE);
-    draw_str(2, 28, "S0", C_GRAY);
-    draw_hex(24, 28, REG_SIOMULTI0, 4, C_WHITE);
-    draw_str(54, 28, "S1", C_GRAY);
-    draw_hex(76, 28, REG_SIOMULTI1, 4, C_WHITE);
-    draw_str(106, 28, "S2", C_GRAY);
-    draw_hex(128, 28, REG_SIOMULTI2, 4, C_WHITE);
-    draw_str(158, 28, "S3", C_GRAY);
-    draw_hex(180, 28, REG_SIOMULTI3, 4, C_WHITE);
+    /* raw link registers: redraw only when the wire changes */
+    if (cache_siocnt != REG_SIOCNT) {
+        cache_siocnt = REG_SIOCNT;
+        draw_hex_c(54, 19, REG_SIOCNT, 4, C_WHITE);
+    }
+    if (cache_slot[0] != REG_SIOMULTI0) { cache_slot[0] = REG_SIOMULTI0; draw_hex_c(24, 28, REG_SIOMULTI0, 4, C_WHITE); }
+    if (cache_slot[1] != REG_SIOMULTI1) { cache_slot[1] = REG_SIOMULTI1; draw_hex_c(76, 28, REG_SIOMULTI1, 4, C_WHITE); }
+    if (cache_slot[2] != REG_SIOMULTI2) { cache_slot[2] = REG_SIOMULTI2; draw_hex_c(128, 28, REG_SIOMULTI2, 4, C_WHITE); }
+    if (cache_slot[3] != REG_SIOMULTI3) { cache_slot[3] = REG_SIOMULTI3; draw_hex_c(180, 28, REG_SIOMULTI3, 4, C_WHITE); }
 
-    /* THE readout: game frames since boot — compare the devices' rates */
-    draw_str(2, 37, "FRM", C_GRAY);
-    draw_dec(36, 37, g_frame, 8, C_CYAN);
-    draw_str(104, 37, "GAME FRAMES", C_DIM);
+    /* live counters that change every frame: always redraw */
+    draw_dec_c(36, 37, g_frame, 8, C_CYAN);
+    draw_dec_c(36, 46, tx_count, 7, C_WHITE);
+    draw_dec_c(138, 46, rx_count, 7, C_WHITE);
 
-    /* transfer counters */
-    draw_str(2, 46, "TX", C_GRAY);
-    draw_dec(36, 46, tx_count, 7, C_WHITE);
-    draw_str(104, 46, "RX", C_GRAY);
-    draw_dec(138, 46, rx_count, 7, C_WHITE);
-
-    /* round trip / echo delay */
+    /* round trip / echo delay: redraw only when a new sample lands */
     if (is_master) {
-        int slot;
         for (slot = 1; slot <= 3; slot++) {
             int x = 2 + (slot - 1) * 74;
-            char label[3] = { 'R', (char)('0' + slot), 0 };
-            draw_str(x, 55, label, C_GRAY);
-            if (connected[slot]) {
+            if (cache_conn[slot] != connected[slot]) {
+                cache_conn[slot] = connected[slot];
+                if (connected[slot]) {
+                    u16 c = rtt[slot] <= 2 ? C_GREEN
+                          : rtt[slot] <= 4 ? C_YELLOW : C_RED;
+                    draw_dec_c(x + 24, 55, rtt[slot], 2, c);
+                    draw_char(x + 38, 55, 'f', c);
+                } else {
+                    draw_str_c(x + 24, 55, "--", C_DIM);
+                }
+            } else if (connected[slot] && cache_rtt[slot] != rtt[slot]) {
+                cache_rtt[slot] = rtt[slot];
                 u16 c = rtt[slot] <= 2 ? C_GREEN
                       : rtt[slot] <= 4 ? C_YELLOW : C_RED;
-                draw_dec(x + 24, 55, rtt[slot], 2, c);
+                draw_dec_c(x + 24, 55, rtt[slot], 2, c);
                 draw_char(x + 38, 55, 'f', c);
-            } else {
-                draw_str(x + 24, 55, "--", C_DIM);
             }
         }
     } else {
-        draw_str(2, 55, "GAP", C_GRAY);
-        draw_dec(36, 55, gap, 2, C_GREEN);
-        draw_char(54, 55, 'f', C_WHITE);
-        draw_char(60, 55, 'r', C_WHITE);
-        draw_str(78, 55, "BEST", C_GRAY);
-        draw_dec(114, 55, gap_best, 2, C_WHITE);
-        draw_str(150, 55, "WRST", C_GRAY);
-        draw_dec(186, 55, gap_worst, 2, C_WHITE);
+        if (cache_gap != gap) {
+            cache_gap = gap;
+            draw_dec_c(36, 55, gap, 2, C_GREEN);
+            draw_char(54, 55, 'f', C_WHITE);
+            draw_char(60, 55, 'r', C_WHITE);
+        }
+        if (cache_gap_best != gap_best) { cache_gap_best = gap_best; draw_dec_c(114, 55, gap_best, 2, C_WHITE); }
+        if (cache_gap_worst != gap_worst) { cache_gap_worst = gap_worst; draw_dec_c(186, 55, gap_worst, 2, C_WHITE); }
     }
 
-    /* state machine: current device state, partner reported state, expected */
-    draw_str(2, 64, "ME", C_GRAY);
-    draw_str(30, 64, ST_NAMES[my_state], role_color);
-    draw_str(74, 64, "PEER", C_GRAY);
-    draw_str(110, 64, ST_NAMES[peer_state], C_WHITE);
-    draw_str(146, 64, "EXP", C_GRAY);
-    draw_str(176, 64, ST_NAMES[exp_state], C_WHITE);
+    /* state machine: redraw only on state transitions */
+    if (cache_my_state != my_state) { cache_my_state = my_state; draw_str_c(30, 64, ST_NAMES[my_state], role_color); }
+    if (cache_peer_state != peer_state) { cache_peer_state = peer_state; draw_str_c(110, 64, ST_NAMES[peer_state], C_WHITE); }
+    if (cache_exp_state != exp_state) { cache_exp_state = exp_state; draw_str_c(176, 64, ST_NAMES[exp_state], C_WHITE); }
 
-    /* link health: stall counter + ping echo */
-    draw_str(2, 73, "STALL", C_GRAY);
-    if (stall > 30) {
-        draw_dec(44, 73, stall, 3, C_RED);
-        state_color = C_RED;
-    } else if (stall > 0) {
-        draw_dec(44, 73, stall, 3, C_YELLOW);
-    } else {
-        draw_dec(44, 73, stall, 3, C_GREEN);
+    /* link health */
+    if (cache_stall != stall) {
+        cache_stall = stall;
+        if (stall > 30) {
+            draw_dec_c(44, 73, stall, 3, C_RED);
+        } else if (stall > 0) {
+            draw_dec_c(44, 73, stall, 3, C_YELLOW);
+        } else {
+            draw_dec_c(44, 73, stall, 3, C_GREEN);
+        }
     }
-    draw_str(92, 73, "PING", C_GRAY);
-    draw_dec(128, 73, ping, 3, C_WHITE);
+    draw_dec_c(128, 73, ping, 3, C_WHITE);
     if (is_master) {
-        draw_str(152, 73, "PEERS", C_GRAY);
-        draw_dec(196, 73, n_connected, 1, C_WHITE);
+        if (cache_n_connected != n_connected) {
+            cache_n_connected = (u8)n_connected;
+            draw_dec_c(162, 10, n_connected, 1, C_WHITE);
+            draw_dec_c(196, 73, n_connected, 1, C_WHITE);
+        }
     } else {
-        draw_str(152, 73, "ECHO", C_GRAY);
-        draw_dec(188, 73, last_ping, 3, C_WHITE);
+        if (cache_last_ping != last_ping) {
+            cache_last_ping = last_ping;
+            draw_dec_c(188, 73, last_ping, 3, C_WHITE);
+        }
     }
 
-    /* live status line */
-    if (stall > 30) {
-        draw_str(2, 82, "NO LINK - NO PARTNER RESPONDING", C_RED);
-    } else if (stall > 0) {
-        draw_str(2, 82, "LINK IDLE - WAITING FOR TRANSFER", C_YELLOW);
-    } else if (is_master) {
-        char s[24];
-        int n = 0;
-        s[n++] = 'L'; s[n++] = 'I'; s[n++] = 'N'; s[n++] = 'K';
-        s[n++] = ' '; s[n++] = 'A'; s[n++] = 'C'; s[n++] = 'T';
-        s[n++] = 'I'; s[n++] = 'V'; s[n++] = 'E'; s[n++] = ' ';
-        s[n++] = '-'; s[n++] = ' ';
-        s[n++] = (char)('0' + n_connected + 1);
-        s[n++] = ' '; s[n++] = 'P';
-        if (n_connected + 1 > 1) s[n++] = 'S';
-        s[n] = 0;
-        draw_str(2, 82, s, state_color);
-    } else {
-        draw_str(2, 82, "LINK ACTIVE - TRANSFERS FLOWING", state_color);
+    /* live status line: redraw only when its state changes */
+    {
+        u8 st = stall > 30 ? 0 : (stall > 0 ? 1 : 2);
+        if (cache_status != st || (is_master && cache_status_count != n_connected)) {
+            cache_status = st;
+            cache_status_count = (u8)n_connected;
+            clear_cell(2, 82, 32);
+            if (st == 0) {
+                draw_str(2, 82, "NO LINK - NO PARTNER RESPONDING", C_RED);
+            } else if (st == 1) {
+                draw_str(2, 82, "LINK IDLE - WAITING FOR TRANSFER", C_YELLOW);
+            } else if (is_master) {
+                char s[24];
+                int n = 0;
+                s[n++] = 'L'; s[n++] = 'I'; s[n++] = 'N'; s[n++] = 'K';
+                s[n++] = ' '; s[n++] = 'A'; s[n++] = 'C'; s[n++] = 'T';
+                s[n++] = 'I'; s[n++] = 'V'; s[n++] = 'E'; s[n++] = ' ';
+                s[n++] = '-'; s[n++] = ' ';
+                s[n++] = (char)('0' + n_connected + 1);
+                s[n++] = ' '; s[n++] = 'P';
+                if (n_connected + 1 > 1) s[n++] = 'S';
+                s[n] = 0;
+                draw_str(2, 82, s, C_GREEN);
+            } else {
+                draw_str(2, 82, "LINK ACTIVE - TRANSFERS FLOWING", C_GREEN);
+            }
+        }
     }
 
-    /* sparkline of recent round trips / ping cadence (40 samples) */
-    draw_str(2, 91, is_master ? "RTT HISTORY (fr)" : "PING CADENCE (fr)", C_GRAY);
-    draw_sparkline(2, 98, warn_color);
-
-    /* footer */
-    draw_str(2, 150, "DUALBOY LINKTEST v2.0 - 4P LINK - watch FRM rates", C_DIM);
+    /* sparkline (cheap 40-px bar): always redraw */
+    draw_sparkline(2, 98, C_WHITE);
 }
 
 /* ---- main ---- */
@@ -573,13 +679,14 @@ int main(void) {
     spark_pos = 0;
     n_connected = 0;
 
+    draw_static();
+
     while (1) {
         u16 d0, d1, d2, d3;
 
         wait_vblank_start();
         g_frame++;
         stall++;
-        clear_screen();
 
         /* Re-stamp RCNT (keep bits 14-15 clear so the mode decode stays MULTI)
            and SIOCNT in MULTI mode, then re-derive our role. The core
@@ -605,7 +712,7 @@ int main(void) {
                 my_state = ST_NOLNK;
             }
             compute_exp();
-            draw_ui();
+            draw_dynamic();
             master_send();            /* MUST be last: the lockstep ends the
                                          primary's frame here */
         } else {
@@ -614,7 +721,7 @@ int main(void) {
                 my_state = ST_NOLNK;
             }
             compute_exp();
-            draw_ui();
+            draw_dynamic();
         }
 
         wait_vblank_end();

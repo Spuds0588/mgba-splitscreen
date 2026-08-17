@@ -173,11 +173,11 @@ Done:
       state, a STALL counter, a live PEERS count on the master, and a live
       sparkline. Built with bare `clang` + `arm-none-eabi-ld` (no devkitARM
       needed; see `build.sh`). Its `FRM` counter (game frames since boot) is the
-      key desync probe — ALL screens must advance in lockstep. Two ROM bugs were
-      found while building it: RCNT must be cleared (`REG_RCNT = 0`) before MULTI
-      mode or mGBA's mode decode (`(rcnt & 0xC000) | (siocnt & 0x3000) >> 12`)
-      reads GPIO instead of MULTI (dead link), and the framebuffer must be cleared
-      each frame or changing glyphs accumulate into solid blocks.
+      key desync probe — ALL screens must advance in lockstep. ROM bug found while
+      building it: RCNT must be cleared (`REG_RCNT = 0`) before MULTI mode or
+      mGBA's mode decode (`(rcnt & 0xC000) | (siocnt & 0x3000) >> 12`) reads GPIO
+      instead of MULTI (dead link). v2.1 later dropped the per-frame full-screen
+      clear (it made the whole instrument crawl) — see the 60 fps entry below.
 - [x] **Lockstep desync + 128s crash fix** (2026-08-17): the linktest exposed that
       the primary ran at ~half the secondary's speed (`FRM 130` vs `234`), and the
       link died/spun at ~128 s. Root cause: mGBA's lockstep `user->sleep` is meant
@@ -202,6 +202,22 @@ Done:
       cooperative-stepping fix scales cleanly to the full 4-player lockstep. The
       desktop app also gained P3/P4 keyboard maps (`--players 3|4` is fully
       playable from one keyboard).
+- [x] **4-player 60 fps game time — wrapper exonerated, linktest ROM perf fixed**
+      (2026-08-17): a minimal-draw build of the linktest (full MULTI link protocol,
+      one-line readout) ran all four at exactly 60.0 fps — proving the wrapper/
+      lockstep is NOT the bottleneck. The crawl was the ROM's own rendering: it
+      cleared all 38,400 framebuffer pixels and redrew ~250 glyphs every frame,
+      spilling vblank into mode-3 bitmap VRAM contention (~8 fps). Two ROM fixes:
+      (1) draw static labels once at boot and only clear+redraw the live value
+      cells (change-cached) each frame; (2) use SIOCNT baud 3 (fastest MULTI clock)
+      — at the default baud 0 a 4-player transfer costs ~126k cycles and the
+      master's transfer+hard-sync pushed its loop to 2 frames while slaves ran 1
+      (a false 30/60 FRM desync). After: all four FRM in exact parity at ~60 fps,
+      STALL 0, no stall/crash. Also made the frame broadcast tear-free in
+      `emulation.rs` by snapshotting each player's buffer at its frame-counter
+      increment (vcount 160, right after `finishFrame`, before the ROM's next-frame
+      clear) instead of reading the live mid-frame buffer. `cargo test` green
+      (128 unit + 2 smoke).
 
 In progress / next:
 - [ ] Root-cause the one observed tokio-worker segfault (`segfault at 4a8` in
@@ -295,6 +311,10 @@ never slows emulation. Always use `cargo build --release`.
   is a link-heavy MULTI-mode game by design, so any wrapper-level frame starvation
   shows up here as an FRM divergence or a rising STALL, and it is far easier to
   reason about than a real game. (See `DualBoy/linktest/main.c` header for the full
-  protocol + expected readouts.)
+  protocol + expected readouts.) Two linktest details that matter: keep SIOCNT baud
+  at 3 (fastest) — the default baud 0 makes the master's loop run 2 frames and shows
+  a false FRM desync — and don't re-add a per-frame full-screen clear (draw static
+  once, change-cache the live values); both were found to masquerade as wrapper
+  perf bugs.
 - Commit + push frequently (history has been lost to VM OOM before).
 - Follow YAGNI; prefer small, single-purpose changes.

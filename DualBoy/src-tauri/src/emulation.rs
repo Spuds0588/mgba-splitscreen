@@ -373,6 +373,21 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
             let mut stall_streak = 0u32;
             let mut was_stalled = false;
 
+            // Per-player tear-free frame snapshots. mGBA's software renderer draws
+            // scanlines into the output buffer incrementally, and a GBA game's vblank
+            // handler typically clears it at the start of the next frame. Reading the
+            // live buffer at an arbitrary point in the tick therefore catches it
+            // mid-clear or mid-draw ("tearing"). The buffer is only guaranteed
+            // complete for the instant between `finishFrame` (vcount 160) and the next
+            // vblank handler running. We capture that instant: each `run_loop` step
+            // returns right after the frame-end event sets `earlyExit`, and the video
+            // frame counter has incremented by then but the ROM's vblank clear has not
+            // yet run. Snapshotting on frame-counter increment freezes the complete
+            // frame, and the broadcast always sends the last complete frame per player.
+            const FRAME_BYTES: usize = 240 * 160 * 4;
+            let mut snapshots: Vec<Vec<u8>> = vec![vec![0u8; FRAME_BYTES]; n];
+            let mut last_fc: Vec<u32> = vec![u32::MAX; n];
+
             loop {
                 {
                     let mut guards: Vec<_> =
@@ -417,6 +432,13 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
                                     .max(1);
                                 budgets[i] -= delta;
                                 steps += 1;
+                                // Frame complete? Snapshot the fully-drawn buffer
+                                // before the ROM's vblank clear can scribble over it.
+                                let fc = guards[i].frame_counter();
+                                if fc != last_fc[i] {
+                                    last_fc[i] = fc;
+                                    snapshots[i] = guards[i].get_pixels_rgba();
+                                }
                             }
                         }
 
@@ -429,10 +451,12 @@ let sleeping_flags = Arc::new(Mutex::new(vec![false; count]));
                         tick_no = tick_no.wrapping_add(1);
                         if tick_no % video_every == 0 {
                             // RGBA8888: 4 bytes/pixel so the frontend can putImageData
-                            // directly with no per-pixel decode.
-                            let mut combined = Vec::with_capacity(240 * 160 * 4 * guards.len());
-                            for gba in guards.iter() {
-                                combined.extend_from_slice(&gba.get_pixels_rgba());
+                            // directly with no per-pixel decode. Send the last complete
+                            // frame snapshot per player (tear-free), never the live
+                            // mid-frame buffer.
+                            let mut combined = Vec::with_capacity(FRAME_BYTES * guards.len());
+                            for snapshot in snapshots.iter() {
+                                combined.extend_from_slice(snapshot);
                             }
                             let _ = tx.send(combined);
                             video_frames += 1;
