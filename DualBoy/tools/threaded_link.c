@@ -1,7 +1,7 @@
 /* DualBoy threaded lockstep reference harness.
  *
  * Runs N GBA cores on N real threads linked through mGBA's own
- * GBASIOLockstepCoordinator + GBASIOLockstepDriver. The per-player thread uses
+ * GBASIORendezvousCoordinator + GBASIORendezvousDriver. The per-player thread uses
  * the same semantics as mGBA's mCoreThread: the lockstep `sleep`/`wake` are
  * deferred to the thread loop (sleep sets a flag and returns -- it is called
  * under the coordinator mutex and MUST NOT block -- and the loop blocks on a
@@ -26,7 +26,7 @@
 #include <mgba/core/config.h>
 #include <mgba/core/log.h>
 #include <mgba/core/lockstep.h>
-#include <mgba/internal/gba/sio/lockstep.h>
+#include "rendezvous.h"
 #include <mgba/gba/interface.h>
 
 #include <pthread.h>
@@ -59,7 +59,7 @@ enum Screen {
 
 struct Player {
     struct mCore* core;
-    struct GBASIOLockstepDriver driver;
+    struct GBASIORendezvousDriver driver;
     struct mLockstepUser user;
     pthread_t thread;
     pthread_mutex_t mutex;   /* guards asleep/stop */
@@ -435,8 +435,9 @@ static int run_fs(const char* rom) {
     while (now_ms() - start < 60000) {
         sleep_ms(2000);
         int t = (int) ((now_ms() - start) / 1000);
-        fprintf(stderr, "[%ds] P1=%s P2=%s\n", t,
-                screen_name(cur_screen(0)), screen_name(cur_screen(1)));
+        fprintf(stderr, "[%ds] P1=%s P2=%s | frames P1=%d P2=%d\n", t,
+                screen_name(cur_screen(0)), screen_name(cur_screen(1)),
+                g_players[0].framesProduced, g_players[1].framesProduced);
         if (t == 10) { dump_ppm("/tmp/fs_watch10_p1.ppm", g_cur[0]); dump_ppm("/tmp/fs_watch10_p2.ppm", g_cur[1]); }
         if (t == 30) { dump_ppm("/tmp/fs_watch30_p1.ppm", g_cur[0]); dump_ppm("/tmp/fs_watch30_p2.ppm", g_cur[1]); }
     }
@@ -514,8 +515,8 @@ int main(int argc, char** argv) {
     }
     mLogSetDefaultLogger(&logger.d);
 
-    struct GBASIOLockstepCoordinator coordinator;
-    GBASIOLockstepCoordinatorInit(&coordinator);
+    struct GBASIORendezvousCoordinator coordinator;
+    GBASIORendezvousCoordinatorInit(&coordinator);
 
     g_playerCount = players;
     memset(g_players, 0, sizeof(g_players));
@@ -544,8 +545,8 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        GBASIOLockstepDriverCreate(&p->driver, &p->user);
-        GBASIOLockstepCoordinatorAttach(&coordinator, &p->driver);
+        GBASIORendezvousDriverCreate(&p->driver, &p->user);
+        GBASIORendezvousCoordinatorAttach(&coordinator, &p->driver);
         p->user.sleep = user_sleep;
         p->user.wake = user_wake;
         p->user.requestedId = requested_id;
@@ -608,7 +609,7 @@ int main(int argc, char** argv) {
         pthread_cond_destroy(&g_players[i].cond);
         pthread_mutex_destroy(&g_players[i].snapMutex);
     }
-    GBASIOLockstepCoordinatorDeinit(&coordinator);
+    GBASIORendezvousCoordinatorDeinit(&coordinator);
     mStandardLoggerDeinit(&logger);
     fprintf(stderr, "done\n");
     return 0;

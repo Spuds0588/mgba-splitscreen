@@ -616,3 +616,64 @@ later for the pop-out-windows feature, but it won't fix linking).
    the 4-player linktest FRM parity + the 128s wrap test.
 3. Keep watching upstream #3286 (still `blocked: needs retest`) and the reverted
    `a0647ffac`/`ea50b5e87` timing experiments for a merged fix.
+
+## Bespoke deterministic in-process driver (`GBASIORendezvousDriver`) — 2026-08-18
+
+Built the "rewrite the link logic" option as `DualBoy/tools/rendezvous.{c,h}` +
+wired it into `DualBoy/tools/threaded_link.c` as a selectable in-process driver.
+It is a fork of `lockstep.c` with two changes: (1) no per-transfer `_hardSync`
+(H1) and (2) no post-ack secondary sleep in `AckPlayer` — the secondary runs on
+to `finishCycle` so both sides complete at the same shared cycle. The harness
+keeps real threads + 60fps pacing + the nav_fs state machine, and now dumps a
+per-transfer drift measure (`Rendezvous: player N time X finishCycle Y drift D`).
+
+**Regression — 4-player linktest: PASS, and cycle-lockstep is now measurable.**
+Every secondary processes every TRANSFER_START within ~30 cycles of the master
+(drift distribution is a tight spike at the transfer time: e.g. `drift -5755`
+for FS's baud, meaning `slave_time ≈ master_time`). 0 "did not receive", 0
+aborts. The deterministic rendezvous does exactly what it was designed to do —
+it removes cycle drift as a variable.
+
+**Four Swords: STILL fails, and now we know why it is NOT cycle drift.** With
+both cores pinned to the same cycle, the game handshake still never completes:
+`FEFE` probes continue at ~120/s and the games exchange value+checksum pairs
+whose counters are offset by 13→19 and keep drifting. **The failure survives
+tight cycle-lockstep**, so it is a register-bit or transfer-completion-timing
+mismatch (H4/H6), not a data race and not frame/cycle drift.
+
+**New ground-truth instrumentation (temporary, now reverted — re-add to
+`src/gba/io.c` `GBAIORead` when needed):** value-change-gated SIOCNT read trace
+(`mLOG(GBA_SIO, DEBUG, "SIOCNT read P%d: %04X busy=%d ready=%d err=%d id=%d slave=%d", ...)`)
+plus the SIOCNT/SIOMLT_SEND write logs already in sio.c. The decisive asymmetry
+it exposed during the FS link screen:
+
+- **Master P0** writes SIOCNT `208B` (baud 3, busy=1) **94,614 times** — it
+  settles at baud 3 and drives every transfer. It reads `busy=1` ~50% of the time.
+- **Slave P1** writes SIOCNT `601F`/`201C` (baud 3 / baud 0, **busy=0 always**)
+  only 184 times — it never sets busy, it alternates baud 0↔3 forever, and it
+  reads `busy=1` only **5 times out of 194** reads (2.6%) even though the
+  master's transfers hold the slave's busy bit high ~52% of the time.
+
+So the two games are in **different handshake states**: the master is probing
+(FEFE + busy), while the slave is stuck in baud negotiation and almost never
+observes a transfer in progress. That is the concrete manifestation of the
+value-counter offset. Data exchange itself is perfect (189,228 =
+2×94,614 `MULTI transfer finished`, zero `did not receive`).
+
+**Hypothesis tested this round (NEGATIVE):** simulate MULTI baud-mismatch
+corruption (slave at a different baud than the master reads all-ones instead of
+clean data, since real hardware clocks the wire off the master's SC). The
+corruption branch never fired — `Baud mismatch` count was 0 across the whole run
+because the slave's baud is always 3 at every transfer *completion* — so the
+slave's baud-0 writes only happen outside the transfer burst and this is NOT the
+bug (reverted).
+
+**Best next move:** the slave reads `busy=1` ~5 times when a faithful model
+should show it ~50% of the time. Either the slave's busy bit is being cleared
+before the game's (rare, ~3/s) SIOCNT read, or the game never polls busy during
+a transfer. Instrument the slave's busy-bit set/clear cycle boundaries in
+`finishMultiplayer`/the TRANSFER_START handler vs the exact cycle the game reads
+SIOCNT, and check whether mGBA clears busy too early relative to gbatek's
+"busy stays high for the full transfer" semantics. This is the narrowest lead we
+have and it is fully reproducible via the harness (`threaded_link --fs <rom>`,
+then grep the stdout).
