@@ -314,6 +314,119 @@ Next time: reproduce with the linktest ROM first (see handoff notes) to confirm
 lockstep health, then attack the post-link stall — the game stops initiating
 transfers on a screen where it must exchange data to proceed.
 
+## FS post-link stall — working hypothesis list (2026-08-18)
+
+Ordered by priority; each entry records what to try, why, and how to tell if it
+worked. Test ONE at a time, rebuild, reproduce, and log the result here so we
+don't backtrack. (Key upstream context: lockstep.c on mgba master is still
+identical to ours modulo the committed clamp; issue #3286 is still OPEN; the
+`a0647ffac` "Loosen timing" patch is a Feb 2026 upstream experiment that was
+reverted three weeks later — so there is no upstream fix to cherry-pick yet.)
+
+- **H1 — Per-transfer hard sync is too aggressive.** `finishMultiplayer/8/32`
+  calls `_hardSync()` after EVERY completed transfer, a full barrier (primary
+  sleeps until all secondaries ack). Real hardware has no such per-transfer
+  barrier — the master clocks the transfer and everyone finishes together.
+  FS's rapid FEFE→value→checksum handshake may need the games to run a few
+  cycles apart, and this barrier pins them too tightly / at the wrong cadence.
+  *Try:* gate or remove the per-transfer `_hardSync` (leave the periodic
+  `nextHardSync` one). *Pass:* FS gets past the post-link screen and into
+  story/gameplay; linktest FRM still in parity, STALL 0, no 128s crash.
+
+- **H2 — Mode-switch negotiation race.** Switching mode (FS cycles GPIO→NORMAL8
+  →MULTI during detection) makes the primary `WaitOnPlayers` + sleep until all
+  ack. If MODE_SET events and acks interleave badly, `transferMode`/`otherModes`
+  can be momentarily inconsistent and the SD (ready) bit flickers, so the game
+  never sees a stable "all ready". *Try:* instrument mode-set + SD transitions;
+  if SD toggles spuriously, fix the ordering. *Pass:* SD stable; FS links.
+
+- **H3 — Sequential wrapper timing ≠ threaded-model timing.** mGBA's lockstep is
+  designed for the threaded model (each player's `user->sleep` BLOCKS its host
+  thread; a separate mCoreThread frame-sync paces frames). DualBoy runs all
+  players on one thread via cooperative `runLoop` stepping. FS is timing
+  sensitive where the linktest ROM is not. *Try:* build a small threaded C
+  harness against libmgba (2 cores, 2 mCoreThreads, real blocking lockstep
+  users) and run FS. *Pass/fail discriminates:* links there = our wrapper
+  adaptation is at fault; still stalls = upstream protocol bug.
+
+- **H4 — Ready/ID/SI bit semantics differ from hardware for FS.** `_setReady`
+  computes SD = (all players' modes match). FS may poll SI (bit 2), the ID bits,
+  or SD at moments where mGBA's lockstep reports a different value than a real
+  link port would (especially before/after mode negotiation settles). *Try:*
+  dump the exact SIOCNT values FS reads vs gbatek's documented MULTI-mode
+  layout; fix any divergence. *Pass:* game stops retrying and links.
+
+- **H5 — The post-link "stall" is a nav/input false positive.** The logo+text
+  screen after linking might legitimately await a specific input (both players
+  press START, a menu choice, etc.) and only LOOKS frozen. *Try:* systematic
+  button sweeps on both players there. *Pass:* a button advances it; no SIO fix
+  needed. (Prior evidence against: 0-px animation, transfers stop mid-probe,
+  only B responds — but cheap to rule out definitively.)
+
+- **H6 — SIO IRQ / interrupt timing.** FS may use the SIO IRQ (SIOCNT bit 14) or
+  depend on interrupt latency for handshake timing, which lockstep delivers at
+  slightly different points than hardware. *Try:* compare IRQ fire times with
+  transfer completion; adjust if off.
+
+- **H7 — A fix exists on an mGBA PR/branch not yet merged.** *Try:* search
+  mGBA's open PRs + forks for a #3286 fix before writing our own.
+
+Status log (append as each is tested):
+- [x] H1 — per-transfer hard sync removed from `finishMultiplayer`:
+      **linktest PASS** (exact FRM parity +596/+596, 0 data-loss, 60 fps both),
+      **FS handshake desync REDUCED** (off-by-one + missed rounds mostly gone;
+      after a one-time hiccup the games exchange MATCHING value+checksum pairs
+      in lockstep) — but the handshake still cycles forever, so H1 is a partial
+      improvement, NOT the complete fix. Kept on the branch as a cumulative
+      experiment. This tells us the completion failure is NOT the off-by-one
+      desync — with clean lockstep sync the game still doesn't accept the link,
+      pointing at a register-bit or transfer-timing mismatch (H4/H6) next.
+- [ ] H2
+- [ ] H3
+- [ ] H4
+- [ ] H5
+- [ ] H6
+- [ ] H7
+
+### Fresh reproduction + handshake data (2026-08-18)
+
+Reproduced reliably via `dualboy-web --players 2` + `nav_fs.py --port 8080
+--path /ws` (drives both to the FS title) + a simultaneous START press on both.
+Result: 52,811 transfers flow, 0 "did not receive", and the full MULTI handshake
+is visible in the `MULTI transfer finished` log. The handshake is a repeating
+cycle, and the raw slot data shows the desync directly:
+
+```
+FEFE 0000   P1 probes, P2 idle
+0042 0043   P1=0x42, P2=0x43   <-- P2 one round AHEAD
+FFAF FFAE   0x42+0xFFAF=0xFFF1, 0x43+0xFFAE=0xFFF1 (checksums)
+0000 0000 x ~20 idle transfers
+FEFE 0000
+0043 0000   P2 missed this round (idle)
+FFAE 0000
+0000 0000 x ~20
+FEFE 0000
+0044 0044   both in sync
+FFAD FFAD
+...
+```
+
+The value increments each round (0x42→0x43→0x44→…), and value+checksum always
+sums to 0xFFF1 (a validity pair). Two failure signatures recur: (a) P2 is one
+value AHEAD of P1 (`0042 0043`), and (b) P2 misses a round entirely (`0043 0000`).
+258 distinct rounds were observed with the games never completing the handshake
+— they are stuck exchanging incrementing values, i.e. the master/slave state
+machines keep drifting apart and resyncing. This is the concrete manifestation
+of the off-by-one timing skew that the earlier session could only infer.
+
+Reproduction recipe (save this):
+1. `cd DualBoy/src-tauri && ./target/release/dualboy-web --players 2 > /tmp/dualboy_web.log 2>&1 &`
+2. `curl -X POST --data-binary @"Test Roms/...Four Swords....gba" http://127.0.0.1:8080/load_rom`
+3. `python3 DualBoy/scripts/nav_fs.py --port 8080 --path /ws --players 2 --rom "Test Roms/..." `
+   (drives both to the FS title)
+4. Press START on both simultaneously (raw_ws keys START on players 1+2).
+5. Watch `/tmp/dualboy_web.log` for `MULTI transfer finished` values.
+
 ## Future dev options (documented, not yet built)
 
 - **2×2 link groups** — two independent 2-player links (P1–P2, P3–P4) in one process,

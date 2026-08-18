@@ -595,7 +595,13 @@ static void GBASIOLockstepDriverFinishMultiplayer(struct GBASIODriver* driver, u
 		}
 		player->dataReceived = false;
 		if (player->playerId == 0) {
-			_hardSync(coordinator, player);
+			// H1 experiment: the per-transfer hard sync is a full barrier after
+			// every completed MULTI transfer. Real hardware finishes all players
+			// together with no such barrier, and FS's rapid handshake appears to
+			// desync (slave drifts a round ahead) when the master over-sleeps
+			// here. The next transfer's WaitOnPlayers still re-syncs, so drop
+			// this redundant barrier and measure the FS off-by-one rate.
+			// _hardSync(coordinator, player);
 		}
 	}
 	MutexUnlock(&coordinator->mutex);
