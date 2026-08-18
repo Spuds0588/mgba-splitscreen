@@ -578,8 +578,39 @@ void GBAApplyPatch(struct GBA* gba, struct Patch* patch) {
 	gba->romCrc32 = doCrc32(gba->memory.rom, gba->memory.romSize);
 }
 
+// TEMP: FS link IRQ/halt trace (see PROJECT_LOG) -- value-change gated, per pid
+static uint32_t g_irqTraceFire[4];
+static uint32_t g_irqTraceHalt[4];
+static uint16_t g_haltTraceState[4];
+static uint32_t g_haltTraceCount[4];
+static bool g_haltTraceInit[4];
+static uint16_t g_trigTraceState[4];
+static uint32_t g_trigTraceCount[4];
+static bool g_trigTraceInit[4];
+static int _sioPid(struct GBA* gba) {
+	if (gba->sio.driver && gba->sio.driver->deviceId) {
+		return gba->sio.driver->deviceId(gba->sio.driver);
+	}
+	return 0;
+}
+
 void GBARaiseIRQ(struct GBA* gba, enum GBAIRQ irq, uint32_t cyclesLate) {
 	gba->memory.io[GBA_REG(IF)] |= 1 << irq;
+	if (irq == GBA_IRQ_SIO) {
+		int pid = _sioPid(gba);
+		uint16_t ie = gba->memory.io[GBA_REG(IE)];
+		uint16_t ifr = gba->memory.io[GBA_REG(IF)];
+		uint16_t ime = gba->memory.io[GBA_REG(IME)];
+		uint16_t state = (ifr & 0x80) | ((ie & 0x80) << 8) | (ime << 15) | (gba->cpu->halted << 14);
+		uint32_t fire = ++g_irqTraceFire[pid];
+		if (pid != 0 && (fire % 500 == 0 || !g_trigTraceInit[pid] || state != g_trigTraceState[pid])) {
+			mLOG(GBA_SIO, DEBUG, "SIOIRQ pid=%d t=%u fire=%u ie=%04X if=%04X ime=%d halt=%d",
+			     pid, (unsigned) mTimingCurrentTime(&gba->timing), fire,
+			     ie, ifr, ime, gba->cpu->halted);
+			g_trigTraceState[pid] = state;
+			g_trigTraceInit[pid] = true;
+		}
+	}
 	GBATestIRQ(gba, cyclesLate);
 }
 
@@ -597,6 +628,19 @@ void GBATestIRQ(struct GBA* gba, uint32_t cyclesLate) {
 }
 
 void GBAHalt(struct GBA* gba) {
+	int pid = _sioPid(gba);
+	uint16_t ie = gba->memory.io[GBA_REG(IE)];
+	uint16_t ifr = gba->memory.io[GBA_REG(IF)];
+	uint16_t ime = gba->memory.io[GBA_REG(IME)];
+	uint16_t state = ie | (ifr << 8) | (ime << 15);
+	++g_haltTraceCount[pid];
+	if (pid != 0 && (!g_haltTraceInit[pid] || state != g_haltTraceState[pid])) {
+		mLOG(GBA_SIO, DEBUG, "HALT pid=%d t=%u count=%u ie=%04X if=%04X ime=%d",
+		     pid, (unsigned) mTimingCurrentTime(&gba->timing), g_haltTraceCount[pid],
+		     ie, ifr, ime);
+		g_haltTraceState[pid] = state;
+		g_haltTraceInit[pid] = true;
+	}
 	gba->cpu->nextEvent = gba->cpu->cycles;
 	gba->cpu->halted = 1;
 }
@@ -1036,12 +1080,25 @@ static void _triggerIRQ(struct mTiming* timing, void* user, uint32_t cyclesLate)
 	UNUSED(timing);
 	UNUSED(cyclesLate);
 	struct GBA* gba = user;
+	int pid = _sioPid(gba);
+	uint16_t ie = gba->memory.io[GBA_REG(IE)];
+	uint16_t ifr = gba->memory.io[GBA_REG(IF)];
+	uint16_t ime = gba->memory.io[GBA_REG(IME)];
+	uint16_t state = (ifr & 0x80) | ((ie & 0x80) << 8) | (ime << 15);
+	uint32_t wake = ++g_irqTraceHalt[pid];
+	if (pid != 0 && gba->cpu->halted && (wake % 250 == 0 || !g_trigTraceInit[pid] || state != g_trigTraceState[pid])) {
+		mLOG(GBA_SIO, DEBUG, "TRIG pid=%d t=%u wake=%u ie=%04X if=%04X ime=%d wasHalted=1",
+		     pid, (unsigned) mTimingCurrentTime(&gba->timing), wake,
+		     ie, ifr, ime);
+		g_trigTraceState[pid] = state;
+		g_trigTraceInit[pid] = true;
+	}
 	gba->cpu->halted = 0;
-	if (!(gba->memory.io[GBA_REG(IE)] & gba->memory.io[GBA_REG(IF)])) {
+	if (!(ie & ifr)) {
 		return;
 	}
 
-	if (gba->memory.io[GBA_REG(IME)] && !gba->cpu->cpsr.i) {
+	if (ime && !gba->cpu->cpsr.i) {
 		ARMRaiseIRQ(gba->cpu);
 	}
 }

@@ -677,3 +677,85 @@ SIOCNT, and check whether mGBA clears busy too early relative to gbatek's
 "busy stays high for the full transfer" semantics. This is the narrowest lead we
 have and it is fully reproducible via the harness (`threaded_link --fs <rom>`,
 then grep the stdout).
+
+## Busy-bit boundary instrumentation — DONE, hypothesis REFUTED (2026-08-18)
+
+Instrumented the rendezvous driver (`DualBoy/tools/rendezvous.c`) + `src/gba/io.c`
+`GBAIORead` and re-ran `threaded_link --fs <rom>` (94,601 transfers, 0 drops):
+
+- `BUSYSET pid=1` logs the slave's busy-set cycle + `nextEvent`; `BUSYCLR pid=1`
+  logs its clear cycle; `BUSYRD` logs the game's SIOCNT reads (value-change gated
+  on the busy bit). Rebuild: `cmake --build <cargo out>/build && DualBoy/tools/build.sh`.
+
+**Result — the slave's busy bit is NOT cleared early.**
+
+- Window `clear − set`: min 5,659 / **median 5,755** / max 13,683 cycles across
+  all 94,601 transfers. The median is exactly `GBASIOCyclesPerTransfer[baud 3][1]
+  = 5,755`, i.e. the full nominal transfer. **0 / 94,601 windows were < 5,000
+  cycles** — the "clears busy too early" hypothesis is refuted.
+- The game's reads line up correctly with the window when it does poll: it reads
+  `busy=1` ~2,000 cycles after set (well inside the 5,755-cycle window) and
+  `busy=0` ~130 cycles after clear. The busy bit is fully observable.
+
+**Sharper finding this exposed (the new lead):**
+
+- **Master (pid 0) reads SIOCNT 7,635 times** over the 60 s handshake (3,817
+  busy 0→1 + 3,817 1→0 transitions).
+- **Slave (pid 1) reads SIOCNT only 11 times** — 5 `busy=1`, 5 `busy=0`, 1 boot
+  read. Its reads are clustered in short bursts (gap ~3,876 cycles within a burst)
+  separated by huge gaps (median 277 k cycles ≈ 16.5 ms, one ~59 s).
+
+So the slave's game is **not** in a busy-poll loop at all — it is writing
+`SIOMLT_SEND` (86,904 times) and cycling SIOCNT baud 0↔3 (`201C`↔`601F`, IRQ bit
+14 = 1), then waiting *long* stretches between handshake attempts. The busy bit
+is fine; what the slave is waiting on is the real question — most likely the
+**SIO completion IRQ (SIOCNT bit 14, which the slave has set)** or an
+interrupt-driven wait, i.e. **H6**. Next: trace `GBARaiseIRQ(GBA_IRQ_SIO)` fire
+cycles vs transfer completion on the slave, and whether the slave's BIOS
+`IntrWait`/halt is being released.
+
+**NOTE — temporary instrumentation currently IN the tree** (uncommitted):
+`src/gba/io.c` (`g_busyTraceLast/g_busyTraceInit` + the `BUSYRD` mLOG in
+`GBAIORead`), `src/gba/gba.c` (SIOIRQ/TRIG/HALT trace in `GBARaiseIRQ`,
+`_triggerIRQ`, `GBAHalt`), `DualBoy/tools/rendezvous.c` (`BUSYSET`/`BUSYCLR`
+mLOGs). Revert `src/gba/io.c` and `src/gba/gba.c` before any merge; the
+`BUSYSET`/`BUSYCLR` driver logs are cheap and can stay in the dev tool.
+
+## SIO IRQ fire vs transfer completion — DONE, H6 REFUTED (2026-08-18)
+
+Task: trace `GBARaiseIRQ(GBA_IRQ_SIO)` fire cycles vs transfer completion on the
+Four Swords slave, and check whether the slave's BIOS `IntrWait`/halt is being
+released during the handshake. Added value-gated SIO IRQ / halt trace to
+`src/gba/gba.c` (SIOIRQ in `GBARaiseIRQ`, TRIG in `_triggerIRQ` incl. `wasHalted`
++ IF/IE/IME snapshot, HALT in `GBAHalt`), rebuilt libmgba + harness, re-ran
+`threaded_link --fs <rom>` (94,599 transfers, 0 drops).
+
+**Result — the slave's SIO IRQ fires at exact transfer completion and its halt
+IS released, every time. H6 refuted.**
+
+- SIO IRQ raise vs BUSYCLR (transfer completion): **delta min 0, p50 0** cycles
+  across 64,238 raises — the IF bit is set in the same timing tick the transfer
+  finishes.
+- Halt release: 55,146 `TRIG` events with `if=0080 wasHalted=1`, and the IRQ
+  trigger fires **exactly GBA_IRQ_DELAY (7) cycles** after transfer completion
+  (p50 7). The slave's `IntrWait` halt is released by the SIO IRQ on every
+  transfer — the interrupt delivery path is flawless.
+- The slave IS in `IntrWait` during the handshake (only 1 `HALT` *state-change*
+  line because the IE/IF/IME snapshot is stable: `ie=2085 if=0000 ime=1`, which
+  has the SIO bit 0x80 enabled in IE — the gating logs state changes, not count;
+  the wake counter proves repeated halts+wakes, 242,621 total wakes).
+- Transfer cadence on the slave: p50 19,210 cycles ≈ 833 transfers/s.
+- The handshake value/checksum pairs are **internally valid both ways**
+  (`0088+FF69=FFF1`, `0095+FF5C=FFF1`) — each game computes `checksum =
+  0xFFF1 − value`, and the receiving side sees a consistent pair. Data integrity
+  is perfect; the games still never accept the link.
+
+**Conclusion:** the interrupt/halt path (H6) is NOT the bug. Combined with the
+busy-bit result (H4 refuted) and the cycle-lockstep result (H1/desync refuted),
+all four "plumbing" hypotheses are now dead. The remaining lead is the value
+counter itself: the two games' handshake counters stay offset (~0x13, P1
+advancing faster in bursts) even under perfect cycle-lockstep and valid
+checksums, so the game's acceptance check sees a value it never accepts. Next
+narrowest probe: trace the slave's SIOMULTI0-3 *reads* and its branch on the
+received value during the FEFE cycle — i.e. what value does the game expect to
+receive, and what does the driver actually deliver at that exact read cycle?

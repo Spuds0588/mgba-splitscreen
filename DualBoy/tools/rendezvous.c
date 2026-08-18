@@ -593,6 +593,8 @@ static void GBASIORendezvousDriverFinishMultiplayer(struct GBASIODriver* driver,
 			     coordinator->multiData[3]);
 			memcpy(data, coordinator->multiData, sizeof(uint16_t) * 4);
 		}
+		mLOG(GBA_SIO, DEBUG, "BUSYCLR pid=%d local=%u",
+		     player->playerId, (unsigned) mTimingCurrentTime(&lockstep->d.p->p->timing));
 		player->dataReceived = false;
 		if (player->playerId == 0) {
 			// H1 experiment: the per-transfer hard sync is a full barrier after
@@ -973,6 +975,9 @@ void _rendezvousEvent(struct mTiming* timing, void* context, uint32_t cyclesLate
 			     player->playerId, GBASIORendezvousTime(player), event->finishCycle,
 			     GBASIORendezvousTime(player) - event->finishCycle);
 			player->driver->d.p->siocnt |= 0x80;
+			mLOG(GBA_SIO, DEBUG, "BUSYSET pid=%d local=%u shared=%08X finish=%08X nextEvent=%d late=%u",
+			     player->playerId, (unsigned) mTimingCurrentTime(&sio->p->timing),
+			     GBASIORendezvousTime(player), event->finishCycle, nextEvent, cyclesLate);
 			mTimingDeschedule(&sio->p->timing, &sio->completeEvent);
 			mTimingSchedule(&sio->p->timing, &sio->completeEvent, nextEvent);
 			GBASIORendezvousCoordinatorAckPlayer(coordinator, player);

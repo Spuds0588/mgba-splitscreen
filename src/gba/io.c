@@ -12,6 +12,11 @@
 
 mLOG_DEFINE_CATEGORY(GBA_IO, "GBA I/O", "gba.io");
 
+/* TEMP busy-trace: per-player last-seen SIOCNT busy bit for value-change-gated
+ * read logging in GBAIORead. Revert before merging. */
+static uint16_t g_busyTraceLast[4];
+static bool g_busyTraceInit[4];
+
 const char* const GBAIORegisterNames[] = {
 	// Video
 	[GBA_REG(DISPCNT)] = "DISPCNT",
@@ -817,8 +822,20 @@ uint16_t GBAIORead(struct GBA* gba, uint32_t address) {
 			gba->memory.io[address >> 1] = 0x3FF ^ input;
 		}
 		break;
-	case GBA_REG_SIOCNT:
-		return gba->sio.siocnt;
+	case GBA_REG_SIOCNT: {
+		uint16_t v = gba->sio.siocnt;
+		if (gba->sio.mode == GBA_SIO_MULTI) {
+			int pid = GBASIOMultiplayerGetId(v) & 3;
+			if (!g_busyTraceInit[pid] || ((g_busyTraceLast[pid] ^ v) & 0x80)) {
+				mLOG(GBA_SIO, DEBUG, "BUSYRD pid=%d local=%u busy=%d siocnt=%04X",
+				     pid, (unsigned) mTimingCurrentTime(&gba->timing),
+				     GBASIOMultiplayerGetBusy(v), v);
+				g_busyTraceLast[pid] = v;
+				g_busyTraceInit[pid] = true;
+			}
+		}
+		return v;
+	}
 	case GBA_REG_RCNT:
 		return gba->sio.rcnt;
 
