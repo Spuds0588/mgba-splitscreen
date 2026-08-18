@@ -537,3 +537,57 @@ never slows emulation. Always use `cargo build --release`.
   perf bugs.
 - Commit + push frequently (history has been lost to VM OOM before).
 - Follow YAGNI; prefer small, single-purpose changes.
+
+## Root-cause direction for the Four Swords link stall (2026-08-18)
+
+**The wrapper deviates from mGBA's link design.** mGBA's multiplayer path expects
+EACH core on its OWN `mCoreThread` (a real OS thread running `core->runLoop`),
+with `mLockstepThreadUser` wiring `sleep`/`wake` to `mCoreThreadWaitFromThread` /
+`mCoreThreadStopWaiting` (real thread blocking/resume). The Qt "new multiplayer
+window" feature is built exactly this way (`src/platform/qt/MultiplayerController.cpp`
++ `src/core/thread.c` + `src/core/lockstep.c`).
+
+DualBoy instead steps every instance SEQUENTIALLY on one thread and fakes
+`sleep`/`wake` with per-player flags (`emulation.rs` `LockstepUserCtx`). That flag
+reimplementation is a re-do of a subtle synchronization protocol, and it is the
+prime suspect for the residual FS stall *on top of* the known upstream issue
+[mgba#3286](https://github.com/mgba-emu/mgba/issues/3286) (which even threaded
+mGBA 0.10.3 hit, so threading alone may not be sufficient).
+
+**Decisive experiment built:** `DualBoy/tools/threaded_link.c` + `build.sh` — a
+headless harness that runs N cores on N real `mCoreThread`s through upstream's own
+`GBASIOLockstepCoordinator` + `mLockstepThreadUser` (the exact Qt mechanism).
+Build with `DualBoy/tools/build.sh` (it re-derives the cmake `-D` defines so struct
+layouts match `libmgba.a`; must define `-DUSE_PTHREADS -DENABLE_VFS -DENABLE_DIRECTORIES`
+or structs/`mCoreLoadFile` are mis-sized/undeclared). Usage:
+
+    DualBoy/tools/threaded_link <rom.gba> <2-4> <seconds> [script.txt]
+
+`script.txt` lines are `time_ms player keymask` (A=0x1 B=0x2 Sel=0x4 Start=0x8
+R=0x10 L=0x20 U=0x40 D=0x80 R-trig=0x100 L-trig=0x200). Judge the link from stdout
+SIO DEBUG chatter: `Transfer starting`, `MULTI transfer finished`, and `did not receive`.
+
+**Validated:** 4-player linktest, 8 s → 9495 `Transfer starting`, 37980 `MULTI transfer
+finished` (= 4 players × 9495), ZERO `did not receive`, zero aborts/desyncs. The
+harness faithfully reproduces mGBA threaded lockstep.
+
+**Next step (the actual split test):** run Four Swords through the harness with the
+same input sequence `nav_fs.py` drives, and compare how far the handshake gets vs the
+wrapper. To do that the harness needs (a) realtime pacing so wall-clock scripted
+inputs are reproducible — today it free-runs fast — and/or (b) per-frame input
+injection like nav_fs (which is screenshot-driven, not timed). Options, in order of
+preference:
+
+1. Port DualBoy to `mCoreThread` + `mLockstepThreadUser` directly (the real fix if
+   the harness shows threading resolves FS) and drive it with the existing WS nav.
+2. Add frame-dump + paced-input to `threaded_link.c` and drive it with a file-based
+   nav (port of nav_fs).
+
+Decision tree from the result:
+- Harness links FS **further/fully** where the wrapper stalls → wrapper execution
+  model is the bug → adopt `mCoreThread` per instance (also unlocks the
+  separate-windows future feature for free).
+- Harness stalls at the **same** post-link screen → genuinely upstream `lockstep.c`
+  → instrument the exact SIOCNT/SIOMULTI poll FS makes and fix the driver (or a
+  bespoke deterministic in-process `GBASIODriver` that exchanges SIOMLT_SEND and
+  completes all players at a shared cycle — no network hard-sync jitter).
