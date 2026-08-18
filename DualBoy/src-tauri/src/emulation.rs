@@ -51,6 +51,8 @@ fn ensure_logger() {
             (*filter).defaultLevels = (bindings::mLogLevel_mLOG_WARN
                 | bindings::mLogLevel_mLOG_ERROR
                 | bindings::mLogLevel_mLOG_FATAL) as i32;
+            // TEMP: SIO debug for link-handshake triage
+            bindings::mLogFilterSet(filter, c"gba.sio".as_ptr(), bindings::mLogLevel_mLOG_DEBUG as i32);
         }
         (*logger).d.log = Some(overlay_log);
         bindings::mLogSetDefaultLogger(&mut (*logger).d as *mut bindings::mLogger);

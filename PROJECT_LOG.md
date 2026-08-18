@@ -273,8 +273,46 @@ MODE_SET/TRANSFER_START/READY/hard-sync event flow):
   as a git branch and re-verify the linktest FRM parity + the 128s crash first —
   the revert was intentional upstream.
 
-Next time, reproduce with the linktest ROM first (see handoff notes) to confirm
-lockstep health, then attack the handshake timing above.
+## Branch `fs-link-loosen-timing`: a0647ffac re-applied + tested (2026-08-17)
+
+Created branch `fs-link-loosen-timing` from master and cherry-picked upstream's
+`a0647ffac` "GBA SIO: Loosen timing where possible" (UNLOCKED_INTERVAL 4096→8192;
+hard sync only when `!waiting`; `nextHardSync` reset to HARD_SYNC_INTERVAL in
+`AckPlayer`). Tested both the 4-player linktest FRM parity and a real Four Swords
+2-player link session together:
+
+**4-player linktest FRM parity — PASS (no regressions).** All four instances held
+60.0 fps (emu + video) for 214s+; FRM counters climbed in exact parity
+(+3,285 then +6,364/+6,364/+6,364/+6,365 in identical windows); STALL=0 on all
+four; zero WARN / "did not receive" lines; no 128s crash. Slaves actively wrote
+`SIOMLT_SEND` (echo pings), so the transfer path is healthy. Re-run:
+`python3 /tmp/linktest_parity.py 4 <label>` with the app at `--players 4` and
+`linktest.gba` loaded.
+
+**Four Swords 2P linking — MATERIALLY IMPROVED but still not playable.** With both
+players pressing START simultaneously at the FS title, the game now passes the
+linking screen into the character-select (4-slot screen) — the exact state that
+hung forever pre-patch (0 transfer starts). 177,477 transfers flowed with both
+players exchanging value+checksum pairs (e.g. `0044`/`FFAD`, `001D`/`FFD4`), and
+both advanced through char-select together at 60 fps. The game then **stalls on the
+post-link screen** (FOUR SWORDS logo banner + text menu): screen freezes (0 px
+animation), transfers stop mid-probe (P1 writes `FEFE` but the transfer-start
+SIOCNT write never follows — the game is waiting to receive before sending again),
+and only B responds (backs out to the linking screen). The stall is in the game's
+SIO state machine, i.e. the tail of upstream #3286 — the wrapper delivers transfers
+correctly (linktest proves it).
+
+**Verdict:** the patch is safe (linktest unaffected) and is the best-known state for
+FS linking (the handshake completes instead of hanging forever), so keep it on the
+branch. It is not a complete fix; the remaining post-link stall needs the deeper
+handshake-timing work (or an upstream fix) — see the root-cause section above.
+`emulation.rs` currently has a TEMP `mLogFilterSet("gba.sio", DEBUG)` enable to
+make the handshake/transfer event flow visible in `/tmp/dualboy_app.log`; remove it
+when done debugging.
+
+Next time: reproduce with the linktest ROM first (see handoff notes) to confirm
+lockstep health, then attack the post-link stall — the game stops initiating
+transfers on a screen where it must exchange data to proceed.
 
 ## Future dev options (documented, not yet built)
 
