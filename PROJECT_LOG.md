@@ -382,7 +382,13 @@ Status log (append as each is tested):
       desync — with clean lockstep sync the game still doesn't accept the link,
       pointing at a register-bit or transfer-timing mismatch (H4/H6) next.
 - [ ] H2
-- [ ] H3
+- [x] H3 — **tested + resolved (2026-08-18)**: built `DualBoy/tools/threaded_link.c`
+      (real threads, real blocking deferred sleep/wake, 60fps pacing, ported nav_fs
+      screen detection) and drove FS into the link screen. 95,056 transfers, 0
+      drops, but 7,341 FEFE probes at ~120/s for the whole 60s → the handshake never
+      completes, identical to the sequential wrapper. **Threaded execution does NOT
+      fix FS; the bug is in `lockstep.c` (upstream #3286).** Do NOT spend effort
+      porting DualBoy to threads as a link fix — it is ruled out.
 - [ ] H4
 - [ ] H5
 - [ ] H6
@@ -555,8 +561,14 @@ prime suspect for the residual FS stall *on top of* the known upstream issue
 mGBA 0.10.3 hit, so threading alone may not be sufficient).
 
 **Decisive experiment built:** `DualBoy/tools/threaded_link.c` + `build.sh` — a
-headless harness that runs N cores on N real `mCoreThread`s through upstream's own
-`GBASIOLockstepCoordinator` + `mLockstepThreadUser` (the exact Qt mechanism).
+headless harness that runs N cores on N real threads through upstream's own
+`GBASIOLockstepCoordinator` + `GBASIOLockstepDriver`. The per-player thread loop
+replicates `mCoreThread`'s semantics exactly: lockstep `sleep`/`wake` are deferred
+to the loop (`sleep` sets a flag and returns — it runs under the coordinator mutex
+and MUST NOT block — and the loop blocks on a condvar after `runLoop` returns), and
+each thread paces itself to ~60 FPS. `--fs <rom>` drives both players through the
+nav_fs screen-detection state machine (ported to C) into the link screen and dumps
+PPM frames to `/tmp/fs_*.ppm`.
 Build with `DualBoy/tools/build.sh` (it re-derives the cmake `-D` defines so struct
 layouts match `libmgba.a`; must define `-DUSE_PTHREADS -DENABLE_VFS -DENABLE_DIRECTORIES`
 or structs/`mCoreLoadFile` are mis-sized/undeclared). Usage:
@@ -571,23 +583,36 @@ SIO DEBUG chatter: `Transfer starting`, `MULTI transfer finished`, and `did not 
 finished` (= 4 players × 9495), ZERO `did not receive`, zero aborts/desyncs. The
 harness faithfully reproduces mGBA threaded lockstep.
 
-**Next step (the actual split test):** run Four Swords through the harness with the
-same input sequence `nav_fs.py` drives, and compare how far the handshake gets vs the
-wrapper. To do that the harness needs (a) realtime pacing so wall-clock scripted
-inputs are reproducible — today it free-runs fast — and/or (b) per-frame input
-injection like nav_fs (which is screenshot-driven, not timed). Options, in order of
-preference:
+**RESULT — the split test is DONE (2026-08-18):** `threaded_link --fs` drove both
+players through name entry → save → game select → Four Swords → FS title, then
+pressed START on both simultaneously and watched the link for 60s:
 
-1. Port DualBoy to `mCoreThread` + `mLockstepThreadUser` directly (the real fix if
-   the harness shows threading resolves FS) and drive it with the existing WS nav.
-2. Add frame-dump + paced-input to `threaded_link.c` and drive it with a file-based
-   nav (port of nav_fs).
+- **95,056 transfers started, ZERO "did not receive", zero aborts/desyncs.** The
+  link DATA path is perfect under threaded execution — same as the wrapper.
+- **7,341 `FEFE` probes at a steady ~120/s for the entire 60s** (constant across
+  six 10s windows: 1201/1229/1226/1230/1228/1227). The handshake never completes;
+  it keeps cycling FEFE → value/checksum → idle, and both players' screens freeze
+  on the same post-title screen (PPM dumps: pre-START title ≠ post-START screen,
+  which is then pixel-stable for 50s).
 
-Decision tree from the result:
-- Harness links FS **further/fully** where the wrapper stalls → wrapper execution
-  model is the bug → adopt `mCoreThread` per instance (also unlocks the
-  separate-windows future feature for free).
-- Harness stalls at the **same** post-link screen → genuinely upstream `lockstep.c`
-  → instrument the exact SIOCNT/SIOMULTI poll FS makes and fix the driver (or a
-  bespoke deterministic in-process `GBASIODriver` that exchanges SIOMLT_SEND and
-  completes all players at a shared cycle — no network hard-sync jitter).
+**Conclusion: threaded execution (mGBA's own canonical local-multiplayer model) does
+NOT fix Four Swords — it stalls at the same handshake the wrapper stalls at.** The
+bug is in `lockstep.c` (upstream #3286), not in DualBoy's single-threaded wrapper.
+This RETIRES the "port DualBoy to mCoreThread" idea as a fix (it's still useful
+later for the pop-out-windows feature, but it won't fix linking).
+
+**What to do instead (fix the DRIVER):**
+1. **H4/H6** — instrument the exact SIOCNT/SIOMULTI bits + transfer-completion/
+   IRQ timing FS polls during the FEFE cycle, and diff against gbatek's MULTI
+   semantics. The handshake now fails with *matching* data in clean lockstep, so
+   it's a register-bit or completion-timing mismatch, not a data race.
+2. **Bespoke deterministic in-process `GBASIODriver`** — the "rewrite the link
+   logic" option. Instead of mGBA's free-running + periodic-hard-sync lockstep
+   (built for network netplay jitter), write a driver for the in-process case that
+   rendezvouses every MULTI transfer at a single shared cycle: on master START,
+   read all players' `SIOMLT_SEND`, schedule each core's completion event at
+   `current_cycle + transferCycles` simultaneously, no hard-sync drift. This
+   removes the entire class of timing skew FS trips over. Regression-gate it with
+   the 4-player linktest FRM parity + the 128s wrap test.
+3. Keep watching upstream #3286 (still `blocked: needs retest`) and the reverted
+   `a0647ffac`/`ea50b5e87` timing experiments for a merged fix.
