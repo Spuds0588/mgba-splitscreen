@@ -354,6 +354,8 @@ async function togglePause() {
     socket.send(JSON.stringify({ type: 'pause', paused }));
   }
   highlightPause(paused);
+  if (paused) openPauseMenu();
+  else closePauseMenu();
   setStatus(paused ? `PAUSED — all players frozen (${hotkeyLabel('pause')})` : 'Resumed');
 }
 
@@ -374,6 +376,7 @@ function resetRuntimeState() {
   highlightTurbo(false);
   paused = false;
   highlightPause(false);
+  if (pauseOpen()) closePauseMenu();
 }
 
 // ---- Audio routing ----
@@ -766,6 +769,31 @@ async function handleKey(e, isDown) {
     return;
   }
 
+  // Pause menu open: arrows move, Enter/Space select, Escape (or the pause
+  // hotkey itself) resumes.
+  if (pauseOpen()) {
+    if (!isDown) return;
+    if (e.code === 'Escape') { doResume(); return; }
+    const pauseCode = hotkeys.pause && hotkeys.pause.keyboard;
+    if (pauseCode && e.code === pauseCode) { triggerHotkey('pause'); return; }
+    if (e.code === 'ArrowUp') { pauseNavigate(-1); e.preventDefault(); return; }
+    if (e.code === 'ArrowDown') { pauseNavigate(1); e.preventDefault(); return; }
+    if (e.code === 'Enter' || e.code === 'Space') { pauseSelect(); e.preventDefault(); return; }
+    return;
+  }
+
+  // Library overlay open: arrow keys navigate, Enter selects, Escape closes.
+  if (libraryOpen()) {
+    if (!isDown) return;
+    if (e.code === 'Escape') { closeLibrary(); return; }
+    if (e.code === 'ArrowLeft') { libNavigate(-1, 0); e.preventDefault(); return; }
+    if (e.code === 'ArrowRight') { libNavigate(1, 0); e.preventDefault(); return; }
+    if (e.code === 'ArrowUp') { libNavigate(0, -1); e.preventDefault(); return; }
+    if (e.code === 'ArrowDown') { libNavigate(0, 1); e.preventDefault(); return; }
+    if (e.code === 'Enter' || e.code === 'Space') { libSelect(); e.preventDefault(); return; }
+    return;
+  }
+
   // A menu is open: let the menu have the keys; Escape closes it.
   if (menuOpen()) {
     if (e.code === 'Escape') closeMenus();
@@ -798,6 +826,575 @@ async function handleKey(e, isDown) {
   if (handled) e.preventDefault();
 }
 
+// ---- Game library (controller-navigable launcher) ----
+// Two sources of games shown as one grid:
+//   - recents: games loaded this session (persisted; click/select to relaunch)
+//   - library: ROMs scanned from a folder the user added (Tauri: scan_games_dir
+//     command; web: <input webkitdirectory>). Box art comes from a sibling image
+//     with the same stem; otherwise a generated gradient tile stands in.
+const RECENTS_KEY = 'dualboy_recents_v1';
+const LIBRARY_KEY = 'dualboy_library_v1';
+
+let recents = [];        // { name, path (null on web), boxArtPath }
+let libraryGames = [];   // Tauri: { name, path, boxArtPath } | web: { name, file, boxArtUrl }
+let libItems = [];       // focusable tiles + footer buttons, in order
+let libFocus = 0;
+let libCols = 4;
+
+function loadRecents() {
+  recents = [];
+  try {
+    const raw = localStorage.getItem(RECENTS_KEY);
+    if (raw) recents = JSON.parse(raw).filter((r) => r && r.name);
+  } catch (e) {}
+}
+
+function saveRecents() {
+  try { localStorage.setItem(RECENTS_KEY, JSON.stringify(recents)); } catch (e) {}
+}
+
+function recordRecent(name, path, boxArtPath, key) {
+  recents = recents.filter((r) => (path ? r.path !== path : r.name !== name));
+  recents.unshift({ name, path: path || null, boxArtPath: boxArtPath || null, key: key || null });
+  if (recents.length > 12) recents.length = 12;
+  saveRecents();
+}
+
+// Persisted library (Tauri only — paths are stable; web File objects aren't).
+function loadLibrary() {
+  libraryGames = [];
+  if (!IS_TAURI) return;
+  try {
+    const raw = localStorage.getItem(LIBRARY_KEY);
+    if (raw) libraryGames = JSON.parse(raw).filter((g) => g && g.path);
+  } catch (e) {}
+}
+
+function saveLibrary() {
+  if (!IS_TAURI) return;
+  try {
+    localStorage.setItem(
+      LIBRARY_KEY,
+      JSON.stringify(libraryGames.map((g) => ({ name: g.name, path: g.path, boxArtPath: g.boxArtPath || null })))
+    );
+  } catch (e) {}
+}
+
+function libraryOpen() {
+  const el = document.getElementById('library-overlay');
+  return !!(el && !el.hidden);
+}
+
+function openLibrary() {
+  closeMenus();
+  document.getElementById('library-overlay').hidden = false;
+  renderLibrary();
+}
+
+function closeLibrary() {
+  document.getElementById('library-overlay').hidden = true;
+  libMode = 'browse';
+  pendingGame = null;
+  setStatus('Library closed');
+}
+
+function gradientFor(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  const hue = h % 360;
+  return `linear-gradient(135deg, hsl(${hue},52%,36%), hsl(${(hue + 70) % 360},52%,20%))`;
+}
+
+function makePlaceholderArt(title) {
+  const ph = document.createElement('div');
+  ph.className = 'library-placeholder';
+  ph.style.background = gradientFor(title);
+  const t = document.createElement('span');
+  t.textContent = title;
+  ph.appendChild(t);
+  return ph;
+}
+
+function makeLibraryTile(title, boxArtUrl, badge, onSelect) {
+  const tile = document.createElement('button');
+  tile.className = 'library-tile';
+  tile.addEventListener('click', onSelect);
+
+  const art = document.createElement('div');
+  art.className = 'library-art';
+  if (boxArtUrl) {
+    const img = document.createElement('img');
+    img.src = boxArtUrl;
+    img.alt = '';
+    img.loading = 'lazy';
+    img.addEventListener('error', () => {
+      img.remove();
+      art.appendChild(makePlaceholderArt(title));
+    });
+    art.appendChild(img);
+  } else {
+    art.appendChild(makePlaceholderArt(title));
+  }
+
+  if (badge) {
+    const b = document.createElement('span');
+    b.className = 'library-badge';
+    b.textContent = badge;
+    art.appendChild(b);
+  }
+
+  const label = document.createElement('span');
+  label.className = 'library-name';
+  label.textContent = title;
+
+  tile.append(art, label);
+  return tile;
+}
+
+function addSectionTitle(grid, text) {
+  const h = document.createElement('div');
+  h.className = 'library-section-title';
+  h.textContent = text;
+  grid.appendChild(h);
+}
+
+function computeLibCols() {
+  const grid = document.getElementById('library-grid');
+  const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length;
+  return cols || 4;
+}
+
+function renderLibrary() {
+  const grid = document.getElementById('library-grid');
+  grid.innerHTML = '';
+  libItems = [];
+  libFocus = 0;
+  libCols = 1;
+
+  // Player-count step: pick the game first, then how many linked players.
+  if (libMode === 'players') {
+    document.querySelector('.library-actions').style.display = 'none';
+    const title = document.createElement('div');
+    title.className = 'library-section-title';
+    title.textContent = `How many players? \u2014 ${pendingGame ? pendingGame.name : ''}`;
+    grid.appendChild(title);
+    for (let n = 1; n <= 4; n++) {
+      const b = document.createElement('button');
+      b.className = 'library-choice';
+      b.textContent = `${n} Player${n > 1 ? 's' : ''}`;
+      b.addEventListener('click', () => startGameWithPlayers(n));
+      grid.appendChild(b);
+      libItems.push(b);
+    }
+    const back = document.createElement('button');
+    back.className = 'library-choice';
+    back.textContent = 'Back';
+    back.addEventListener('click', () => { libMode = 'browse'; renderLibrary(); });
+    grid.appendChild(back);
+    libItems.push(back);
+    document.getElementById('library-hint').textContent =
+      'D-pad to move \u00b7 A to select \u00b7 B to go back';
+    applyLibraryFocus();
+    return;
+  }
+  document.querySelector('.library-actions').style.display = '';
+
+  if (recents.length) {
+    addSectionTitle(grid, 'Recent');
+    for (const r of recents) {
+      const tile = makeLibraryTile(r.name, null, '\u2605', () => selectRecent(r));
+      grid.appendChild(tile);
+      libItems.push(tile);
+      if (r.boxArtPath) loadBoxArt({ boxArtPath: r.boxArtPath }, tile);
+      else maybeLoadOnlineBoxArt(tile, r.name);
+    }
+  }
+
+  addSectionTitle(grid, 'Library');
+  if (!libraryGames.length) {
+    const empty = document.createElement('div');
+    empty.className = 'library-empty';
+    empty.textContent = 'No games yet \u2014 use Add Folder to scan a folder of ROMs.';
+    grid.appendChild(empty);
+  } else {
+    for (const g of libraryGames) {
+      const tile = makeLibraryTile(g.name, g.boxArtUrl || null, null, () => selectLibraryGame(g));
+      grid.appendChild(tile);
+      libItems.push(tile);
+      if (g.boxArtUrl) {
+        // Local art already set; nothing more to do.
+      } else if (g.boxArtPath) loadBoxArt(g, tile);
+      else maybeLoadOnlineBoxArt(tile, g.name);
+    }
+  }
+
+  // Footer actions join the focus list (reachable with D-pad Down from the grid).
+  for (const id of ['library-add-folder', 'library-load-rom', 'library-close']) {
+    libItems.push(document.getElementById(id));
+  }
+
+  libCols = computeLibCols();
+  applyLibraryFocus();
+  document.getElementById('library-hint').textContent =
+    'D-pad to move \u00b7 A to select \u00b7 B to close';
+}
+
+function applyLibraryFocus() {
+  libItems.forEach((el, i) => el.classList.toggle('focused', i === libFocus));
+  const el = libItems[libFocus];
+  if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function libNavigate(dx, dy) {
+  if (!libItems.length) return;
+  if (dx) libFocus = Math.max(0, Math.min(libItems.length - 1, libFocus + dx));
+  else if (dy) libFocus = Math.max(0, Math.min(libItems.length - 1, libFocus + dy * Math.max(1, libCols)));
+  applyLibraryFocus();
+}
+
+function libSelect() {
+  const el = libItems[libFocus];
+  if (el) el.click();
+}
+
+async function loadBoxArt(game, tile) {
+  try {
+    const dataUrl = await invoke('read_box_art', { path: game.boxArtPath });
+    const art = tile.querySelector('.library-art');
+    const img = document.createElement('img');
+    img.src = dataUrl;
+    img.alt = '';
+    img.addEventListener('error', () => img.remove());
+    art.insertBefore(img, art.firstChild);
+    const ph = art.querySelector('.library-placeholder');
+    if (ph) ph.remove();
+  } catch (e) {
+    // Keep the generated placeholder.
+  }
+}
+
+async function selectRecent(r) {
+  if (IS_TAURI && r.path) {
+    choosePlayers({ name: r.name, path: r.path, boxArtPath: r.boxArtPath });
+    return;
+  }
+  // Web: relaunch from the IndexedDB cache if we still have the bytes;
+  // otherwise the user re-picks the file.
+  if (r.key) {
+    const cached = await getCachedGame(r.key);
+    if (cached) {
+      choosePlayers({ name: r.name, key: r.key });
+      return;
+    }
+  }
+  closeLibrary();
+  pickRomBrowser();
+}
+
+async function selectLibraryGame(g) {
+  if (IS_TAURI) choosePlayers({ name: g.name, path: g.path, boxArtPath: g.boxArtPath });
+  else choosePlayers({ name: g.name, file: g.file });
+}
+
+async function loadGamePath(path, name, boxArtPath) {
+  setStatus(`Loading: ${name}`);
+  await invoke('load_rom', { path });
+  resetRuntimeState();
+  setStatus(`Running: ${name}`);
+  recordRecent(name, path, boxArtPath);
+  closeLibrary();
+}
+
+async function loadGameFile(file, name) {
+  setStatus(`Loading: ${name}`);
+  const resp = await fetch('/load_rom', { method: 'POST', body: file });
+  if (resp.ok) resetRuntimeState();
+  setStatus(resp.ok ? `Running: ${name}` : 'Error: ' + (await resp.text()));
+  // Web: cache the bytes so this recent can relaunch without re-picking.
+  let key = null;
+  if (resp.ok) {
+    key = `rom_${name}`;
+    try { await cacheGameBytes(key, name, new Uint8Array(await file.arrayBuffer())); } catch (e) { key = null; }
+  }
+  recordRecent(name, null, null, key);
+  closeLibrary();
+}
+
+async function addFolder() {
+  if (IS_TAURI) await addFolderTauri();
+  else addFolderWeb();
+}
+
+async function addFolderTauri() {
+  const { open } = window.__TAURI__.dialog;
+  const dir = await open({ directory: true, multiple: false });
+  if (!dir) return;
+  setStatus('Scanning folder\u2026');
+  const entries = await invoke('scan_games_dir', { path: dir });
+  libraryGames = entries.map((e) => ({ name: e.name, path: e.path, boxArtPath: e.box_art || null }));
+  saveLibrary();
+  renderLibrary();
+  setStatus(`Library: ${libraryGames.length} game${libraryGames.length === 1 ? '' : 's'}`);
+}
+
+function addFolderWeb() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.webkitdirectory = true;
+  input.accept = '.gba';
+  input.onchange = () => {
+    const files = [...input.files];
+    const images = new Map();
+    for (const f of files) {
+      if (/\.(png|jpe?g|webp|gif)$/i.test(f.name)) {
+        const stem = f.name.replace(/\.[^.]+$/, '').toLowerCase();
+        if (!images.has(stem)) images.set(stem, URL.createObjectURL(f));
+      }
+    }
+    libraryGames = files
+      .filter((f) => f.name.toLowerCase().endsWith('.gba'))
+      .map((f) => ({
+        name: f.name.replace(/\.[^.]+$/, ''),
+        file: f,
+        boxArtUrl: images.get(f.name.replace(/\.[^.]+$/, '').toLowerCase()) || null,
+      }));
+    renderLibrary();
+    setStatus(`Library: ${libraryGames.length} game${libraryGames.length === 1 ? '' : 's'}`);
+  };
+  input.click();
+}
+
+// ---- Web game cache (IndexedDB) ----
+// Browsers can't re-open an arbitrary local file path from JS, so the web build
+// caches the bytes of recently played games in IndexedDB (GBA ROMs are 4-64MB;
+// localStorage's ~5MB cap is far too small). A cached recent relaunches instantly
+// instead of forcing the user to re-pick the file.
+const CACHE_DB = 'dualboy_cache';
+const CACHE_STORE = 'games';
+const CACHE_MAX = 6;
+
+function openCacheDb() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error('IndexedDB unavailable'));
+    const req = indexedDB.open(CACHE_DB, 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(CACHE_STORE)) {
+        req.result.createObjectStore(CACHE_STORE, { keyPath: 'key' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function txDone(tx) {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+function idbGet(store, key) {
+  return new Promise((resolve, reject) => {
+    const req = store.get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function cacheGameBytes(key, name, bytes) {
+  try {
+    const db = await openCacheDb();
+    const tx = db.transaction(CACHE_STORE, 'readwrite');
+    tx.objectStore(CACHE_STORE).put({ key, name, bytes, ts: Date.now() });
+    await txDone(tx);
+    // Drop the oldest entries beyond CACHE_MAX (LRU by timestamp).
+    const all = await idbGet(db.transaction(CACHE_STORE, 'readonly').objectStore(CACHE_STORE), '__all__')
+      .catch(() => null);
+    const list = all ? [all] : await new Promise((res, rej) => {
+      const r = db.transaction(CACHE_STORE, 'readonly').objectStore(CACHE_STORE).getAll();
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    if (list.length > CACHE_MAX) {
+      list.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+      const drop = list.slice(0, list.length - CACHE_MAX);
+      const dtx = db.transaction(CACHE_STORE, 'readwrite');
+      const ds = dtx.objectStore(CACHE_STORE);
+      for (const item of drop) ds.delete(item.key);
+      await txDone(dtx);
+    }
+    db.close();
+  } catch (e) {
+    // Cache is best-effort; the game still loads fine either way.
+  }
+}
+
+async function getCachedGame(key) {
+  try {
+    const db = await openCacheDb();
+    const item = await idbGet(db.transaction(CACHE_STORE, 'readonly').objectStore(CACHE_STORE), key);
+    db.close();
+    return item || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ---- Box art: online fallback ----
+// libretro-thumbnails hosts a large GBA box-art collection keyed by the game's
+// (region-stripped) title. Best-effort: if a tile has no local image, try the
+// network; on any failure the generated gradient placeholder stays put.
+function libretroLookupName(name) {
+  return name
+    .replace(/\s*\((?:U|USA|E|Europe|J|Japan|F|G|S|AU|World)\)/gi, '')
+    .replace(/\s*\[.*?\]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function maybeLoadOnlineBoxArt(tile, name) {
+  const art = tile.querySelector('.library-art');
+  if (!art || art.querySelector('img')) return;
+  const img = document.createElement('img');
+  img.alt = '';
+  img.loading = 'lazy';
+  img.addEventListener('error', () => img.remove());
+  img.addEventListener('load', () => {
+    art.insertBefore(img, art.firstChild);
+    const ph = art.querySelector('.library-placeholder');
+    if (ph) ph.remove();
+  });
+  img.src = `https://thumbnails.libretro.com/GBA/Named_Boxarts/${encodeURIComponent(libretroLookupName(name))}.png`;
+}
+
+// ---- Player-count step in the library flow (game -> players -> start) ----
+let libMode = 'browse'; // 'browse' | 'players'
+let pendingGame = null;
+
+function choosePlayers(game) {
+  pendingGame = game;
+  libMode = 'players';
+  renderLibrary();
+}
+
+async function startGameWithPlayers(n) {
+  const g = pendingGame;
+  if (!g) return;
+  await setPlayerCount(n);
+  if (g.path) {
+    await loadGamePath(g.path, g.name, g.boxArtPath);
+  } else if (g.file) {
+    await loadGameFile(g.file, g.name);
+  } else if (g.key) {
+    // Web: relaunch from the IndexedDB cache when available.
+    const cached = await getCachedGame(g.key);
+    if (cached) {
+      setStatus(`Loading: ${g.name}`);
+      const resp = await fetch('/load_rom', { method: 'POST', body: cached.bytes });
+      if (resp.ok) resetRuntimeState();
+      setStatus(resp.ok ? `Running: ${g.name}` : 'Error: ' + (await resp.text()));
+      recordRecent(g.name, null, null, g.key);
+      closeLibrary();
+    } else {
+      closeLibrary();
+      pickRomBrowser();
+    }
+  }
+}
+
+// ---- Pause menu (controller-navigable) ----
+// Opens automatically when emulation is paused; every in-game action (resume,
+// save/load state, player count, library, quit ROM) is one D-pad+A away.
+let pauseItems = [];
+let pauseFocus = 0;
+let pauseSub = 'main'; // 'main' | 'players'
+
+function pauseOpen() {
+  const el = document.getElementById('pause-overlay');
+  return !!(el && !el.hidden);
+}
+
+function openPauseMenu() {
+  pauseSub = 'main';
+  renderPauseMenu();
+  document.getElementById('pause-overlay').hidden = false;
+}
+
+function closePauseMenu() {
+  document.getElementById('pause-overlay').hidden = true;
+}
+
+function renderPauseMenu() {
+  const container = document.getElementById('pause-items');
+  container.innerHTML = '';
+  pauseItems = [];
+  const addItem = (label, fn, id) => {
+    const b = document.createElement('button');
+    if (id) b.id = id;
+    b.textContent = label;
+    b.addEventListener('click', fn);
+    container.appendChild(b);
+    pauseItems.push(b);
+  };
+  if (pauseSub === 'players') {
+    for (let n = 1; n <= 4; n++) {
+      addItem(`${n} Player${n > 1 ? 's' : ''}`, async () => {
+        // setPlayerCount rebuilds the emulator and unpauses (which closes the
+        // pause menu via resetRuntimeState), then the game is running again.
+        await setPlayerCount(n);
+        pauseSub = 'main';
+        setStatus(`${n} players`);
+      });
+    }
+    addItem('Back', () => { pauseSub = 'main'; renderPauseMenu(); });
+  } else {
+    addItem('Resume', doResume, 'pause-resume');
+    addItem('Quick Save State', quickSaveState, 'pause-save');
+    addItem('Quick Load State', quickLoadState, 'pause-load');
+    addItem('Players\u2026', () => { pauseSub = 'players'; renderPauseMenu(); }, 'pause-players');
+    addItem('Games Library', () => { closePauseMenu(); openLibrary(); }, 'pause-library');
+    addItem('Quit ROM', async () => { closePauseMenu(); await quitGame(); }, 'pause-quit');
+  }
+  pauseFocus = 0;
+  applyPauseFocus();
+}
+
+function applyPauseFocus() {
+  pauseItems.forEach((el, i) => el.classList.toggle('focused', i === pauseFocus));
+  const el = pauseItems[pauseFocus];
+  if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+}
+
+function pauseNavigate(dy) {
+  if (!pauseItems.length) return;
+  pauseFocus = Math.max(0, Math.min(pauseItems.length - 1, pauseFocus + dy));
+  applyPauseFocus();
+}
+
+function pauseSelect() {
+  const el = pauseItems[pauseFocus];
+  if (el) el.click();
+}
+
+async function doResume() {
+  paused = false;
+  if (IS_TAURI) {
+    await invoke('set_paused', { paused: false });
+  } else if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'pause', paused: false }));
+  }
+  highlightPause(false);
+  closePauseMenu();
+  setStatus('Resumed');
+}
+
+async function resumeIfPaused() {
+  if (!paused) return;
+  await doResume();
+}
+
 // ---- Gamepad polling ----
 // Poll navigator.getGamepads() on the animation frame. Controller slot i drives
 // player i+1; each player's mask is the union of its button + axis maps.
@@ -809,6 +1406,7 @@ function pollGamepads() {
   const pads = navigator.getGamepads();
   const nowPressed = new Set();
   const overlayOpen = remapOverlayOpen();
+  const libOpen = libraryOpen();
 
   // Populate nowPressed for all four pads (not just active players) so remap
   // navigation/capture works even for a player beyond the current playerCount.
@@ -824,7 +1422,7 @@ function pollGamepads() {
   // players. padStates is left untouched while the overlay is open so closing
   // it resumes cleanly from the next fresh poll.
   const hotkeyConsumed = new Set(); // "p:idx" consumed by a global hotkey
-  if (!overlayOpen) {
+  if (!overlayOpen && !libOpen) {
     // Global hotkeys from gamepads: fire on a fresh press and consume the
     // button so it doesn't ALSO feed the player's game mask this frame.
     for (let p = 0; p < 4; p++) {
@@ -919,6 +1517,32 @@ function pollGamepads() {
     if (right) remapNavigate(1, 0);
     if (a) remapSelect();
     else if (b) remapCancel();
+  }
+
+  // Pause menu navigation (paused): controller #1 D-pad moves, A selects,
+  // B resumes. Takes precedence over game input (which is frozen anyway).
+  const pauseMenuOpen = pauseOpen();
+  if (pauseMenuOpen && !captured && pads[0]) {
+    const edge = (i) => nowPressed.has(`0:${i}`) && !prevPadPressed.has(`0:${i}`);
+    const up = edge(NAV_UP), down = edge(NAV_DOWN), a = edge(NAV_A), b = edge(NAV_B);
+    if (up) pauseNavigate(-1);
+    else if (down) pauseNavigate(1);
+    if (a) pauseSelect();
+    else if (b) doResume();
+  }
+
+  // Library navigation (launcher open): controller #1 D-pad moves, A selects,
+  // B closes. Mutually exclusive with the remap overlay (only one is open).
+  if (libOpen && !pauseMenuOpen && !captured && pads[0]) {
+    const edge = (i) => nowPressed.has(`0:${i}`) && !prevPadPressed.has(`0:${i}`);
+    const up = edge(NAV_UP), down = edge(NAV_DOWN), left = edge(NAV_LEFT), right = edge(NAV_RIGHT);
+    const a = edge(NAV_A), b = edge(NAV_B);
+    if (up) libNavigate(0, -1);
+    else if (down) libNavigate(0, 1);
+    else if (left) libNavigate(-1, 0);
+    else if (right) libNavigate(1, 0);
+    if (a) libSelect();
+    else if (b) closeLibrary();
   }
 
   prevPadPressed.clear();
@@ -1184,6 +1808,8 @@ async function pickRomTauri() {
     setStatus('Loading: ' + selected);
     await invoke('load_rom', { path: selected });
     setStatus('Running: ' + selected);
+    const base = selected.split(/[\\/]/).pop().replace(/\.[^.]+$/, '') || selected;
+    recordRecent(base, selected);
   }
   closeMenus();
 }
@@ -1198,8 +1824,16 @@ function pickRomBrowser() {
     if (!file) return;
     setStatus('Loading: ' + file.name);
     const resp = await fetch('/load_rom', { method: 'POST', body: file });
+    if (resp.ok) resetRuntimeState();
     if (resp.ok) setStatus('Running: ' + file.name);
     else setStatus('Error: ' + (await resp.text()));
+    const name = file.name.replace(/\.[^.]+$/, '');
+    let key = null;
+    if (resp.ok) {
+      key = `rom_${name}`;
+      try { await cacheGameBytes(key, name, new Uint8Array(await file.arrayBuffer())); } catch (e) { key = null; }
+    }
+    recordRecent(name, null, null, key);
     closeMenus();
   };
   input.click();
@@ -1470,6 +2104,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   loadDebugToggle();
   loadViewPrefs();
   loadBackground();
+  loadRecents();
+  loadLibrary();
   initScreens(playerCount);
   highlightPlayersMenu(playerCount);
 
@@ -1484,6 +2120,17 @@ window.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('remap-done').addEventListener('click', closeRemap);
   document.getElementById('remap-overlay').addEventListener('click', (e) => {
     if (e.target.id === 'remap-overlay') closeRemap(); // click outside the panel
+  });
+
+  document.getElementById('open-library').addEventListener('click', openLibrary);
+  document.getElementById('library-add-folder').addEventListener('click', addFolder);
+  document.getElementById('library-load-rom').addEventListener('click', () => {
+    closeLibrary();
+    IS_TAURI ? pickRomTauri() : pickRomBrowser();
+  });
+  document.getElementById('library-close').addEventListener('click', closeLibrary);
+  document.getElementById('library-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'library-overlay') closeLibrary(); // click outside the panel
   });
 
   document.querySelectorAll('#player-menu button').forEach((btn) => {

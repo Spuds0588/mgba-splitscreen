@@ -4,6 +4,7 @@ pub mod audio;
 mod bindings;
 
 use std::sync::{Arc, Mutex};
+use base64::Engine as _;
 use once_cell::sync::Lazy;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -162,6 +163,80 @@ async fn load_state() -> Result<(), String> {
     with_emulator(|em| em.quick_load_state())?
 }
 
+/// A GBA ROM found by `scan_games_dir`. `box_art` is the path of a sibling image
+/// (same stem, .png/.jpg/...) if one exists, for the game library's tiles.
+#[derive(serde::Serialize)]
+struct GameEntry {
+    name: String,
+    path: String,
+    box_art: Option<String>,
+}
+
+/// List the `.gba` files in a directory (non-recursive), sorted by name, with the
+/// path of any sibling box-art image. Powers the game library's "Add Folder".
+#[tauri::command]
+async fn scan_games_dir(path: String) -> Result<Vec<GameEntry>, String> {
+    let mut out = Vec::new();
+    let dir = std::fs::read_dir(&path).map_err(|e| e.to_string())?;
+    for entry in dir.flatten() {
+        let p = entry.path();
+        let Some(ext) = p
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_ascii_lowercase())
+        else {
+            continue;
+        };
+        if ext != "gba" {
+            continue;
+        }
+        let name = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        let box_art = ["png", "jpg", "jpeg", "webp", "gif"]
+            .iter()
+            .map(|e| p.with_extension(e))
+            .find(|candidate| candidate.is_file())
+            .map(|c| c.to_string_lossy().into_owned());
+        out.push(GameEntry {
+            name,
+            path: p.to_string_lossy().into_owned(),
+            box_art,
+        });
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(out)
+}
+
+/// Read a box-art image from disk and return it as a `data:` URL for the library
+/// tile's <img>. The frontend calls this lazily per tile (scan_games_dir returns
+/// only the path, not the bytes).
+#[tauri::command]
+async fn read_box_art(path: String) -> Result<String, String> {
+    let data = std::fs::read(&path).map_err(|e| e.to_string())?;
+    if data.len() > 4 * 1024 * 1024 {
+        return Err("Image too large".into());
+    }
+    let mime = match std::path::Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        _ => "application/octet-stream",
+    };
+    Ok(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&data)
+    ))
+}
+
 #[derive(serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientCommand {
@@ -292,7 +367,9 @@ pub fn run() {
             export_save_set,
             import_save_set,
             save_state,
-            load_state
+            load_state,
+            scan_games_dir,
+            read_box_art
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

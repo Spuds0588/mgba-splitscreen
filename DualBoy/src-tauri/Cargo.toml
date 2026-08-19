@@ -33,6 +33,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
 image = "0.24" # For potential frame processing/dumping
+base64 = "0.22" # Encode box-art images as data URLs for the game library
 once_cell = "1.18"
 axum = { version = "0.7", features = ["ws"] }
 libloading = "0.8" # Runtime dlopen of libasound for audio output (no system headers needed)

@@ -16,6 +16,7 @@
       <details class="menu">
         <summary>File</summary>
         <div class="menu-items">
+          <button id="open-library">Games Library&#8230;</button>
           <button id="load-rom">Load ROM&#8230;</button>
           <button id="quit-game">Quit Game</button>
           <button id="quick-save-state">Quick Save State</button>
@@ -132,6 +133,32 @@
           <button id="remap-done">Done</button>
         </div>
         <div id="remap-hint" class="remap-hint"></div>
+      </div>
+    </div>
+
+    <!-- Game library: a controller-navigable launcher for recently played games
+         and a folder of ROMs (with box art when a sibling image exists). -->
+    <div id="library-overlay" class="library-overlay" hidden>
+      <div class="library-panel">
+        <div class="library-header">
+          <h2>Games</h2>
+          <span id="library-hint" class="library-hint"></span>
+        </div>
+        <div id="library-grid" class="library-grid"></div>
+        <div class="library-actions">
+          <button id="library-add-folder">Add Folder&#8230;</button>
+          <button id="library-load-rom">Load ROM&#8230;</button>
+          <button id="library-close">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pause menu: controller-navigable actions shown while emulation is paused. -->
+    <div id="pause-overlay" class="pause-overlay" hidden>
+      <div class="pause-panel">
+        <h2>Paused</h2>
+        <div id="pause-items" class="pause-items"></div>
+        <div id="pause-hint" class="remap-hint">D-pad to move &#183; A to select &#183; B to resume</div>
       </div>
     </div>
   </body>
