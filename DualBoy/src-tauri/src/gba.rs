@@ -9,12 +9,21 @@ use crate::bindings;
 extern "C" {
     fn mAudioBufferRead(buffer: *mut bindings::mAudioBuffer, samples: *mut i16, count: usize) -> usize;
     fn mAudioBufferAvailable(buffer: *const bindings::mAudioBuffer) -> usize;
+    /// The mCore struct is allocated with malloc by `GBACoreCreate`; free it the
+    /// same way when the core was never initialized (see Drop below).
+    fn free(ptr: *mut core::ffi::c_void);
 }
 
 pub struct GbaInstance {
     pub id: u8,
     pub core: *mut bindings::mCore,
     pub is_running: bool,
+    /// Whether `core->init` has run. mGBA's `_GBACoreDeinit` dereferences
+    /// `core->cpu`/`core->board`, which are only allocated by `_GBACoreInit`;
+    /// dropping a core that was created but never booted (a fresh manager swap
+    /// with no ROM loaded) would NULL-deref in deinit. Only call deinit once the
+    /// core has actually been initialized.
+    initialized: bool,
     video_buffer: Vec<u32>,
     /// Per-instance audio drain destination (interleaved stereo s16).
     audio_buffer: Vec<i16>,
@@ -34,6 +43,7 @@ impl GbaInstance {
                 id,
                 core,
                 is_running: false,
+                initialized: false,
                 video_buffer: vec![0u32; 240 * 160],
                 audio_buffer: Vec::new(),
                 audio_dbg: 0,
@@ -118,6 +128,7 @@ impl GbaInstance {
                     let _ = std::fs::remove_file(temp_name);
                     return false;
                 }
+                self.initialized = true;
             }
 
             // Enable the core's audio ring so the mixer always writes samples;
@@ -322,6 +333,14 @@ impl GbaInstance {
 
 impl Drop for GbaInstance {
     fn drop(&mut self) {
+        if !self.initialized {
+            // Never booted: the core has no cpu/board allocated, and mGBA's
+            // deinit would NULL-deref. Free the core struct itself instead.
+            unsafe {
+                free(self.core as *mut core::ffi::c_void);
+            }
+            return;
+        }
         unsafe {
             if let Some(deinit_fn) = (*self.core).deinit {
                 deinit_fn(self.core);

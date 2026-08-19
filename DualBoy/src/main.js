@@ -280,7 +280,7 @@ let padStates = []; // gamepad-derived mask per player
 let socket = null;
 let turboOn = false;
 let paused = false;
-let debugOn = true;
+let debugOn = false; // Debug overlay is off by default (View menu toggles it).
 // View layout: 'grid' | 'speaker' (1 big + smalls) | 'focus' (single screen) |
 // 'overlay' (one tile floating enlarged on top of the grid). focusPlayer selects
 // which player's screen is enlarged/shown in speaker/focus/overlay modes.
@@ -423,6 +423,8 @@ async function quitGame() {
   resetRuntimeState();
   clearScreens();
   setStatus('Waiting for ROM\u2026');
+  // Back to the launcher so the next game is one D-pad+A away.
+  openLibrary();
 }
 
 // ---- Save state (quick save/load, all players together) ----
@@ -471,6 +473,8 @@ const VIEW_MODES = [
 ];
 const VIEW_KEY = 'dualboy_view_v1';
 const BG_KEY = 'dualboy_background_v1';
+const OUTLINES_KEY = 'dualboy_outlines_v1';
+let outlinesOn = true; // Colored per-player borders around each screen
 
 function layout() {
   const el = document.getElementById('screens');
@@ -481,9 +485,9 @@ function layout() {
 
   if (viewMode === 'grid') {
     let cols, rows;
-    if (count === 2) { cols = wide ? 2 : 1; rows = wide ? 1 : 2; }
-    else if (count === 3) { cols = wide ? 3 : 1; rows = wide ? 1 : 3; }
-    else { cols = 2; rows = 2; }
+    if (count === 1) { cols = 1; rows = 1; } // Single player: full width.
+    else if (count === 2) { cols = wide ? 2 : 1; rows = wide ? 1 : 2; }
+    else { cols = 2; rows = 2; } // 3 players sit in the 4-slot grid, 4th empty.
     el.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
     el.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
   } else if (viewMode === 'speaker') {
@@ -604,6 +608,34 @@ function clearBackground() {
   setStatus('Background cleared');
 }
 
+// ---- Player outline toggle ----
+// The colored per-player borders around each screen are on by default; some
+// setups (splitscreen capture, projector) want a clean grid without them.
+function applyOutlines() {
+  const container = document.getElementById('screens');
+  if (container) container.classList.toggle('no-outlines', !outlinesOn);
+  const btn = document.getElementById('toggle-outlines');
+  if (btn) {
+    btn.textContent = `Player Outlines: ${outlinesOn ? 'On' : 'Off'}`;
+    btn.classList.toggle('active', outlinesOn);
+  }
+}
+
+function toggleOutlines() {
+  outlinesOn = !outlinesOn;
+  try { localStorage.setItem(OUTLINES_KEY, JSON.stringify(outlinesOn)); } catch (e) {}
+  applyOutlines();
+  setStatus(outlinesOn ? 'Player outlines on' : 'Player outlines off');
+}
+
+function loadOutlinesPref() {
+  try {
+    const raw = localStorage.getItem(OUTLINES_KEY);
+    if (raw !== null) outlinesOn = JSON.parse(raw) === true;
+  } catch (e) {}
+  applyOutlines();
+}
+
 function initScreens(count) {
   playerCount = count;
   focusPlayer = Math.min(focusPlayer, Math.max(0, count - 1));
@@ -713,7 +745,7 @@ function pushOverlay(text) {
 // ---- Debug log toggle ----
 // The overlay (per-second stats + mGBA WARN/ERROR lines) can be shown/hidden at
 // runtime; the preference persists so a "quiet" setting sticks across sessions.
-const DEBUG_KEY = 'dualboy_debug_v1';
+const DEBUG_KEY = 'dualboy_debug_v2'; // v2: default is now OFF (bump discards the old stored "on")
 
 function applyDebugToggle() {
   const el = document.getElementById('overlay');
@@ -2103,6 +2135,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   refreshHotkeyLabels();
   loadDebugToggle();
   loadViewPrefs();
+  loadOutlinesPref();
   loadBackground();
   loadRecents();
   loadLibrary();
@@ -2173,6 +2206,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('bg-image').addEventListener('click', pickBackground);
   document.getElementById('bg-clear').addEventListener('click', clearBackground);
+  document.getElementById('toggle-outlines').addEventListener('click', () => {
+    closeMenus();
+    toggleOutlines();
+  });
   document.querySelectorAll('#audio-menu button').forEach((btn) => {
     btn.addEventListener('click', () => {
       closeMenus();

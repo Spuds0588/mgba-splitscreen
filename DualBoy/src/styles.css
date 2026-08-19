@@ -149,6 +149,7 @@ body {
 .screen-cell.player-2 { outline: 3px solid #4488ff; outline-offset: -3px; }
 .screen-cell.player-3 { outline: 3px solid #2eaa44; outline-offset: -3px; }
 .screen-cell.player-4 { outline: 3px solid #e08a1e; outline-offset: -3px; }
+.screen-container.no-outlines .screen-cell { outline: none; }
 
 /* Bottom-right player tag, matching the border color. */
 .screen-tag {
