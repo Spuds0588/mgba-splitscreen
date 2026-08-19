@@ -68,6 +68,9 @@ async fn main() {
     println!("Starting DualBoy web server with {players} players at {fps} video FPS...");
     let manager = Arc::new(EmulationManager::new(players));
     manager.start(fps);
+    // Web mode: audio plays in the browser (WebAudio) rather than the server's
+    // ALSA sink, so a headless/remote server doesn't double up on speakers.
+    dualboy_lib::emulation::set_browser_audio(true);
 
     let state = AppState {
         manager: Arc::new(Mutex::new(manager)),
@@ -99,16 +102,32 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let manager = state.manager.lock().unwrap().clone();
     let mut frames = manager.frame_sender.subscribe();
     let mut status_rx = manager.status_sender.subscribe();
+    let mut audio_rx = dualboy_lib::emulation::subscribe_audio();
 
     loop {
         tokio::select! {
             frame = frames.recv() => {
                 match frame {
                     Ok(data) => {
-                        if sender.send(Message::Binary(data)).await.is_err() {
+                        // Tag byte 0 = video (the frontend strips it).
+                        let msg = dualboy_lib::emulation::encode_video(&data);
+                        if sender.send(Message::Binary(msg)).await.is_err() {
                             break;
                         }
                     }
+                    Err(_) => break,
+                }
+            }
+            audio = audio_rx.recv() => {
+                match audio {
+                    Ok((rate, samples)) => {
+                        // Tag byte 1 = audio (rate + interleaved stereo s16).
+                        let msg = dualboy_lib::emulation::encode_audio(rate, &samples);
+                        if sender.send(Message::Binary(msg)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(_) => break,
                 }
             }

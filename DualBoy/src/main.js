@@ -491,6 +491,98 @@ function importSetBrowser() {
   input.click();
 }
 
+// ---- Browser audio (WebAudio playback) ----
+// The web server streams the selected mix (Player 1 / mix all / etc.) as tagged
+// binary frames: u32 LE sample rate + interleaved stereo s16. The desktop app
+// plays via ALSA instead, so this path only runs in the browser (!IS_TAURI).
+
+let audioCtx = null;
+let audioNode = null;
+let audioBuf = new Float32Array(0); // interleaved L,R awaiting playback
+let audioSrcRate = 32768;
+let audioPos = 0; // fractional sample-frame read position within audioBuf
+
+function unlockAudio() {
+  if (IS_TAURI) return; // desktop: ALSA handles audio, not WebAudio
+  if (audioCtx) {
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    return;
+  }
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    audioCtx = new Ctx();
+  } catch {
+    return;
+  }
+  // ScriptProcessorNode is deprecated but universally supported and simple;
+  // AudioWorklet + a SharedArrayBuffer ring is the modern upgrade path.
+  audioNode = audioCtx.createScriptProcessor(4096, 0, 2);
+  audioNode.onaudioprocess = onAudioProcess;
+  audioNode.connect(audioCtx.destination);
+}
+
+function onAudioProcess(e) {
+  const outL = e.outputBuffer.getChannelData(0);
+  const outR = e.outputBuffer.getChannelData(1);
+  const n = outL.length;
+  if (audioBuf.length === 0) {
+    outL.fill(0);
+    outR.fill(0);
+    audioPos = 0;
+    return;
+  }
+  // Linear resample from the GBA rate (32768/65536) to the AudioContext rate.
+  const ratio = audioSrcRate / audioCtx.sampleRate;
+  const frames = audioBuf.length >> 1;
+  for (let i = 0; i < n; i++) {
+    const k = audioPos | 0;
+    const frac = audioPos - k;
+    if (k >= frames - 1) {
+      outL[i] = 0;
+      outR[i] = 0;
+    } else {
+      const k2 = k + 1;
+      outL[i] = audioBuf[k * 2] * (1 - frac) + audioBuf[k2 * 2] * frac;
+      outR[i] = audioBuf[k * 2 + 1] * (1 - frac) + audioBuf[k2 * 2 + 1] * frac;
+    }
+    audioPos += ratio;
+  }
+  // Discard fully-consumed frames so the queue can't grow unbounded.
+  const consumed = audioPos | 0;
+  if (consumed > 0) {
+    audioBuf = audioBuf.subarray(consumed * 2);
+    audioPos -= consumed;
+  }
+}
+
+function onAudio(data) {
+  if (data.byteLength < 4) return;
+  const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const rate = dv.getUint32(0, true);
+  const count = (data.byteLength - 4) >> 1;
+  if (count <= 0) return;
+  if (rate !== audioSrcRate) {
+    // Rate changed (SOUNDBIAS resolution switch): flush and restart at new rate.
+    audioBuf = new Float32Array(0);
+    audioPos = 0;
+    audioSrcRate = rate;
+  }
+  // Copy the sample bytes: the 1-byte tag makes the absolute offset odd, which
+  // Int16Array rejects (needs 2-byte alignment). slice() returns a fresh,
+  // zero-offset, aligned buffer.
+  const sampleBytes = data.slice(4);
+  const src = new Int16Array(sampleBytes.buffer, sampleBytes.byteOffset, count);
+  const flt = new Float32Array(count);
+  for (let i = 0; i < count; i++) flt[i] = src[i] / 32768;
+  const merged = new Float32Array(audioBuf.length + flt.length);
+  merged.set(audioBuf, 0);
+  merged.set(flt, audioBuf.length);
+  // Cap the pending buffer (~4s) so a stalled consumer can't balloon memory.
+  const max = audioSrcRate * 2 * 4;
+  audioBuf = merged.length > max ? merged.subarray(merged.length - max) : merged;
+}
+
 // ---- WebSocket (frames; also input in browser mode) ----
 
 function connectWebSocket() {
@@ -498,9 +590,12 @@ function connectWebSocket() {
   socket = new WebSocket(url);
   socket.binaryType = 'arraybuffer';
   socket.onmessage = (event) => {
-    // Text frames are backend status/overlay lines; binary frames are pixels.
-    if (typeof event.data === 'string') pushOverlay(event.data);
-    else onFrame(event.data);
+    // Text frames are backend status/overlay lines. Binary frames are tagged:
+    // 0 = video (RGBA, all players concatenated), 1 = audio (rate + stereo s16).
+    if (typeof event.data === 'string') { pushOverlay(event.data); return; }
+    const bytes = new Uint8Array(event.data);
+    if (bytes[0] === 0) onFrame(bytes.subarray(1));
+    else if (bytes[0] === 1) onAudio(bytes.subarray(1));
   };
   socket.onclose = () => setTimeout(connectWebSocket, 1000);
 }
@@ -552,6 +647,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('keydown', (e) => handleKey(e, true));
   window.addEventListener('keyup', (e) => handleKey(e, false));
   window.addEventListener('resize', () => layout(playerCount));
+
+  // Browsers require a user gesture before audio may start; unlock on any
+  // click or keypress so game sound starts the moment the user interacts.
+  window.addEventListener('pointerdown', unlockAudio);
+  window.addEventListener('keydown', unlockAudio);
 
   connectWebSocket();
 });

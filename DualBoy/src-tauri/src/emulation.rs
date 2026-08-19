@@ -29,6 +29,61 @@ static FRAME_TX: OnceLock<broadcast::Sender<Vec<u8>>> = OnceLock::new();
 /// subscribe to once and keep receiving across manager recreations.
 static STATUS_TX: OnceLock<broadcast::Sender<String>> = OnceLock::new();
 
+/// Broadcast channel for mixed audio chunks: (sample rate, interleaved stereo
+/// s16). Global like FRAME_TX/STATUS_TX so WS relays keep their subscription
+/// across manager recreations. The desktop app plays locally via ALSA (see
+/// `audio::tx()`); the standalone web server relays this stream to browsers,
+/// which play it through WebAudio.
+static AUDIO_TX: OnceLock<broadcast::Sender<(u32, Vec<i16>)>> = OnceLock::new();
+
+/// When true, the frame loop publishes audio ONLY to AUDIO_TX (browser playback)
+/// and skips the local ALSA sink. The desktop app leaves this false (ALSA); the
+/// standalone web server sets it true so sound plays in the browser instead of
+/// doubling up on the server's speakers.
+static AUDIO_TO_BROWSER: AtomicBool = AtomicBool::new(false);
+
+/// Subscribe to the mixed audio stream (sample rate + interleaved stereo s16).
+/// Used by the web server to relay audio to browsers for WebAudio playback.
+pub fn subscribe_audio() -> broadcast::Receiver<(u32, Vec<i16>)> {
+    AUDIO_TX
+        .get_or_init(|| {
+            let (tx, _) = broadcast::channel(32);
+            tx
+        })
+        .subscribe()
+}
+
+/// Route audio output: `false` = local ALSA sink (desktop), `true` = broadcast
+/// for browser WebAudio playback (standalone web server).
+pub fn set_browser_audio(enabled: bool) {
+    AUDIO_TO_BROWSER.store(enabled, Ordering::Relaxed);
+    println!(
+        "Audio output: {}",
+        if enabled { "browser (WebAudio)" } else { "local (ALSA)" }
+    );
+    let _ = std::io::stdout().flush();
+}
+
+/// Wrap a video frame for the WS binary protocol: leading tag byte 0 = video.
+pub fn encode_video(frame: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(frame.len() + 1);
+    out.push(0u8);
+    out.extend_from_slice(frame);
+    out
+}
+
+/// Wrap an audio chunk for the WS binary protocol: tag byte 1 = audio, then a
+/// u32 little-endian sample rate, then interleaved stereo s16 samples.
+pub fn encode_audio(rate: u32, samples: &[i16]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(5 + samples.len() * 2);
+    out.push(1u8);
+    out.extend_from_slice(&rate.to_le_bytes());
+    for s in samples {
+        out.extend_from_slice(&s.to_le_bytes());
+    }
+    out
+}
+
 /// Audio routing: 1-4 = play that instance's full mix, 5 = mix all instances,
 /// 0 = mute. Default 1 (Player 1). Lives outside any manager so it survives
 /// manager recreation (player-count changes, quit game).
@@ -252,6 +307,10 @@ impl EmulationManager {
                 tx
             })
             .clone();
+        let _ = AUDIO_TX.get_or_init(|| {
+            let (tx, _) = broadcast::channel(32);
+            tx
+        });
 
         let mut instances = Vec::with_capacity(count);
         for i in 0..count {
@@ -649,7 +708,19 @@ impl EmulationManager {
                                         out_len = out.len()
                                     );
                                 }
-                                let _ = audio::tx().try_send((rate, out));
+                                // Publish to the browser audio stream (the web
+                                // server relays it to browsers; the desktop webview
+                                // ignores it). Always published so there is a single
+                                // source of truth for audio output.
+                                if let Some(tx) = AUDIO_TX.get() {
+                                    let _ = tx.send((rate, out.clone()));
+                                }
+                                // Local playback: ALSA on desktop. The standalone web
+                                // server sets AUDIO_TO_BROWSER and skips this so sound
+                                // doesn't double-play (server speakers + browser).
+                                if !AUDIO_TO_BROWSER.load(Ordering::Relaxed) {
+                                    let _ = audio::tx().try_send((rate, out));
+                                }
                             }
                         }
                     }

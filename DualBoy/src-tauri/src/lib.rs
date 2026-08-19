@@ -170,7 +170,9 @@ async fn start_websocket_server() {
                     frame = rx.recv() => {
                         match frame {
                             Ok(data) => {
-                                if sender.send(Message::Binary(data)).await.is_err() {
+                                // Tag byte 0 = video (the frontend strips it).
+                                let msg = emulation::encode_video(&data);
+                                if sender.send(Message::Binary(msg)).await.is_err() {
                                     break;
                                 }
                             }
