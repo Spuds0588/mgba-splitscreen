@@ -523,35 +523,50 @@ function unlockAudio() {
     return;
   }
   // ScriptProcessorNode is deprecated but universally supported and simple;
-  // AudioWorklet + a SharedArrayBuffer ring is the modern upgrade path.
-  audioNode = audioCtx.createScriptProcessor(4096, 0, 2);
+  // AudioWorklet + a SharedArrayBuffer ring is the modern upgrade path. 2048
+  // samples (~46ms) keeps latency low without underrunning on the main thread.
+  audioNode = audioCtx.createScriptProcessor(2048, 0, 2);
   audioNode.onaudioprocess = onAudioProcess;
   audioNode.connect(audioCtx.destination);
+}
+
+// Catmull-Rom cubic interpolation between p1 and p2 (neighbors p0, p3).
+// Same as what a decent audio resampler uses; much flatter passband than linear.
+function cubicInterp(p0, p1, p2, p3, t) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
 }
 
 function onAudioProcess(e) {
   const outL = e.outputBuffer.getChannelData(0);
   const outR = e.outputBuffer.getChannelData(1);
   const n = outL.length;
-  if (audioBuf.length === 0) {
+  const frames = audioBuf.length >> 1;
+  if (frames < 4) {
+    // Not enough history for cubic (startup/underrun): output silence.
     outL.fill(0);
     outR.fill(0);
     audioPos = 0;
     return;
   }
-  // Linear resample from the GBA rate (32768/65536) to the AudioContext rate.
+  // Resample the GBA rate (32768/65536) to the AudioContext rate with 4-tap
+  // cubic interpolation. The GBA's native output is 8-bit-ish PCM, so the
+  // resampler is the only quality-sensitive stage in this whole path.
   const ratio = audioSrcRate / audioCtx.sampleRate;
-  const frames = audioBuf.length >> 1;
   for (let i = 0; i < n; i++) {
     const k = audioPos | 0;
     const frac = audioPos - k;
-    if (k >= frames - 1) {
+    if (k < 1 || k > frames - 3) {
       outL[i] = 0;
       outR[i] = 0;
     } else {
-      const k2 = k + 1;
-      outL[i] = audioBuf[k * 2] * (1 - frac) + audioBuf[k2 * 2] * frac;
-      outR[i] = audioBuf[k * 2 + 1] * (1 - frac) + audioBuf[k2 * 2 + 1] * frac;
+      const k0 = (k - 1) * 2;
+      const k1 = k * 2;
+      const k2 = (k + 1) * 2;
+      const k3 = (k + 2) * 2;
+      outL[i] = cubicInterp(audioBuf[k0], audioBuf[k1], audioBuf[k2], audioBuf[k3], frac);
+      outR[i] = cubicInterp(audioBuf[k0 + 1], audioBuf[k1 + 1], audioBuf[k2 + 1], audioBuf[k3 + 1], frac);
     }
     audioPos += ratio;
   }
@@ -586,8 +601,16 @@ function onAudio(data) {
   merged.set(audioBuf, 0);
   merged.set(flt, audioBuf.length);
   // Cap the pending buffer (~4s) so a stalled consumer can't balloon memory.
+  // When we drop the head, adjust the read position too (it indexes frames into
+  // the buffer), otherwise the next callback jumps and glitches.
   const max = audioSrcRate * 2 * 4;
-  audioBuf = merged.length > max ? merged.subarray(merged.length - max) : merged;
+  if (merged.length > max) {
+    const dropped = merged.length - max;
+    audioBuf = merged.subarray(dropped);
+    audioPos = Math.max(0, audioPos - (dropped >> 1));
+  } else {
+    audioBuf = merged;
+  }
 }
 
 // ---- WebSocket (frames; also input in browser mode) ----
