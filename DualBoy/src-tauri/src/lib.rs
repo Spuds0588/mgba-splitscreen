@@ -176,6 +176,9 @@ async fn start_websocket_server() {
                                     break;
                                 }
                             }
+                            // Lagged = fell behind the broadcaster; the receiver
+                            // already skipped to the newest frame, so continue.
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                             Err(_) => break,
                         }
                     }

@@ -98,11 +98,27 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
-    let (mut sender, mut receiver) = socket.split();
+    let (sender, mut receiver) = socket.split();
     let manager = state.manager.lock().unwrap().clone();
     let mut frames = manager.frame_sender.subscribe();
     let mut status_rx = manager.status_sender.subscribe();
     let mut audio_rx = dualboy_lib::emulation::subscribe_audio();
+
+    // Outgoing messages go through a bounded channel to a dedicated writer task.
+    // This is the fix for the "inputs stop registering" failure: a slow browser
+    // must never block the relay loop from reading INPUT. `try_send` drops a
+    // frame when the writer is full (latest-wins, per the drop-to-stay-synced
+    // contract) instead of awaiting the socket, so the input path stays live.
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<Message>(16);
+    let writer = tokio::spawn(async move {
+        let mut sender = sender;
+        while let Some(msg) = out_rx.recv().await {
+            if sender.send(msg).await.is_err() {
+                break;
+            }
+        }
+        let _ = sender.close().await;
+    });
 
     loop {
         tokio::select! {
@@ -111,10 +127,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     Ok(data) => {
                         // Tag byte 0 = video (the frontend strips it).
                         let msg = dualboy_lib::emulation::encode_video(&data);
-                        if sender.send(Message::Binary(msg)).await.is_err() {
-                            break;
-                        }
+                        let _ = out_tx.try_send(Message::Binary(msg));
                     }
+                    // Lagged = we fell behind the frame broadcaster; the receiver
+                    // has already skipped to the newest frame, so just continue.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(_) => break,
                 }
             }
@@ -123,9 +140,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     Ok((rate, samples)) => {
                         // Tag byte 1 = audio (rate + interleaved stereo s16).
                         let msg = dualboy_lib::emulation::encode_audio(rate, &samples);
-                        if sender.send(Message::Binary(msg)).await.is_err() {
-                            break;
-                        }
+                        let _ = out_tx.try_send(Message::Binary(msg));
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(_) => break,
@@ -135,9 +150,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 match status {
                     Ok(text) => {
                         // Overlay/stats line: text frame, distinct from binary pixels.
-                        if sender.send(Message::Text(text.into())).await.is_err() {
-                            break;
-                        }
+                        let _ = out_tx.try_send(Message::Text(text.into()));
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(_) => break,
@@ -177,6 +190,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             }
         }
     }
+
+    // Connection ended (browser closed, or a broadcast channel died). Stop the
+    // writer; the socket drops with it and the browser reconnects if needed.
+    drop(out_tx);
+    writer.abort();
 }
 
 async fn load_rom_handler(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
