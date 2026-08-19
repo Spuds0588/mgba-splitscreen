@@ -18,8 +18,8 @@
         <div class="menu-items">
           <button id="load-rom">Load ROM&#8230;</button>
           <button id="quit-game">Quit Game</button>
-          <button id="quick-save-state">Quick Save State (F5)</button>
-          <button id="quick-load-state">Quick Load State (F7)</button>
+          <button id="quick-save-state">Quick Save State</button>
+          <button id="quick-load-state">Quick Load State</button>
           <button id="export-set">Export All Saves&#8230;</button>
           <button id="import-set">Import All Saves&#8230;</button>
         </div>
@@ -45,8 +45,9 @@
       <details class="menu">
         <summary>Speed</summary>
         <div class="menu-items">
-          <button id="toggle-turbo">Turbo (Tab)</button>
-          <div class="menu-note">Fast-forward: skips the 60 fps pace so animations play out fast. Toggle with Tab.</div>
+          <button id="toggle-turbo">Turbo</button>
+          <button id="toggle-pause">Pause</button>
+          <div class="menu-note">Turbo fast-forwards past the 60 fps pace; Pause freezes all players at once. Both are remappable (Controls &#8594; Remap Hotkeys).</div>
         </div>
       </details>
 
@@ -70,7 +71,8 @@
           <button data-remap="1">Player 2 Controls&#8230;</button>
           <button data-remap="2">Player 3 Controls&#8230;</button>
           <button data-remap="3">Player 4 Controls&#8230;</button>
-          <div class="menu-note">Remap keyboard keys and gamepad buttons per player. Gamepads are assigned by controller slot (controller #1 &#8594; P1). Remaps persist in this browser.</div>
+          <button id="remap-hotkeys">Remap Hotkeys&#8230;</button>
+          <div class="menu-note">Remap per-player GBA buttons and the global hotkeys (turbo / quick save / load / pause). Gamepads are assigned by controller slot (controller #1 &#8594; P1). Remaps persist in this browser.</div>
         </div>
       </details>
 
@@ -82,7 +84,7 @@
           <div class="menu-note">P3: T/G/F/R + Y/U + Z/X + 1/2</div>
           <div class="menu-note">P4: I/Q/C/E + P/[ + ,/. + 3/4</div>
           <div class="menu-note">Gamepads: slot #1&#8594;P1, #2&#8594;P2, etc. Face buttons, LB/RB, Select/Start, D-pad, and left stick. Remap via Controls menu.</div>
-          <div class="menu-note">F5 quick save state &#183; F7 quick load state &#183; Tab turbo</div>
+          <div class="menu-note">Hotkeys: Turbo, Quick Save, Quick Load, and Pause &#8212; remap them via Controls &#8594; Remap Hotkeys.</div>
         </div>
       </details>
 
@@ -98,7 +100,8 @@
     <div id="overlay" class="overlay"></div>
 
     <!-- Control re-mapping overlay: per-player keyboard + gamepad bindings.
-         Click a cell, then press the key/button you want; Esc/Done closes. -->
+         Navigate with the gamepad (D-pad moves, A selects, B closes) or click
+         a cell, then press the key/button you want; Esc/Done closes. -->
     <div id="remap-overlay" class="remap-overlay" hidden>
       <div class="remap-panel">
         <h2 id="remap-title">Controls</h2>

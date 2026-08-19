@@ -56,6 +56,15 @@ async fn set_turbo(enabled: bool) -> Result<(), String> {
     })
 }
 
+/// Pause/unpause emulation across all instances at once. While paused the frame
+/// loop holds the last frame and freezes game time for every player together.
+#[tauri::command]
+async fn set_paused(paused: bool) -> Result<(), String> {
+    with_emulator(|em| {
+        em.set_paused(paused);
+    })
+}
+
 /// Route audio to a specific instance (1-4), mix all (5), or mute (0).
 /// The core cannot separate a game's music from its SFX — each instance's
 /// output is one mixed stereo stream — so this selects WHICH mix you hear.
@@ -159,6 +168,7 @@ enum ClientCommand {
     Keys { player: u8, keys: u32 },
     LoadRom { path: String },
     Turbo { enabled: bool },
+    Pause { paused: bool },
     AudioSource { source: u8 },
     QuitGame,
     SaveState,
@@ -222,6 +232,9 @@ async fn start_websocket_server() {
                                         ClientCommand::Turbo { enabled } => {
                                             emulator.set_turbo(enabled);
                                         }
+                                        ClientCommand::Pause { paused } => {
+                                            emulator.set_paused(paused);
+                                        }
                                         ClientCommand::AudioSource { source } => {
                                             emulation::set_audio_source(source);
                                         }
@@ -271,6 +284,7 @@ pub fn run() {
             set_player_count,
             set_turbo,
             turbo_enabled,
+            set_paused,
             set_audio_source,
             quit_game,
             export_save,

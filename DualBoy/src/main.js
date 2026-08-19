@@ -186,6 +186,79 @@ function padButtonForBit(map, bit) {
   return null;
 }
 
+// ---- Global hotkeys (turbo / quick save / quick load / pause) ----
+// Global (not per-player) system actions. Keyboard keys plus optional gamepad
+// buttons, persisted independently of the per-player control maps.
+const HOTKEYS_KEY = 'dualboy_hotkeys_v1';
+
+const HOTKEY_ACTIONS = [
+  { id: 'turbo', label: 'Turbo' },
+  { id: 'save', label: 'Quick Save State' },
+  { id: 'load', label: 'Quick Load State' },
+  { id: 'pause', label: 'Pause' },
+];
+
+function defaultHotkeys() {
+  return {
+    turbo: { keyboard: 'Tab', gamepad: null },
+    save: { keyboard: 'F5', gamepad: null },
+    load: { keyboard: 'F7', gamepad: null },
+    pause: { keyboard: 'Escape', gamepad: null },
+  };
+}
+
+let hotkeys = defaultHotkeys();
+
+function loadHotkeys() {
+  hotkeys = defaultHotkeys();
+  try {
+    const raw = localStorage.getItem(HOTKEYS_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    for (const k in hotkeys) {
+      if (saved[k] && typeof saved[k] === 'object') {
+        hotkeys[k] = { ...hotkeys[k], ...saved[k] };
+      }
+    }
+  } catch (e) {
+    // Corrupt storage: keep the defaults.
+  }
+}
+
+function saveHotkeys() {
+  try {
+    localStorage.setItem(HOTKEYS_KEY, JSON.stringify(hotkeys));
+  } catch (e) {
+    // localStorage unavailable (private mode): remaps just won't persist.
+  }
+  refreshHotkeyLabels();
+}
+
+// Pretty name(s) for a hotkey's current binding(s).
+function hotkeyLabel(id) {
+  const hk = hotkeys[id];
+  const parts = [];
+  if (hk.keyboard) parts.push(formatKeyCode(hk.keyboard));
+  if (hk.gamepad !== null && hk.gamepad !== undefined) parts.push(formatPadButton(hk.gamepad));
+  return parts.length ? parts.join(' / ') : 'unbound';
+}
+
+// Keep the menu buttons' "(F5)"-style hints in sync with the live bindings.
+function refreshHotkeyLabels() {
+  const map = {
+    turbo: '#toggle-turbo',
+    save: '#quick-save-state',
+    load: '#quick-load-state',
+    pause: '#toggle-pause',
+  };
+  for (const id in map) {
+    const el = document.querySelector(map[id]);
+    if (!el) continue;
+    const action = HOTKEY_ACTIONS.find((a) => a.id === id);
+    el.textContent = `${action.label} (${hotkeyLabel(id)})`;
+  }
+}
+
 // Player color coding (like name borders on a video call): P1 red, P2 blue,
 // P3 green, P4 orange. Same palette for the border and the bottom-right tag.
 const PLAYER_TAGS = ['player-1', 'player-2', 'player-3', 'player-4'];
@@ -197,6 +270,7 @@ let keyStates = []; // keyboard-derived mask per player
 let padStates = []; // gamepad-derived mask per player
 let socket = null;
 let turboOn = false;
+let paused = false;
 
 function setStatus(text) {
   document.getElementById('status').textContent = text;
@@ -235,7 +309,42 @@ async function toggleTurbo() {
     socket.send(JSON.stringify({ type: 'turbo', enabled: turboOn }));
   }
   highlightTurbo(turboOn);
-  setStatus(turboOn ? 'TURBO ON — fast-forwarding (Tab to toggle)' : 'Turbo off (Tab to toggle)');
+  setStatus(turboOn ? `TURBO ON — fast-forwarding (${hotkeyLabel('turbo')})` : `Turbo off (${hotkeyLabel('turbo')})`);
+}
+
+// ---- Pause (all players together) ----
+
+function highlightPause(on) {
+  const btn = document.getElementById('toggle-pause');
+  if (btn) btn.classList.toggle('active', on);
+}
+
+async function togglePause() {
+  paused = !paused;
+  if (IS_TAURI) {
+    await invoke('set_paused', { paused });
+  } else if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'pause', paused }));
+  }
+  highlightPause(paused);
+  setStatus(paused ? `PAUSED — all players frozen (${hotkeyLabel('pause')})` : 'Resumed');
+}
+
+// Dispatch a global hotkey id (shared by the keyboard and gamepad paths).
+function triggerHotkey(id) {
+  if (id === 'turbo') toggleTurbo();
+  else if (id === 'save') quickSaveState();
+  else if (id === 'load') quickLoadState();
+  else if (id === 'pause') togglePause();
+}
+
+// The backend recreates the emulator (and resets turbo/pause to off) on
+// quit-game and player-count changes; keep the frontend flags in lockstep.
+function resetRuntimeState() {
+  turboOn = false;
+  highlightTurbo(false);
+  paused = false;
+  highlightPause(false);
 }
 
 // ---- Audio routing ----
@@ -279,6 +388,7 @@ async function quitGame() {
   } else if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'quit_game' }));
   }
+  resetRuntimeState();
   clearScreens();
   setStatus('Waiting for ROM\u2026');
 }
@@ -449,29 +559,27 @@ async function handleKey(e, isDown) {
   // Remap overlay open: keys go to remapping, never to the game.
   const overlay = document.getElementById('remap-overlay');
   if (overlay && !overlay.hidden) {
+    if (e.code === 'Escape') {
+      if (isDown) closeRemap();
+      return;
+    }
     if (isDown) remapCaptureKey(e);
     return;
   }
 
-  // A menu is open: let the menu have the keys; don't also drive the game.
-  if (menuOpen()) return;
-
-  // Tab toggles turbo (fast-forward) — never routed to a player.
-  if (e.code === 'Tab') {
-    e.preventDefault();
-    if (isDown) toggleTurbo();
+  // A menu is open: let the menu have the keys; Escape closes it.
+  if (menuOpen()) {
+    if (e.code === 'Escape') closeMenus();
     return;
   }
 
-  // F5/F7 quick save/load state (all players together) — never routed to a player.
-  if (e.code === 'F5') {
+  // Global hotkeys (turbo / quick save / quick load / pause) — remappable, and
+  // checked before per-player keys so a hotkey never doubles as game input.
+  for (const action of HOTKEY_ACTIONS) {
+    const code = hotkeys[action.id].keyboard;
+    if (!code || e.code !== code) continue;
     e.preventDefault();
-    if (isDown) quickSaveState();
-    return;
-  }
-  if (e.code === 'F7') {
-    e.preventDefault();
-    if (isDown) quickLoadState();
+    if (isDown) triggerHotkey(action.id);
     return;
   }
 
@@ -501,52 +609,117 @@ function pollGamepads() {
   if (!navigator.getGamepads) return;
   const pads = navigator.getGamepads();
   const nowPressed = new Set();
-  for (let p = 0; p < playerCount; p++) {
+  const overlayOpen = remapOverlayOpen();
+
+  // Populate nowPressed for all four pads (not just active players) so remap
+  // navigation/capture works even for a player beyond the current playerCount.
+  for (let p = 0; p < 4; p++) {
     const pad = pads[p];
-    let mask = 0;
-    if (pad) {
-      const gb = controls[p].gamepadButtons;
-      for (const idxStr in gb) {
-        const b = pad.buttons[parseInt(idxStr, 10)];
-        if (b && b.pressed) mask |= gb[idxStr];
-      }
-      const ax = controls[p].gamepadAxes;
-      for (const axStr in ax) {
-        const v = pad.axes[parseInt(axStr, 10)];
-        if (v === undefined) continue;
-        if (v <= -PAD_AXIS_DEADZONE) mask |= ax[axStr].neg;
-        else if (v >= PAD_AXIS_DEADZONE) mask |= ax[axStr].pos;
-      }
-      for (let i = 0; i < pad.buttons.length; i++) {
-        if (pad.buttons[i].pressed) nowPressed.add(`${p}:${i}`);
-      }
-    }
-    if (mask !== padStates[p]) {
-      padStates[p] = mask;
-      sendKeys(p);
+    if (!pad) continue;
+    for (let i = 0; i < pad.buttons.length; i++) {
+      if (pad.buttons[i].pressed) nowPressed.add(`${p}:${i}`);
     }
   }
 
-  // Remap capture: a button freshly pressed on this player's controller.
-  if (remapListening && remapListening.source === 'gamepad' && pads[remapPlayer]) {
-    const bit = remapListening.bit;
-    for (const key of nowPressed) {
-      if (!prevPadPressed.has(key)) {
-        const idx = parseInt(key.split(':')[1], 10);
-        const gb = controls[remapPlayer].gamepadButtons;
-        // A button can only drive one action: free it from any other action,
-        // and replace this action's previous button(s) with the new one.
-        for (const k in gb) if (parseInt(k, 10) === idx) delete gb[k];
-        for (const k in gb) if (gb[k] === bit) delete gb[k];
-        gb[idx] = bit;
-        saveControls();
-        const action = REMAP_ACTIONS.find((a) => a.bit === bit);
-        remapListening = null;
-        renderRemap();
-        setStatus(`Player ${remapPlayer + 1}: ${action.name} = ${formatPadButton(idx)}`);
-        break;
+  // Game input: only when the remap overlay is closed, and only for active
+  // players. padStates is left untouched while the overlay is open so closing
+  // it resumes cleanly from the next fresh poll.
+  const hotkeyConsumed = new Set(); // "p:idx" consumed by a global hotkey
+  if (!overlayOpen) {
+    // Global hotkeys from gamepads: fire on a fresh press and consume the
+    // button so it doesn't ALSO feed the player's game mask this frame.
+    for (let p = 0; p < 4; p++) {
+      const pad = pads[p];
+      if (!pad) continue;
+      for (const action of HOTKEY_ACTIONS) {
+        const gb = hotkeys[action.id].gamepad;
+        if (gb === null || gb === undefined) continue;
+        const key = `${p}:${gb}`;
+        if (pad.buttons[gb] && pad.buttons[gb].pressed && !prevPadPressed.has(key)) {
+          hotkeyConsumed.add(key);
+          triggerHotkey(action.id);
+        }
       }
     }
+
+    for (let p = 0; p < playerCount; p++) {
+      const pad = pads[p];
+      let mask = 0;
+      if (pad) {
+        const gb = controls[p].gamepadButtons;
+        for (const idxStr in gb) {
+          if (hotkeyConsumed.has(`${p}:${idxStr}`)) continue;
+          const b = pad.buttons[parseInt(idxStr, 10)];
+          if (b && b.pressed) mask |= gb[idxStr];
+        }
+        const ax = controls[p].gamepadAxes;
+        for (const axStr in ax) {
+          const v = pad.axes[parseInt(axStr, 10)];
+          if (v === undefined) continue;
+          if (v <= -PAD_AXIS_DEADZONE) mask |= ax[axStr].neg;
+          else if (v >= PAD_AXIS_DEADZONE) mask |= ax[axStr].pos;
+        }
+      }
+      if (mask !== padStates[p]) {
+        padStates[p] = mask;
+        sendKeys(p);
+      }
+    }
+  }
+
+  let captured = false;
+
+  // Remap capture / cancel: a button freshly pressed on the remapped player's
+  // controller. Runs BEFORE navigation so the A press that selects a cell can't
+  // also be captured as the new binding in the same frame.
+  if (remapListening && pads[remapPlayer]) {
+    const id = remapListening.id;
+    const prefix = remapMode === 'hotkeys' ? 'Hotkey' : `Player ${remapPlayer + 1}`;
+    for (const key of nowPressed) {
+      if (!key.startsWith(`${remapPlayer}:`) || prevPadPressed.has(key)) continue;
+      const idx = parseInt(key.split(':')[1], 10);
+
+      if (remapListening.source === 'keyboard') {
+        // A keyboard capture can't be completed by a gamepad: treat any fresh
+        // button as "cancel" so a gamepad-only user is never stuck.
+        remapListening = null;
+        captured = true;
+        renderRemap();
+        setStatus(`${prefix}: key capture cancelled`);
+        break;
+      }
+
+      if (idx === NAV_B) {
+        // B cancels a pending gamepad capture instead of binding.
+        remapListening = null;
+        captured = true;
+        renderRemap();
+        setStatus(`${prefix}: capture cancelled`);
+        break;
+      }
+
+      setRemapGamepad(id, idx);
+      const action = remapActions().find((a) => remapActionId(a) === id);
+      remapListening = null;
+      captured = true;
+      renderRemap();
+      setStatus(`${prefix}: ${remapActionLabel(action)} = ${formatPadButton(idx)}`);
+      break;
+    }
+  }
+
+  // Remap navigation (overlay open, not mid-capture): D-pad moves, A selects,
+  // B closes. `captured` stops a just-bound button from also moving focus.
+  if (overlayOpen && !remapListening && !captured && pads[remapPlayer]) {
+    const edge = (i) => nowPressed.has(`${remapPlayer}:${i}`) && !prevPadPressed.has(`${remapPlayer}:${i}`);
+    const up = edge(NAV_UP), down = edge(NAV_DOWN), left = edge(NAV_LEFT), right = edge(NAV_RIGHT);
+    const a = edge(NAV_A), b = edge(NAV_B);
+    if (up) remapNavigate(0, -1);
+    if (down) remapNavigate(0, 1);
+    if (left) remapNavigate(-1, 0);
+    if (right) remapNavigate(1, 0);
+    if (a) remapSelect();
+    else if (b) remapCancel();
   }
 
   prevPadPressed.clear();
@@ -555,18 +728,101 @@ function pollGamepads() {
 }
 
 // ---- Control re-mapping overlay ----
+// One overlay serves two modes: 'player' remaps a player's GBA button bindings,
+// 'hotkeys' remaps the global turbo/save/load/pause actions. Both share the same
+// grid, navigation, and capture machinery; they differ only in the action list
+// and the binding store they read/write.
+let remapMode = 'player'; // 'player' | 'hotkeys'
 let remapPlayer = 0;
-let remapListening = null; // { bit, source: 'keyboard' | 'gamepad' }
+let remapListening = null; // { id, source: 'keyboard' | 'gamepad' }
+
+// Gamepad UI navigation uses a FIXED set of standard buttons (never remapped,
+// since remapping targets game input, not the overlay UI): D-pad moves focus,
+// A selects, B closes.
+const NAV_UP = 12, NAV_DOWN = 13, NAV_LEFT = 14, NAV_RIGHT = 15, NAV_A = 0, NAV_B = 1;
+
+let remapNav = [];      // N rows x 2 cols of focusable elements (actions + footer)
+let remapFocus = { row: 0, col: 0 };
+
+// ---- Remap action abstraction (player vs hotkeys) ----
+function remapActions() {
+  return remapMode === 'hotkeys' ? HOTKEY_ACTIONS : REMAP_ACTIONS;
+}
+function remapActionId(action) {
+  return remapMode === 'hotkeys' ? action.id : action.bit;
+}
+function remapActionLabel(action) {
+  return remapMode === 'hotkeys' ? action.label : action.name;
+}
+// Current keyboard binding code (or null) for an action id.
+function remapKeyboardCode(id) {
+  if (remapMode === 'hotkeys') return hotkeys[id].keyboard || null;
+  const map = controls[remapPlayer].keyboard;
+  for (const code in map) if (map[code] === id) return code;
+  return null;
+}
+// Current gamepad button index (or null) for an action id.
+function remapGamepadIndex(id) {
+  if (remapMode === 'hotkeys') {
+    const g = hotkeys[id].gamepad;
+    return (g === null || g === undefined) ? null : g;
+  }
+  const map = controls[remapPlayer].gamepadButtons;
+  for (const idx in map) if (map[idx] === id) return parseInt(idx, 10);
+  return null;
+}
+// Bind a keyboard code to an action id (one key drives one action; replace).
+function setRemapKeyboard(id, code) {
+  if (remapMode === 'hotkeys') {
+    for (const k in hotkeys) if (hotkeys[k].keyboard === code) hotkeys[k].keyboard = null;
+    hotkeys[id].keyboard = code;
+    saveHotkeys();
+  } else {
+    const kb = controls[remapPlayer].keyboard;
+    for (const c in kb) if (c === code || kb[c] === id) delete kb[c];
+    kb[code] = id;
+    saveControls();
+  }
+}
+// Bind a gamepad button index to an action id (one button drives one action).
+function setRemapGamepad(id, idx) {
+  if (remapMode === 'hotkeys') {
+    for (const k in hotkeys) if (hotkeys[k].gamepad === idx) hotkeys[k].gamepad = null;
+    hotkeys[id].gamepad = idx;
+    saveHotkeys();
+  } else {
+    const gb = controls[remapPlayer].gamepadButtons;
+    for (const k in gb) if (parseInt(k, 10) === idx || gb[k] === id) delete gb[k];
+    gb[idx] = id;
+    saveControls();
+  }
+}
 
 function openRemap(p) {
+  remapMode = 'player';
   remapPlayer = p;
   remapListening = null;
+  remapFocus = { row: 0, col: 0 };
   document.getElementById('remap-title').textContent = `Player ${p + 1} Controls`;
-  document.getElementById('remap-hint').textContent =
-    'Click a cell, then press the key or gamepad button you want.';
   renderRemap();
   document.getElementById('remap-overlay').hidden = false;
   closeMenus();
+}
+
+function openHotkeysRemap() {
+  remapMode = 'hotkeys';
+  remapPlayer = 0; // global hotkeys: navigate/capture with controller #1
+  remapListening = null;
+  remapFocus = { row: 0, col: 0 };
+  document.getElementById('remap-title').textContent = 'Global Hotkeys';
+  renderRemap();
+  document.getElementById('remap-overlay').hidden = false;
+  closeMenus();
+}
+
+function remapOverlayOpen() {
+  const overlay = document.getElementById('remap-overlay');
+  return !!(overlay && !overlay.hidden);
 }
 
 function closeRemap() {
@@ -577,37 +833,92 @@ function closeRemap() {
 function renderRemap() {
   const rows = document.getElementById('remap-rows');
   rows.innerHTML = '';
-  for (const action of REMAP_ACTIONS) {
+  remapNav = [];
+  for (const action of remapActions()) {
+    const id = remapActionId(action);
     const row = document.createElement('div');
     row.className = 'remap-row';
 
     const label = document.createElement('span');
     label.className = 'remap-action';
-    label.textContent = action.name;
+    label.textContent = remapActionLabel(action);
 
+    const kbCode = remapKeyboardCode(id);
     const kbBtn = document.createElement('button');
     kbBtn.className = 'remap-cell';
-    kbBtn.textContent = keyForBit(controls[remapPlayer].keyboard, action.bit) || '\u2014';
-    kbBtn.addEventListener('click', () => beginListen(action.bit, 'keyboard'));
+    kbBtn.textContent = kbCode ? formatKeyCode(kbCode) : '\u2014';
+    kbBtn.addEventListener('click', () => beginListen(id, 'keyboard'));
 
+    const padIdx = remapGamepadIndex(id);
     const padBtn = document.createElement('button');
     padBtn.className = 'remap-cell';
-    padBtn.textContent = padButtonForBit(controls[remapPlayer].gamepadButtons, action.bit) || '\u2014';
-    padBtn.addEventListener('click', () => beginListen(action.bit, 'gamepad'));
+    padBtn.textContent = padIdx !== null ? formatPadButton(padIdx) : '\u2014';
+    padBtn.addEventListener('click', () => beginListen(id, 'gamepad'));
 
     row.append(label, kbBtn, padBtn);
     rows.appendChild(row);
+    remapNav.push([kbBtn, padBtn]);
+  }
+  // Footer: Reset (col 0) and Done (col 1) as the last "row".
+  remapNav.push([
+    document.getElementById('remap-reset'),
+    document.getElementById('remap-done'),
+  ]);
+  applyRemapFocus();
+  updateRemapHint();
+}
+
+function applyRemapFocus() {
+  document.querySelectorAll('#remap-overlay .focused').forEach((el) => el.classList.remove('focused'));
+  const row = remapNav[remapFocus.row];
+  const el = row ? row[remapFocus.col] : null;
+  if (el) {
+    el.classList.add('focused');
+    if (el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
   }
 }
 
-function beginListen(bit, source) {
+function remapNavigate(dCol, dRow) {
+  const rows = remapNav.length || 1;
+  remapFocus.row = (remapFocus.row + dRow + rows) % rows;
+  if (dCol < 0) remapFocus.col = 0;
+  else if (dCol > 0) remapFocus.col = 1;
+  applyRemapFocus();
+}
+
+function remapSelect() {
+  const { row, col } = remapFocus;
+  if (row >= remapNav.length - 1) {
+    // Footer row: Reset / Done.
+    if (col === 0) resetRemapCurrent();
+    else closeRemap();
+    return;
+  }
+  const action = remapActions()[row];
+  beginListen(remapActionId(action), col === 0 ? 'keyboard' : 'gamepad');
+}
+
+function remapCancel() {
+  closeRemap();
+}
+
+function updateRemapHint() {
+  if (remapListening) return; // beginListen set a specific "press a button" hint.
+  document.getElementById('remap-hint').textContent =
+    'D-pad to move \u00b7 A to select \u00b7 B to close \u2014 or click a cell and press a key/button.';
+}
+
+function beginListen(id, source) {
   document.querySelectorAll('.remap-cell.listening').forEach((c) => c.classList.remove('listening'));
-  remapListening = { bit, source };
+  remapListening = { id, source };
   const hint = document.getElementById('remap-hint');
   hint.textContent =
-    source === 'keyboard' ? 'Press the key you want to bind\u2026' : 'Press the gamepad button you want to bind\u2026';
+    source === 'keyboard'
+      ? 'Press the key you want to bind\u2026 (any gamepad button cancels)'
+      : 'Press the gamepad button you want to bind\u2026 (B cancels)';
+  const actions = remapActions();
   [...document.querySelectorAll('.remap-row')].forEach((row, i) => {
-    if (REMAP_ACTIONS[i].bit === bit) {
+    if (actions[i] && remapActionId(actions[i]) === id) {
       row.children[source === 'keyboard' ? 1 : 2].classList.add('listening');
     }
   });
@@ -615,26 +926,27 @@ function beginListen(bit, source) {
 
 function remapCaptureKey(e) {
   if (!remapListening || remapListening.source !== 'keyboard') return;
-  const bit = remapListening.bit;
-  const kb = controls[remapPlayer].keyboard;
-  // A key can only drive one action: free it from every other action, and
-  // replace this action's previous key(s) with the newly pressed one.
-  for (const code in kb) if (code === e.code) delete kb[code];
-  for (const code in kb) if (kb[code] === bit) delete kb[code];
-  kb[e.code] = bit;
-  saveControls();
-  const action = REMAP_ACTIONS.find((a) => a.bit === bit);
+  const id = remapListening.id;
+  setRemapKeyboard(id, e.code);
+  const action = remapActions().find((a) => remapActionId(a) === id);
   remapListening = null;
   renderRemap();
-  setStatus(`Player ${remapPlayer + 1}: ${action.name} = ${formatKeyCode(e.code)}`);
+  const prefix = remapMode === 'hotkeys' ? 'Hotkey' : `Player ${remapPlayer + 1}`;
+  setStatus(`${prefix}: ${remapActionLabel(action)} = ${formatKeyCode(e.code)}`);
   e.preventDefault();
 }
 
-function resetRemapPlayer() {
-  controls[remapPlayer] = defaultControlFor(remapPlayer);
-  saveControls();
+function resetRemapCurrent() {
+  if (remapMode === 'hotkeys') {
+    hotkeys = defaultHotkeys();
+    saveHotkeys();
+    setStatus('Hotkeys reset to defaults');
+  } else {
+    controls[remapPlayer] = defaultControlFor(remapPlayer);
+    saveControls();
+    setStatus(`Player ${remapPlayer + 1} controls reset to defaults`);
+  }
   renderRemap();
-  setStatus(`Player ${remapPlayer + 1} controls reset to defaults`);
 }
 
 // ---- Player count (1-4 linked instances) ----
@@ -654,6 +966,7 @@ async function setPlayerCount(n) {
     await fetch('/set_player_count', { method: 'POST', body: String(n) });
     playerCount = parseInt(await (await fetch('/player_count')).text(), 10) || n;
   }
+  resetRuntimeState();
   initScreens(playerCount);
   highlightPlayersMenu(playerCount);
   setStatus(`${playerCount} linked player${playerCount > 1 ? 's' : ''} selected\u2014load a ROM`);
@@ -953,13 +1266,19 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
   }
   loadControls();
+  loadHotkeys();
+  refreshHotkeyLabels();
   initScreens(playerCount);
   highlightPlayersMenu(playerCount);
 
-  document.querySelectorAll('#controls-menu button').forEach((btn) => {
+  document.querySelectorAll('#controls-menu [data-remap]').forEach((btn) => {
     btn.addEventListener('click', () => openRemap(parseInt(btn.dataset.remap, 10)));
   });
-  document.getElementById('remap-reset').addEventListener('click', resetRemapPlayer);
+  document.getElementById('remap-hotkeys').addEventListener('click', () => {
+    closeMenus();
+    openHotkeysRemap();
+  });
+  document.getElementById('remap-reset').addEventListener('click', resetRemapCurrent);
   document.getElementById('remap-done').addEventListener('click', closeRemap);
   document.getElementById('remap-overlay').addEventListener('click', (e) => {
     if (e.target.id === 'remap-overlay') closeRemap(); // click outside the panel
@@ -980,6 +1299,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('toggle-turbo').addEventListener('click', () => {
     closeMenus();
     toggleTurbo();
+  });
+  document.getElementById('toggle-pause').addEventListener('click', () => {
+    closeMenus();
+    togglePause();
   });
   document.querySelectorAll('#audio-menu button').forEach((btn) => {
     btn.addEventListener('click', () => {

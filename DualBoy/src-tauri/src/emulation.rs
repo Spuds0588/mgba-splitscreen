@@ -338,6 +338,9 @@ pub struct EmulationManager {
     /// emulation runs as fast as the host allows (lockstep still applies, so linked
     /// players stay in sync). The frontend toggles it (Tab key / Speed menu).
     turbo: Arc<AtomicBool>,
+    /// Pause: when set, the frame loop stops advancing emulation across ALL instances
+    /// at once (frozen mid-frame) but stays responsive to stop/unpause.
+    paused: Arc<AtomicBool>,
     /// Join handle for the frame-loop thread (taken + joined by `stop_and_join`).
     thread: Mutex<Option<thread::JoinHandle<()>>>,
 }
@@ -423,6 +426,7 @@ impl EmulationManager {
             loaded_rom: Mutex::new(None),
             stop_flag: Arc::new(AtomicBool::new(false)),
             turbo: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
             thread: Mutex::new(None),
         }
     }
@@ -449,6 +453,23 @@ impl EmulationManager {
 
     pub fn turbo_enabled(&self) -> bool {
         self.turbo.load(Ordering::Relaxed)
+    }
+
+    /// Pause/unpause emulation across all instances at once. While paused the
+    /// frame loop holds the last frame and stops advancing game time; unpausing
+    /// resumes exactly where it left off.
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
+        let msg = if paused { "PAUSED (all players)" } else { "RESUMED" };
+        if let Some(tx) = OVERLAY_TX.get() {
+            let _ = tx.send(msg.to_string());
+        }
+        println!("{msg}");
+        let _ = std::io::stdout().flush();
+    }
+
+    pub fn paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
     }
 
     /// Path of the ROM currently loaded in every instance (None before first load).
@@ -669,6 +690,7 @@ impl EmulationManager {
         self.stop_flag.store(false, Ordering::Relaxed);
         let stop_flag = self.stop_flag.clone();
         let turbo = self.turbo.clone();
+        let paused = self.paused.clone();
         let handle = thread::spawn(move || {
             // 60 Hz emulation pace. Each tick targets the next 16666 µs boundary from
             // a FIXED start, not "sleep 16.6 ms minus work" measured from the previous
@@ -726,12 +748,13 @@ impl EmulationManager {
                 if stop_flag.load(Ordering::Relaxed) {
                     break;
                 }
+                let is_paused = paused.load(Ordering::Relaxed);
                 {
                     let mut guards: Vec<_> =
                         instances.iter().map(|i| i.lock().unwrap()).collect();
 
                     any_running = guards.iter().all(|g| g.is_running);
-                    if any_running {
+                    if any_running && !is_paused {
                         // Cooperative stepping: each tick advances every player by one
                         // video frame (~280896 cycles), switching between players
                         // whenever one sleeps on the lockstep link. This is the
@@ -871,7 +894,13 @@ impl EmulationManager {
                 // snaps the clock forward instead of fast-forwarding the game to
                 // "catch up" after the resume.
                 let now = Instant::now();
-                if turbo.load(Ordering::Relaxed) {
+                if is_paused {
+                    // Paused: freeze game time but keep the thread responsive to
+                    // stop/unpause. Sleep short and skip the deadline bookkeeping so
+                    // the 60 Hz clock snaps forward cleanly on resume instead of
+                    // fast-forwarding the game to catch up.
+                    thread::sleep(Duration::from_millis(16));
+                } else if turbo.load(Ordering::Relaxed) {
                     // Turbo: no pacing — run as fast as the host allows. Lockstep
                     // sleeps/wakes still gate linked players inside the stepping loop,
                     // so they stay in sync at speed. A bare yield keeps the WS relay
@@ -906,12 +935,14 @@ impl EmulationManager {
                         s.iter().map(|&b| if b { "T" } else { "." }).collect()
                     };
                     let vfps = (video_frames - prev_video) as f64 / dt;
+                    let paused_marker = if is_paused { " | PAUSED" } else { "" };
                     let line = format!(
-                        "[t={:.0}s] emu {} fps | sleep:[{}] | video:{:.1} fps",
+                        "[t={:.0}s] emu {} fps | sleep:[{}] | video:{:.1} fps{}",
                         started.elapsed().as_secs_f64(),
                         per.join(" "),
                         sleep,
-                        vfps
+                        vfps,
+                        paused_marker
                     );
                     println!("{line}");
                     let _ = std::io::stdout().flush();
@@ -924,7 +955,7 @@ impl EmulationManager {
                         .zip(&prev_emu)
                         .map(|(&f, &p)| (f - p) as f64 / dt)
                         .fold(f64::MAX, f64::min);
-                    if any_running && min_emu < 30.0 {
+                    if any_running && !is_paused && min_emu < 30.0 {
                         stall_streak += 1;
                         if stall_streak >= 2 && !was_stalled {
                             was_stalled = true;
@@ -936,7 +967,7 @@ impl EmulationManager {
                             let _ = std::io::stdout().flush();
                             let _ = status_tx.send(msg);
                         }
-                    } else if was_stalled {
+                    } else if was_stalled && !is_paused {
                         was_stalled = false;
                         stall_streak = 0;
                         let msg = "OK recovered: emulation back above 30 fps".to_string();

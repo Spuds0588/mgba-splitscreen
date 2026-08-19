@@ -270,6 +270,14 @@ body {
   box-shadow: 0 0 0 2px rgba(36, 200, 219, 0.35);
 }
 
+/* Gamepad focus cursor: a distinct amber ring so it's obvious without a mouse. */
+.remap-cell.focused,
+.remap-actions button.focused {
+  outline: none;
+  border-color: #ffd24a;
+  box-shadow: 0 0 0 2px rgba(255, 210, 74, 0.65);
+}
+
 .remap-actions {
   display: flex;
   justify-content: flex-end;

@@ -32,6 +32,7 @@ struct AppState {
 enum ClientCommand {
     Keys { player: u8, keys: u32 },
     Turbo { enabled: bool },
+    Pause { paused: bool },
     AudioSource { source: u8 },
     QuitGame,
     SaveState,
@@ -167,6 +168,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             serde_json::from_str(&text)
                         {
                             state.manager.lock().unwrap().set_turbo(enabled);
+                        } else if let Ok(ClientCommand::Pause { paused }) =
+                            serde_json::from_str(&text)
+                        {
+                            state.manager.lock().unwrap().set_paused(paused);
                         } else if let Ok(ClientCommand::AudioSource { source }) =
                             serde_json::from_str(&text)
                         {
