@@ -197,3 +197,102 @@ body {
 .overlay .line.warn { color: #ffb066; }
 .overlay .line.err  { color: #ff6f6f; }
 .overlay .line.ok   { color: #7dff8a; }
+
+/* ---- Control re-mapping overlay ---- */
+.remap-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.remap-overlay[hidden] { display: none; } /* keep the hidden attribute effective */
+
+.remap-panel {
+  width: min(520px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: #1e1e22;
+  border: 1px solid #3a3a40;
+  border-radius: 10px;
+  padding: 18px 20px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+.remap-panel h2 {
+  margin: 0 0 10px;
+  font-size: 1.1rem;
+  color: #24c8db;
+}
+
+.remap-grid-head {
+  display: grid;
+  grid-template-columns: 90px 1fr 1fr;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #999;
+}
+
+.remap-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.remap-action {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #e0e0e0;
+}
+
+.remap-cell {
+  background: #26262c;
+  border: 1px solid #3a3a40;
+  border-radius: 6px;
+  color: #ddd;
+  padding: 7px 10px;
+  font-size: 0.9rem;
+  text-align: center;
+  cursor: pointer;
+}
+.remap-cell:hover { border-color: #24c8db; }
+.remap-cell.listening {
+  border-color: #24c8db;
+  background: #0f3f45;
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(36, 200, 219, 0.35);
+}
+
+.remap-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.remap-actions button {
+  background: #2a2a30;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #e0e0e0;
+  padding: 8px 16px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.remap-actions button:hover { background: #3a3a42; }
+.remap-actions #remap-done { background: #1a6b77; border-color: #1a6b77; }
+.remap-actions #remap-done:hover { background: #24c8db; color: #06262a; }
+
+.remap-hint {
+  margin-top: 12px;
+  font-size: 0.82rem;
+  color: #9fe8ff;
+  min-height: 1.2em;
+}

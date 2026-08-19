@@ -78,9 +78,113 @@ const P4_MAP = {
   'Digit4': GBA_BUTTONS.SELECT,
 };
 
-// One entry per player; the backend runs 2-4 instances (--players N), so all four
-// maps are always defined and the frame loop only uses the first playerCount.
-const PLAYER_MAPS = [P1_MAP, P2_MAP, P3_MAP, P4_MAP];
+// ---- Controls (per-player, persisted to localStorage) ----
+// Keyboard defaults come from the P1-P4 maps above. Gamepads are assigned by
+// controller slot (controller #1 -> P1, #2 -> P2, ...) using the standard
+// mapping: face buttons, LB/RB, Select/Start, and the D-pad; the left stick
+// maps to movement through the axes (not remappable, kept as a bonus).
+const DEFAULT_KEYBOARD_MAPS = [P1_MAP, P2_MAP, P3_MAP, P4_MAP];
+
+const DEFAULT_GAMEPAD_BUTTONS = {
+  0: GBA_BUTTONS.A,
+  1: GBA_BUTTONS.B,
+  2: GBA_BUTTONS.L,
+  3: GBA_BUTTONS.R,
+  4: GBA_BUTTONS.L, // LB as an alternate L
+  5: GBA_BUTTONS.R, // RB as an alternate R
+  8: GBA_BUTTONS.SELECT,
+  9: GBA_BUTTONS.START,
+  12: GBA_BUTTONS.UP,
+  13: GBA_BUTTONS.DOWN,
+  14: GBA_BUTTONS.LEFT,
+  15: GBA_BUTTONS.RIGHT,
+};
+
+const DEFAULT_GAMEPAD_AXES = {
+  0: { neg: GBA_BUTTONS.LEFT, pos: GBA_BUTTONS.RIGHT }, // left stick X
+  1: { neg: GBA_BUTTONS.UP, pos: GBA_BUTTONS.DOWN }, // left stick Y (up = -1)
+};
+
+const CONTROLS_KEY = 'dualboy_controls_v1';
+let controls = []; // 4 entries: { keyboard, gamepadButtons, gamepadAxes }
+
+function defaultControlFor(p) {
+  return {
+    keyboard: { ...DEFAULT_KEYBOARD_MAPS[p] },
+    gamepadButtons: { ...DEFAULT_GAMEPAD_BUTTONS },
+    gamepadAxes: { ...DEFAULT_GAMEPAD_AXES },
+  };
+}
+
+function loadControls() {
+  controls = [];
+  for (let p = 0; p < 4; p++) controls.push(defaultControlFor(p));
+  try {
+    const raw = localStorage.getItem(CONTROLS_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    for (let p = 0; p < 4; p++) {
+      const s = saved[p];
+      if (!s) continue;
+      controls[p] = {
+        keyboard: { ...controls[p].keyboard, ...(s.keyboard || {}) },
+        gamepadButtons: { ...controls[p].gamepadButtons, ...(s.gamepadButtons || {}) },
+        gamepadAxes: { ...controls[p].gamepadAxes, ...(s.gamepadAxes || {}) },
+      };
+    }
+  } catch (e) {
+    // Corrupt storage: keep the defaults.
+  }
+}
+
+function saveControls() {
+  try {
+    localStorage.setItem(CONTROLS_KEY, JSON.stringify(controls));
+  } catch (e) {
+    // localStorage unavailable (private mode): remaps just won't persist.
+  }
+}
+
+// Pretty names + helpers for the remap UI.
+const REMAP_ACTIONS = [
+  { name: 'A', bit: GBA_BUTTONS.A },
+  { name: 'B', bit: GBA_BUTTONS.B },
+  { name: 'L', bit: GBA_BUTTONS.L },
+  { name: 'R', bit: GBA_BUTTONS.R },
+  { name: 'START', bit: GBA_BUTTONS.START },
+  { name: 'SELECT', bit: GBA_BUTTONS.SELECT },
+  { name: 'UP', bit: GBA_BUTTONS.UP },
+  { name: 'DOWN', bit: GBA_BUTTONS.DOWN },
+  { name: 'LEFT', bit: GBA_BUTTONS.LEFT },
+  { name: 'RIGHT', bit: GBA_BUTTONS.RIGHT },
+];
+
+const PAD_BUTTON_NAMES = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'Select', 'Start', 'L3', 'R3', 'D-Up', 'D-Down', 'D-Left', 'D-Right'];
+
+function formatKeyCode(code) {
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  const names = {
+    ArrowUp: '\u2191', ArrowDown: '\u2193', ArrowLeft: '\u2190', ArrowRight: '\u2192',
+    Space: 'Space', Enter: 'Enter', Backspace: 'Bksp',
+    Comma: ',', Period: '.', BracketLeft: '[', BracketRight: ']',
+  };
+  return names[code] || code;
+}
+
+function formatPadButton(idx) {
+  return PAD_BUTTON_NAMES[idx] ? `${PAD_BUTTON_NAMES[idx]} (${idx})` : `Btn ${idx}`;
+}
+
+function keyForBit(map, bit) {
+  for (const code in map) if (map[code] === bit) return formatKeyCode(code);
+  return null;
+}
+
+function padButtonForBit(map, bit) {
+  for (const idx in map) if (map[idx] === bit) return formatPadButton(parseInt(idx, 10));
+  return null;
+}
 
 // Player color coding (like name borders on a video call): P1 red, P2 blue,
 // P3 green, P4 orange. Same palette for the border and the bottom-right tag.
@@ -89,7 +193,8 @@ const PLAYER_TAGS = ['player-1', 'player-2', 'player-3', 'player-4'];
 const OVERLAY_MAX = 6;
 let playerCount = 2;
 let screens = []; // { canvas, ctx, imgData }
-let keyStates = [];
+let keyStates = []; // keyboard-derived mask per player
+let padStates = []; // gamepad-derived mask per player
 let socket = null;
 let turboOn = false;
 
@@ -229,6 +334,7 @@ function initScreens(count) {
   container.innerHTML = '';
   screens = [];
   keyStates = new Array(count).fill(0);
+  padStates = new Array(count).fill(0);
 
   const saveMenu = document.getElementById('save-menu');
   saveMenu.innerHTML = '';
@@ -334,7 +440,19 @@ async function setKeys(player, keys) {
   }
 }
 
+// The backend gets the union of keyboard + gamepad input for a player.
+function sendKeys(p) {
+  setKeys(p + 1, keyStates[p] | padStates[p]);
+}
+
 async function handleKey(e, isDown) {
+  // Remap overlay open: keys go to remapping, never to the game.
+  const overlay = document.getElementById('remap-overlay');
+  if (overlay && !overlay.hidden) {
+    if (isDown) remapCaptureKey(e);
+    return;
+  }
+
   // A menu is open: let the menu have the keys; don't also drive the game.
   if (menuOpen()) return;
 
@@ -359,19 +477,164 @@ async function handleKey(e, isDown) {
 
   let handled = false;
   for (let p = 0; p < playerCount; p++) {
-    const map = PLAYER_MAPS[p];
-    if (!map) continue;
+    const map = controls[p].keyboard;
     const bit = map[e.code];
     if (bit === undefined) continue;
 
     handled = true;
     if (isDown) keyStates[p] |= bit;
     else keyStates[p] &= ~bit;
-    await setKeys(p + 1, keyStates[p]);
+    sendKeys(p);
   }
   // Stop browser defaults (scrolling, focused-button activation) for every key
   // the emulator uses, so game input never leaks into the UI.
   if (handled) e.preventDefault();
+}
+
+// ---- Gamepad polling ----
+// Poll navigator.getGamepads() on the animation frame. Controller slot i drives
+// player i+1; each player's mask is the union of its button + axis maps.
+const PAD_AXIS_DEADZONE = 0.5;
+const prevPadPressed = new Set(); // "playerIdx:buttonIdx" pressed last frame
+
+function pollGamepads() {
+  if (!navigator.getGamepads) return;
+  const pads = navigator.getGamepads();
+  const nowPressed = new Set();
+  for (let p = 0; p < playerCount; p++) {
+    const pad = pads[p];
+    let mask = 0;
+    if (pad) {
+      const gb = controls[p].gamepadButtons;
+      for (const idxStr in gb) {
+        const b = pad.buttons[parseInt(idxStr, 10)];
+        if (b && b.pressed) mask |= gb[idxStr];
+      }
+      const ax = controls[p].gamepadAxes;
+      for (const axStr in ax) {
+        const v = pad.axes[parseInt(axStr, 10)];
+        if (v === undefined) continue;
+        if (v <= -PAD_AXIS_DEADZONE) mask |= ax[axStr].neg;
+        else if (v >= PAD_AXIS_DEADZONE) mask |= ax[axStr].pos;
+      }
+      for (let i = 0; i < pad.buttons.length; i++) {
+        if (pad.buttons[i].pressed) nowPressed.add(`${p}:${i}`);
+      }
+    }
+    if (mask !== padStates[p]) {
+      padStates[p] = mask;
+      sendKeys(p);
+    }
+  }
+
+  // Remap capture: a button freshly pressed on this player's controller.
+  if (remapListening && remapListening.source === 'gamepad' && pads[remapPlayer]) {
+    const bit = remapListening.bit;
+    for (const key of nowPressed) {
+      if (!prevPadPressed.has(key)) {
+        const idx = parseInt(key.split(':')[1], 10);
+        const gb = controls[remapPlayer].gamepadButtons;
+        // A button can only drive one action: free it from any other action,
+        // and replace this action's previous button(s) with the new one.
+        for (const k in gb) if (parseInt(k, 10) === idx) delete gb[k];
+        for (const k in gb) if (gb[k] === bit) delete gb[k];
+        gb[idx] = bit;
+        saveControls();
+        const action = REMAP_ACTIONS.find((a) => a.bit === bit);
+        remapListening = null;
+        renderRemap();
+        setStatus(`Player ${remapPlayer + 1}: ${action.name} = ${formatPadButton(idx)}`);
+        break;
+      }
+    }
+  }
+
+  prevPadPressed.clear();
+  for (const k of nowPressed) prevPadPressed.add(k);
+  requestAnimationFrame(pollGamepads);
+}
+
+// ---- Control re-mapping overlay ----
+let remapPlayer = 0;
+let remapListening = null; // { bit, source: 'keyboard' | 'gamepad' }
+
+function openRemap(p) {
+  remapPlayer = p;
+  remapListening = null;
+  document.getElementById('remap-title').textContent = `Player ${p + 1} Controls`;
+  document.getElementById('remap-hint').textContent =
+    'Click a cell, then press the key or gamepad button you want.';
+  renderRemap();
+  document.getElementById('remap-overlay').hidden = false;
+  closeMenus();
+}
+
+function closeRemap() {
+  remapListening = null;
+  document.getElementById('remap-overlay').hidden = true;
+}
+
+function renderRemap() {
+  const rows = document.getElementById('remap-rows');
+  rows.innerHTML = '';
+  for (const action of REMAP_ACTIONS) {
+    const row = document.createElement('div');
+    row.className = 'remap-row';
+
+    const label = document.createElement('span');
+    label.className = 'remap-action';
+    label.textContent = action.name;
+
+    const kbBtn = document.createElement('button');
+    kbBtn.className = 'remap-cell';
+    kbBtn.textContent = keyForBit(controls[remapPlayer].keyboard, action.bit) || '\u2014';
+    kbBtn.addEventListener('click', () => beginListen(action.bit, 'keyboard'));
+
+    const padBtn = document.createElement('button');
+    padBtn.className = 'remap-cell';
+    padBtn.textContent = padButtonForBit(controls[remapPlayer].gamepadButtons, action.bit) || '\u2014';
+    padBtn.addEventListener('click', () => beginListen(action.bit, 'gamepad'));
+
+    row.append(label, kbBtn, padBtn);
+    rows.appendChild(row);
+  }
+}
+
+function beginListen(bit, source) {
+  document.querySelectorAll('.remap-cell.listening').forEach((c) => c.classList.remove('listening'));
+  remapListening = { bit, source };
+  const hint = document.getElementById('remap-hint');
+  hint.textContent =
+    source === 'keyboard' ? 'Press the key you want to bind\u2026' : 'Press the gamepad button you want to bind\u2026';
+  [...document.querySelectorAll('.remap-row')].forEach((row, i) => {
+    if (REMAP_ACTIONS[i].bit === bit) {
+      row.children[source === 'keyboard' ? 1 : 2].classList.add('listening');
+    }
+  });
+}
+
+function remapCaptureKey(e) {
+  if (!remapListening || remapListening.source !== 'keyboard') return;
+  const bit = remapListening.bit;
+  const kb = controls[remapPlayer].keyboard;
+  // A key can only drive one action: free it from every other action, and
+  // replace this action's previous key(s) with the newly pressed one.
+  for (const code in kb) if (code === e.code) delete kb[code];
+  for (const code in kb) if (kb[code] === bit) delete kb[code];
+  kb[e.code] = bit;
+  saveControls();
+  const action = REMAP_ACTIONS.find((a) => a.bit === bit);
+  remapListening = null;
+  renderRemap();
+  setStatus(`Player ${remapPlayer + 1}: ${action.name} = ${formatKeyCode(e.code)}`);
+  e.preventDefault();
+}
+
+function resetRemapPlayer() {
+  controls[remapPlayer] = defaultControlFor(remapPlayer);
+  saveControls();
+  renderRemap();
+  setStatus(`Player ${remapPlayer + 1} controls reset to defaults`);
 }
 
 // ---- Player count (1-4 linked instances) ----
@@ -689,8 +952,18 @@ window.addEventListener('DOMContentLoaded', async () => {
       playerCount = 2;
     }
   }
+  loadControls();
   initScreens(playerCount);
   highlightPlayersMenu(playerCount);
+
+  document.querySelectorAll('#controls-menu button').forEach((btn) => {
+    btn.addEventListener('click', () => openRemap(parseInt(btn.dataset.remap, 10)));
+  });
+  document.getElementById('remap-reset').addEventListener('click', resetRemapPlayer);
+  document.getElementById('remap-done').addEventListener('click', closeRemap);
+  document.getElementById('remap-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'remap-overlay') closeRemap(); // click outside the panel
+  });
 
   document.querySelectorAll('#player-menu button').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -728,6 +1001,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   // click or keypress so game sound starts the moment the user interacts.
   window.addEventListener('pointerdown', unlockAudio);
   window.addEventListener('keydown', unlockAudio);
+
+  // Gamepad polling runs on the animation frame; controller slot i -> player i+1.
+  pollGamepads();
 
   connectWebSocket();
 });

@@ -855,3 +855,23 @@ handshake in the fresh `/tmp/dualboy_app.log`.
   thread, bounded 256-msg channel with try_send so a slow device never stalls
   emulation. Validated the ALSA call sequence opens and configures on this
   machine. Non-Linux silently no-ops (video-first).
+
+## Save states + controller/remap (2026-08-19)
+
+- **Quick save state F5 / load F7**: every core's in-memory state captured as one
+  DUALSTATE blob (magic|version|count|(size,bytes)*) into a process-global slot
+  that survives quit-game and player-count changes. Wired: Tauri `save_state`/
+  `load_state`, WS `save_state`/`load_state`, File menu, F5/F7 hotkeys. Core state
+  does NOT include the lockstep coordinator's pending transfer/ack events, so on
+  load each lockstep driver is reset (`d.reset`) to abort stale transfers and wake
+  players — verified P1/P2 both hold 60 fps after load instead of one freezing
+  asleep. Full coordinator-state capture is a follow-up (mStateExtdata path).
+- **Controller (Gamepad API) + control re-mapping**: per-player control scheme
+  {keyboard, gamepadButtons, gamepadAxes} persisted to localStorage
+  (`dualboy_controls_v1`), defaults from the P1-P4 keyboard maps + a standard
+  gamepad layout (face/shoulders/Select/Start/D-pad + left-stick axes). Gamepads
+  assigned by controller slot (#1->P1, ...). rAF poll loop sends the union
+  `keyStates|padStates` per player via `set_keys` (change-driven only). Remap
+  overlay (Controls menu -> Player N Controls) rebinds keyboard keys and gamepad
+  buttons with replace semantics (a key/button drives one action); Reset to
+  defaults per player. Works in both Tauri webview and browser.

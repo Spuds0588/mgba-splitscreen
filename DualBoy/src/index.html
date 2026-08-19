@@ -64,12 +64,25 @@
       </details>
 
       <details class="menu">
+        <summary>Controls</summary>
+        <div class="menu-items" id="controls-menu">
+          <button data-remap="0">Player 1 Controls&#8230;</button>
+          <button data-remap="1">Player 2 Controls&#8230;</button>
+          <button data-remap="2">Player 3 Controls&#8230;</button>
+          <button data-remap="3">Player 4 Controls&#8230;</button>
+          <div class="menu-note">Remap keyboard keys and gamepad buttons per player. Gamepads are assigned by controller slot (controller #1 &#8594; P1). Remaps persist in this browser.</div>
+        </div>
+      </details>
+
+      <details class="menu">
         <summary>Help</summary>
         <div class="menu-items">
           <div class="menu-note">P1: WASD + K/J + L/H + Space/Backspace</div>
           <div class="menu-note">P2: Arrows + M/N + V/B + Enter/O</div>
           <div class="menu-note">P3: T/G/F/R + Y/U + Z/X + 1/2</div>
           <div class="menu-note">P4: I/Q/C/E + P/[ + ,/. + 3/4</div>
+          <div class="menu-note">Gamepads: slot #1&#8594;P1, #2&#8594;P2, etc. Face buttons, LB/RB, Select/Start, D-pad, and left stick. Remap via Controls menu.</div>
+          <div class="menu-note">F5 quick save state &#183; F7 quick load state &#183; Tab turbo</div>
         </div>
       </details>
 
@@ -83,5 +96,24 @@
     <!-- Debug overlay: live per-second stats + mGBA WARN/ERROR lines streamed
          from the backend over the WebSocket (text frames). -->
     <div id="overlay" class="overlay"></div>
+
+    <!-- Control re-mapping overlay: per-player keyboard + gamepad bindings.
+         Click a cell, then press the key/button you want; Esc/Done closes. -->
+    <div id="remap-overlay" class="remap-overlay" hidden>
+      <div class="remap-panel">
+        <h2 id="remap-title">Controls</h2>
+        <div class="remap-grid-head">
+          <span>GBA</span>
+          <span>Keyboard</span>
+          <span>Gamepad</span>
+        </div>
+        <div id="remap-rows" class="remap-rows"></div>
+        <div class="remap-actions">
+          <button id="remap-reset">Reset to defaults</button>
+          <button id="remap-done">Done</button>
+        </div>
+        <div id="remap-hint" class="remap-hint"></div>
+      </div>
+    </div>
   </body>
 </html>
