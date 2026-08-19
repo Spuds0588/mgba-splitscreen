@@ -1,9 +1,12 @@
 [package]
 name = "dualboy"
-version = "0.1.0"
-description = "A Tauri App"
+version = "0.2.0-beta.1"
+description = "DualBoy — split-screen linked GBA emulator"
 authors = ["you"]
 edition = "2021"
+# The desktop app binary is auto-discovered from src/main.rs; with the explicit
+# dualboy-web bin also present, Tauri needs to know which one is the app.
+default-run = "dualboy"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

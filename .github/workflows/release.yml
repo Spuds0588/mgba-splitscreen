@@ -1,0 +1,91 @@
+name: Release beta builds
+
+# Cut a beta release by tagging a commit with a version tag (e.g. v0.1.0-beta.1).
+# The workflow builds the desktop app bundle (Tauri) plus the standalone web
+# server binary on Linux, macOS, and Windows and attaches them to a GitHub
+# Release marked as a prerelease.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            os: linux
+          - platform: macos-latest
+            os: macos
+          - platform: windows-latest
+            os: windows
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libasound2-dev libpulse-dev
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: DualBoy/src-tauri
+
+      - name: Install npm dependencies
+        working-directory: DualBoy
+        run: npm ci
+
+      # Desktop bundle: tauri-action runs `npm run tauri build` and uploads the
+      # produced installer/bundle artifacts to the release.
+      - name: Build desktop bundle (Tauri)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "DualBoy ${{ github.ref_name }}"
+          releaseDraft: false
+          prerelease: true
+
+      # Web server binary: a self-contained static server that streams frames +
+      # audio to browsers over HTTP/WebSocket. Uploaded per-platform so users can
+      # host it anywhere (it serves the frontend from DualBoy/src at runtime).
+      - name: Build web server binary
+        working-directory: DualBoy/src-tauri
+        run: cargo build --release --bin dualboy-web
+
+      - name: Upload web server binary (Linux/macOS)
+        if: matrix.os != 'windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            DualBoy/src-tauri/target/release/dualboy-web
+          fail_on_unmatched_files: false
+
+      - name: Upload web server binary (Windows)
+        if: matrix.os == 'windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            DualBoy/src-tauri/target/release/dualboy-web.exe
+          fail_on_unmatched_files: false

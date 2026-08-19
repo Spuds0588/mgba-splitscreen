@@ -17,22 +17,40 @@ the instances in perfect sync.
 - **Rust backend** (`DualBoy/src-tauri`) — wraps `libmgba` (via `bindgen`), manages the
   emulation instances, runs the frame loop, and serves frames + input over a WebSocket.
 - **Frontend** (`DualBoy/src`) — a lightweight HTML/JS canvas UI that renders each
-  instance's screen and maps keyboard input to GBA buttons.
+  instance's screen and maps keyboard/gamepad input to GBA buttons.
 
 The backend and frontend communicate over WebSocket, so the same frontend can be used
 both inside the Tauri desktop app and in a plain web browser.
 
 ## Features
 
-- Split-screen play: two (desktop) or up to four (web) GBA instances, each with its own screen.
-- Virtual link cable: instances stay in perfect, drop-free synchronization via mGBA's
+- **1–4 split-screen players** on one machine, each with its own screen and controls.
+  Pick the player count from the **Players** menu or as a step when launching from the
+  game library (game → players → start).
+- **Virtual link cable**: instances stay in perfect, drop-free synchronization via mGBA's
   lockstep link-cable support — trade and battle across instances just like real hardware.
-- Load one ROM and it runs on every instance simultaneously.
-- Per-player keyboard mapping (laptop-optimized layout).
-- Save import/export per instance, or as a set across all running instances.
-- Web demo: play in the browser with no install.
+- **Game library launcher** (**File → Games Library**): Recent games (persisted) plus ROM
+  folders you add, with box art (local sibling images or an online fallback) and
+  controller/keyboard navigation.
+- **Save states**: quick save (F5) / quick load (F7) capture *all* players together;
+  both hotkeys are remappable. Battery saves next to a ROM (`game.sav`, `game.sa2`, …)
+  are auto-loaded.
+- **Controller support** (Gamepad API): controller slot #1 → P1, #2 → P2, etc., with
+  per-player button re-mapping and remappable global hotkeys (turbo, save/load, pause)
+  — all via **Controls → Remap Hotkeys…**, persisted in the browser.
+- **Pause menu**: pausing (Escape) freezes all players at once and pops a
+  controller-navigable menu (resume / save / load / players / library / quit ROM).
+- **Video-call-style view modes** (**View** menu): Grid, Speaker (1 big + smalls),
+  Focus (single screen), and Overlay/PiP, cycled with F8/F9 (remappable). Background
+  image, per-player outline toggles, and a toggleable debug log are all in the View menu.
+- **Turbo mode** (Q): fast-forward past 60 fps for grinding through menus/animations.
+- **Save import/export** per instance or as a set across all running instances.
+- **Web demo**: play in the browser with no install (frames + audio stream over WebSocket).
 
 ## Controls
+
+Per-player layouts are fully remappable (keyboard + gamepad) from **Controls** in the
+app, so the tables below are just the defaults.
 
 ### Player 1 (left hand cluster)
 
@@ -58,6 +76,21 @@ both inside the Tauri desktop app and in a plain web browser.
 | Start      | `P` |
 | Select     | `O` |
 
+### Player 3 (`T`/`G`/`F`/`R` cluster) and Player 4 (`I`/`Q`/`C`/`E` cluster)
+
+Defaults are listed in **Help** in the app; every key for every player can be remapped.
+
+### Global hotkeys (remappable)
+
+| Action | Default |
+|--------|---------|
+| Turbo | `Q` |
+| Quick save (all players) | `F5` |
+| Quick load (all players) | `F7` |
+| Pause / resume (all players) | `Escape` |
+| Cycle view mode | `F8` |
+| Cycle focus player | `F9` |
+
 ## Building
 
 The desktop app is a [Tauri](https://tauri.app/) v2 project. Prerequisites:
@@ -65,20 +98,21 @@ The desktop app is a [Tauri](https://tauri.app/) v2 project. Prerequisites:
 - Rust toolchain (`cargo`, `rustc`)
 - `cmake`, `clang` (for building `libmgba` and generating `bindgen` bindings)
 - Tauri v2 system dependencies (WebKitGTK on Linux, etc.)
+- Node.js (`npm`) for the Tauri CLI
 
 ```bash
 cd DualBoy
 npm install
 npm run tauri dev        # development run
-npm run tauri build      # production build
+npm run tauri build      # production build (bundles .deb/.AppImage on Linux, etc.)
 ```
 
 The first build compiles all of `libmgba` from source, which takes a few minutes and
 several GB of RAM; subsequent builds are incremental.
 
-## Web demo (browser, 2–4 players)
+### Web server build (browser play)
 
-A standalone server streams frames to any browser — no install needed:
+A standalone server streams frames + audio to any browser — no install needed:
 
 ```bash
 cd DualBoy/src-tauri
@@ -86,8 +120,35 @@ cargo run --bin dualboy-web -- --players 4   # 2, 3, or 4 players
 # then open http://127.0.0.1:8080 in a browser
 ```
 
-Load a ROM via the file picker; screens and keyboard controls work the same as the
-desktop app, and saves can be exported/imported per player or as a set.
+Load a ROM via the file picker; screens, controls, save states, and audio work the same
+as the desktop app.
+
+## Beta releases
+
+Beta builds are produced from version tags (`vX.Y.Z-beta.N`) by the
+[release workflow](.github/workflows/release.yml). It builds and uploads:
+
+| Platform | Artifact |
+|----------|----------|
+| Linux | `dualboy_*.deb` + `dualboy_*.AppImage` |
+| macOS | `dualboy_*.dmg` |
+| Windows | `dualboy_*.msi` (installer) |
+| Web | `dualboy-web-<os>-<arch>` static server binary + `dualboy-web-*.zip` |
+
+To cut a beta:
+
+```bash
+# bump the version in DualBoy/src-tauri/tauri.conf.json and DualBoy/package.json,
+# commit, then tag and push (the workflow uploads to a GitHub Release):
+git tag v0.1.0-beta.1
+git push origin v0.1.0-beta.1
+```
+
+To build a platform's bundle locally instead of via CI, run `npm run tauri build` on
+that platform (each platform must build its own bundle — no cross-compilation).
+
+The web server binary is also published per-platform; it needs no install and serves the
+browser frontend from `DualBoy/src` (see `.freebuff/run.md` for the runbook).
 
 ## Project status
 
