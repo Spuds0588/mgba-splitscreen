@@ -91,6 +91,7 @@ let playerCount = 2;
 let screens = []; // { canvas, ctx, imgData }
 let keyStates = [];
 let socket = null;
+let turboOn = false;
 
 function setStatus(text) {
   document.getElementById('status').textContent = text;
@@ -113,6 +114,24 @@ function menuOpen() {
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.menu')) closeMenus();
 });
+
+// ---- Turbo / fast-forward ----
+
+function highlightTurbo(on) {
+  const btn = document.getElementById('toggle-turbo');
+  if (btn) btn.classList.toggle('active', on);
+}
+
+async function toggleTurbo() {
+  turboOn = !turboOn;
+  if (IS_TAURI) {
+    await invoke('set_turbo', { enabled: turboOn });
+  } else if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'turbo', enabled: turboOn }));
+  }
+  highlightTurbo(turboOn);
+  setStatus(turboOn ? 'TURBO ON — fast-forwarding (Tab to toggle)' : 'Turbo off (Tab to toggle)');
+}
 
 // ---- Screen grid (video-call style) ----
 
@@ -234,6 +253,13 @@ async function setKeys(player, keys) {
 async function handleKey(e, isDown) {
   // A menu is open: let the menu have the keys; don't also drive the game.
   if (menuOpen()) return;
+
+  // Tab toggles turbo (fast-forward) — never routed to a player.
+  if (e.code === 'Tab') {
+    e.preventDefault();
+    if (isDown) toggleTurbo();
+    return;
+  }
 
   let handled = false;
   for (let p = 0; p < playerCount; p++) {
@@ -461,6 +487,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('load-rom').addEventListener('click', () =>
     IS_TAURI ? pickRomTauri() : pickRomBrowser());
+  document.getElementById('toggle-turbo').addEventListener('click', () => {
+    closeMenus();
+    toggleTurbo();
+  });
   document.getElementById('export-set').addEventListener('click', () =>
     IS_TAURI ? exportSetTauri() : exportSetBrowser());
   document.getElementById('import-set').addEventListener('click', () =>

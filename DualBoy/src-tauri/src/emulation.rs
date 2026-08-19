@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -195,6 +196,10 @@ pub struct EmulationManager {
     loaded_rom: Mutex<Option<String>>,
     /// Set by `stop_and_join`; the frame-loop thread checks it each tick and exits.
     stop_flag: Arc<AtomicBool>,
+    /// Turbo/fast-forward: when set, the frame loop skips its 60 Hz pacing sleep so
+    /// emulation runs as fast as the host allows (lockstep still applies, so linked
+    /// players stay in sync). The frontend toggles it (Tab key / Speed menu).
+    turbo: Arc<AtomicBool>,
     /// Join handle for the frame-loop thread (taken + joined by `stop_and_join`).
     thread: Mutex<Option<thread::JoinHandle<()>>>,
 }
@@ -275,12 +280,33 @@ impl EmulationManager {
             coordinator,
             loaded_rom: Mutex::new(None),
             stop_flag: Arc::new(AtomicBool::new(false)),
+            turbo: Arc::new(AtomicBool::new(false)),
             thread: Mutex::new(None),
         }
     }
 
     pub fn player_count(&self) -> usize {
         self.instances.len()
+    }
+
+    /// Enable/disable turbo (fast-forward). Setting it while the loop is running
+    /// takes effect on the next tick; emulation immediately stops pacing.
+    pub fn set_turbo(&self, enabled: bool) {
+        self.turbo.store(enabled, Ordering::Relaxed);
+        let msg = if enabled {
+            "TURBO ON - emulation fast-forwarding".to_string()
+        } else {
+            "TURBO OFF - back to 60 fps".to_string()
+        };
+        if let Some(tx) = OVERLAY_TX.get() {
+            let _ = tx.send(msg.clone());
+        }
+        println!("{msg}");
+        let _ = std::io::stdout().flush();
+    }
+
+    pub fn turbo_enabled(&self) -> bool {
+        self.turbo.load(Ordering::Relaxed)
     }
 
     /// Path of the ROM currently loaded in every instance (None before first load).
@@ -423,8 +449,8 @@ impl EmulationManager {
 
         self.stop_flag.store(false, Ordering::Relaxed);
         let stop_flag = self.stop_flag.clone();
+        let turbo = self.turbo.clone();
         let handle = thread::spawn(move || {
-            use std::io::Write;
             // 60 Hz emulation pace. Each tick targets the next 16666 µs boundary from
             // a FIXED start, not "sleep 16.6 ms minus work" measured from the previous
             // tick's end: per-tick sleep overshoot (Linux ~1 ms granularity) just eats
@@ -446,6 +472,10 @@ impl EmulationManager {
             let mut emu_frames = vec![0u64; n];
             let mut video_frames = 0u64;
             let mut last_stats = Instant::now();
+            // Turbo video throttle: even flat-out emulation must not saturate the
+            // WS relay with hundreds of frames/s — the display only shows ~60 Hz, so
+            // ~100 video fps is plenty and keeps the socket healthy.
+            let mut last_video = Instant::now();
             let mut prev_emu = emu_frames.clone();
             let mut prev_video = 0u64;
             let mut any_running;
@@ -533,7 +563,13 @@ impl EmulationManager {
                         }
 
                         tick_no = tick_no.wrapping_add(1);
-                        if tick_no % video_every == 0 {
+                        let turbo_on = turbo.load(Ordering::Relaxed);
+                        let every = if turbo_on { 1 } else { video_every };
+                        let now = Instant::now();
+                        if tick_no % every == 0
+                            && (!turbo_on
+                                || now.duration_since(last_video) >= Duration::from_millis(10))
+                        {
                             // RGBA8888: 4 bytes/pixel so the frontend can putImageData
                             // directly with no per-pixel decode. Send the last complete
                             // frame snapshot per player (tear-free), never the live
@@ -543,6 +579,7 @@ impl EmulationManager {
                                 combined.extend_from_slice(snapshot);
                             }
                             let _ = tx.send(combined);
+                            last_video = now;
                             video_frames += 1;
                         }
                     }
@@ -554,12 +591,24 @@ impl EmulationManager {
                 // snaps the clock forward instead of fast-forwarding the game to
                 // "catch up" after the resume.
                 let now = Instant::now();
-                if now < next_deadline {
-                    thread::sleep(next_deadline - now);
-                } else if now - next_deadline > Duration::from_millis(250) {
-                    next_deadline = now;
+                if turbo.load(Ordering::Relaxed) {
+                    // Turbo: no pacing — run as fast as the host allows. Lockstep
+                    // sleeps/wakes still gate linked players inside the stepping loop,
+                    // so they stay in sync at speed. A bare yield keeps the WS relay
+                    // and frontend threads fed without throttling emulation, and an
+                    // unloaded (no ROM) session idles briefly instead of hot-spinning.
+                    thread::yield_now();
+                    if !any_running {
+                        thread::sleep(Duration::from_millis(8));
+                    }
+                } else {
+                    if now < next_deadline {
+                        thread::sleep(next_deadline - now);
+                    } else if now - next_deadline > Duration::from_millis(250) {
+                        next_deadline = now;
+                    }
+                    next_deadline += tick;
                 }
-                next_deadline += tick;
 
                 // ---- Per-second stats line (also streamed to the overlay) ----
                 let now = Instant::now();

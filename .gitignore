@@ -39,3 +39,6 @@ version.c
 
 # Local session metadata
 /.freebuff/
+
+# Local preview temp (register_preview)
+/.preview_tmp/

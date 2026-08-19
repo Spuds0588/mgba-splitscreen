@@ -759,3 +759,75 @@ checksums, so the game's acceptance check sees a value it never accepts. Next
 narrowest probe: trace the slave's SIOMULTI0-3 *reads* and its branch on the
 received value during the FEFE cycle — i.e. what value does the game expect to
 receive, and what does the driver actually deliver at that exact read cycle?
+
+## Ordered path forward (priority / likelihood) — 2026-08-18
+
+Working top-down; each is designed to either produce the fix or kill a whole
+branch cheaply. Record result after each; do not re-derive dead branches.
+
+- **P1 — Trace the slave's SIOMULTI0-3 reads + response branch.** The one
+  remaining unknown: what value does the game read back and how does it branch
+  on it? Correlate each slave SIOMULTI read (cycle, value, slot) with the
+  transfer that produced it and the write that follows. If the game reads slot
+  data that never matches an expected value (or reads at the wrong cycle), this
+  pinpoints it. Highest information-per-cost.
+- **P2 — Scope test: Shining Soul II / SMA4 2P.** Both have working 2P link.
+  If they link where FS stalls → driver is fine for MULTI, FS protocol needs
+  something specific. If they stall identically → driver-wide issue (slots,
+  latching, cadence) and the fix benefits everything. Cheap, high
+  discrimination.
+- **P3 — Verify SIOMULTI read-back semantics vs gbatek.** Slot mapping
+  (SIOMULTI0=master's data, SIOMULTI1=slave1's...), reads during a busy
+  transfer (stale vs live), and whether the driver latches data at the same
+  cycle real hardware does. Pure spec check — no game needed.
+- **P4 — Value-convergence experiment.** If P1 shows the games need matching
+  (value, checksum) pairs, force/diagnose convergence: do the games resync if
+  the master echoes the slave's value, or if both start from the same seed?
+  Determines whether the driver can nudge the protocol.
+- **P5 — Driver fix + regression.** Apply the winning hypothesis to the
+  rendezvous driver, then gate against 4-player linktest (FRM parity) AND FS
+  (link completes) before considering it done.
+
+## SS2 scope test — Tauri desktop app, live run (2026-08-18, ~22:20)
+
+Ran "Shining Soul II (U).gba" in the actual Tauri desktop build (2 instances,
+lockstep driver attached at boot). User drove it manually to gameplay.
+
+**Result: NO crash — session holds.** At t=399s: process alive, 0 WARN/ERROR/
+panic lines in a 268 MB log, both players locked at 60.0 fps (emu + video)
+for the entire window, transfers continuous.
+
+**Exchange structure (healthy):** value+complement pairs in MULTI mode with
+constant 0xB0A6 (e.g. 00EE↔AFB8, B019↔008D both sum to 0xB0A6) — the same
+internally-valid checksum scheme FS uses with 0xFFF1, but here the counters
+advance in lockstep instead of drifting offset by 0x13. Later payloads show
+real game data (7A7A, D325, 8001, 051D) rather than pure FEFE probe/idle,
+consistent with in-game link use.
+
+**Conclusion for the scope question:** the link architecture (lockstep driver +
+wrapper stepping) is fine for a second commercial game. Four Swords is looking
+like an isolated game-specific protocol issue, NOT a driver-wide bug. This
+narrows the remaining work to FS's own acceptance/probe logic (the recv==13 vs
+cap-at-12 contradiction) rather than a rewrite of the link plumbing.
+
+## Turbo / fast-forward mode (2026-08-18)
+
+User requested a fast-forward before re-testing Four Swords (character-creation
+animations are unbearable to watch at 1x). Added a turbo toggle:
+
+- **Backend** (`emulation.rs`): `EmulationManager.turbo: Arc<AtomicBool>` +
+  `set_turbo`/`turbo_enabled`. The frame loop skips its 60 Hz pacing sleep when
+  turbo is on (lockstep sleeps/wakes still gate linked players, so they stay in
+  sync at speed); video broadcast is throttled to ~100 fps so the WS relay isn't
+  saturated; an unloaded (no ROM) session idles briefly instead of hot-spinning.
+  `set_turbo` prints `TURBO ON/OFF` to stdout+overlay.
+- **Commands**: Tauri `set_turbo`/`turbo_enabled` (lib.rs); WS `ClientCommand::
+  Turbo` handled in both the desktop WS server (lib.rs) and `web_server.rs`.
+- **Frontend** (`main.js`, `index.html`): Tab toggles turbo (routed before
+  player keys, never sent to the game); new Speed menu with a Turbo button;
+  button highlight + status line reflect state.
+- Verified: `cargo build --release` clean, smoke tests pass, app relaunched
+  with the new binary.
+
+Next: use Tab to fast-forward FS character creation, then re-evaluate the link
+handshake in the fresh `/tmp/dualboy_app.log`.

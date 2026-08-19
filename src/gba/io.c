@@ -16,6 +16,7 @@ mLOG_DEFINE_CATEGORY(GBA_IO, "GBA I/O", "gba.io");
  * read logging in GBAIORead. Revert before merging. */
 static uint16_t g_busyTraceLast[4];
 static bool g_busyTraceInit[4];
+static uint16_t g_rdLast[4][4];
 
 const char* const GBAIORegisterNames[] = {
 	// Video
@@ -1012,6 +1013,20 @@ uint16_t GBAIORead(struct GBA* gba, uint32_t address) {
 	default:
 		mLOG(GBA_IO, GAME_ERROR, "Read from unused I/O register: %03X", address);
 		return GBALoadBad(gba->cpu);
+	}
+	if (gba->sio.mode == GBA_SIO_MULTI && address >= GBA_REG_SIOMULTI0 && address <= GBA_REG_SIOMULTI3) {
+		// TEMP: FS link SIOMULTI read trace (see PROJECT_LOG) -- value-change gated
+		int pid = GBASIOMultiplayerGetId(gba->sio.siocnt) & 3;
+		uint16_t v = gba->memory.io[address >> 1];
+		int slot = (address - GBA_REG_SIOMULTI0) >> 1;
+		uint64_t key = ((uint64_t) pid << 40) | ((uint64_t) slot << 32) | v;
+		if (g_rdLast[pid][slot] != v) {
+			mLOG(GBA_SIO, DEBUG, "MULTIRD pid=%d slot=%d local=%u val=%04X busy=%d",
+			     pid, slot, (unsigned) mTimingCurrentTime(&gba->timing), v,
+			     GBASIOMultiplayerGetBusy(gba->sio.siocnt));
+			g_rdLast[pid][slot] = v;
+		}
+		UNUSED(key);
 	}
 	return gba->memory.io[address >> 1];
 }

@@ -46,6 +46,20 @@ async fn player_count() -> Result<usize, String> {
     with_emulator(|em| em.player_count())
 }
 
+/// Toggle turbo / fast-forward. When on, the emulation loop drops its 60 Hz pacing
+/// and runs as fast as the host allows (locked players stay in sync).
+#[tauri::command]
+async fn set_turbo(enabled: bool) -> Result<(), String> {
+    with_emulator(|em| {
+        em.set_turbo(enabled);
+    })
+}
+
+#[tauri::command]
+async fn turbo_enabled() -> Result<bool, String> {
+    with_emulator(|em| em.turbo_enabled())
+}
+
 /// Change how many linked GBA instances are running (1-4). Stops the current
 /// emulation loop, swaps in a fresh manager at the new count, restarts the loop, and
 /// auto-reloads the ROM that was loaded (so switching 2P<->4P mid-session restarts
@@ -100,6 +114,7 @@ async fn import_save_set(path: String) -> Result<(), String> {
 enum ClientCommand {
     Keys { player: u8, keys: u32 },
     LoadRom { path: String },
+    Turbo { enabled: bool },
 }
 
 async fn start_websocket_server() {
@@ -151,6 +166,9 @@ async fn start_websocket_server() {
                                         ClientCommand::LoadRom { path } => {
                                             let _ = emulator.load_rom(&path);
                                         }
+                                        ClientCommand::Turbo { enabled } => {
+                                            emulator.set_turbo(enabled);
+                                        }
                                     }
                                 }
                             }
@@ -186,6 +204,8 @@ pub fn run() {
             set_keys,
             player_count,
             set_player_count,
+            set_turbo,
+            turbo_enabled,
             export_save,
             import_save,
             export_save_set,

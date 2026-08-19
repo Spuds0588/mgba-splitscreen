@@ -257,6 +257,42 @@ static void dump_ppm(const char* path, const uint32_t* frame) {
     fclose(f);
 }
 
+/* Dump FS's link state machine (EWRAM struct at 0x02030790) for both players.
+ * Fields (from disassembly of the SIO handler at 0x800C7E8):
+ *   +0  byte  role flag (master/slave)
+ *   +2  byte  checksum input A
+ *   +3  byte  checksum input B (buf[1] = A ^ B)
+ *   +4  byte  send-buffer ready flag
+ *   +5  byte  "got 12" flag (recv counter reached 12)
+ *   +7  byte  busy-latched
+ *   +9  byte  probe round counter (0..3)
+ *   +11 byte  send counter input (buf[0])
+ *   +14 word  send counter
+ *   +20 word  send index (table offset)
+ *   +24 word  recv index
+ *   +28/32   send buffer ptr / alt
+ *   +36/40   recv buffer ptr / alt
+ */
+static void dump_fs_state(int i, int t, const char* tag) {
+    size_t sz = 0;
+    uint8_t* m = mCoreGetMemoryBlock(g_players[i].core, 0x02030790, &sz);
+    if (!m || sz < 48) {
+        fprintf(stderr, "[%ds] P%d %s: no mem\n", t, i + 1, tag);
+        return;
+    }
+    uint16_t u16_at = 0; (void) u16_at;
+    uint32_t w20, w24;
+    memcpy(&w20, m + 20, 4);
+    memcpy(&w24, m + 24, 4);
+    uint32_t w8;
+    memcpy(&w8, m + 8, 4);
+    fprintf(stderr, "[%ds] P%d %s state: phase=%u role=%u a=%u b=%u ready=%u got12=%u busy=%u round=%u cnt=%u "
+                    "send=%u recv=%u w8=%08X\n",
+            t, i + 1, tag,
+            m[1], m[0], m[2], m[3], m[4], m[5], m[7], m[9], m[11],
+            (unsigned) w20, (unsigned) w24, (unsigned) w8);
+}
+
 /* Local per-player frame buffers the controller reads from. */
 static uint32_t g_cur[MAX_PLAYERS][W * H];
 static bool g_curValid[MAX_PLAYERS];
@@ -438,9 +474,37 @@ static int run_fs(const char* rom) {
         fprintf(stderr, "[%ds] P1=%s P2=%s | frames P1=%d P2=%d\n", t,
                 screen_name(cur_screen(0)), screen_name(cur_screen(1)),
                 g_players[0].framesProduced, g_players[1].framesProduced);
+        dump_fs_state(0, t, "p1");
+        dump_fs_state(1, t, "p2");
         if (t == 10) { dump_ppm("/tmp/fs_watch10_p1.ppm", g_cur[0]); dump_ppm("/tmp/fs_watch10_p2.ppm", g_cur[1]); }
         if (t == 30) { dump_ppm("/tmp/fs_watch30_p1.ppm", g_cur[0]); dump_ppm("/tmp/fs_watch30_p2.ppm", g_cur[1]); }
     }
+    /* High-frequency sampler during START: catch recv==13 and role/phase transitions. */
+    {
+        int lastRole[2] = {-1, -1};
+        int64_t s2 = now_ms();
+        while (now_ms() - s2 < 20000) {
+            for (int i = 0; i < 2; ++i) {
+                size_t sz = 0;
+                uint8_t* m = mCoreGetMemoryBlock(g_players[i].core, 0x02030790, &sz);
+                if (m && sz >= 32) {
+                    int recv, phase, got12, role;
+                    memcpy(&recv, m + 24, 4);
+                    phase = m[1]; got12 = m[5]; role = m[0];
+                    if (recv == 13 || (role != lastRole[i])) {
+                        fprintf(stderr, "[SAMP] P%d recv=%d phase=%d got12=%d role=%d\n", i + 1, recv, phase, got12, role);
+                    }
+                    if (role != lastRole[i]) lastRole[i] = role;
+                }
+            }
+            sleep_ms(1);
+        }
+    }
+    dump_ppm("/tmp/fs_final_p1.ppm", g_cur[0]);
+    dump_ppm("/tmp/fs_final_p2.ppm", g_cur[1]);
+    fprintf(stderr, "final: P1=%s P2=%s\n",
+            screen_name(cur_screen(0)), screen_name(cur_screen(1)));
+    return 0;
     dump_ppm("/tmp/fs_final_p1.ppm", g_cur[0]);
     dump_ppm("/tmp/fs_final_p2.ppm", g_cur[1]);
     fprintf(stderr, "final: P1=%s P2=%s\n",
@@ -479,6 +543,11 @@ int main(int argc, char** argv) {
     const char* script = NULL;
 
     if (argc >= 3 && strcmp(argv[1], "--fs") == 0) {
+        fs_mode = true;
+        rom = argv[2];
+        players = 2;
+    } else if (argc >= 4 && strcmp(argv[1], "--fs2") == 0) {
+        /* --fs2 <rom1> <rom2>: like --fs but load different ROM files per player. */
         fs_mode = true;
         rom = argv[2];
         players = 2;
@@ -540,8 +609,12 @@ int main(int argc, char** argv) {
         mCoreInitConfig(p->core, NULL);
         mCoreLoadConfig(p->core);
         p->core->setVideoBuffer(p->core, p->video, 240);
-        if (!mCoreLoadFile(p->core, rom)) {
-            fprintf(stderr, "mCoreLoadFile failed for player %d\n", i);
+        const char* this_rom = rom;
+        if (argc >= 4 && strcmp(argv[1], "--fs2") == 0) {
+            this_rom = argv[2 + i];
+        }
+        if (!mCoreLoadFile(p->core, this_rom)) {
+            fprintf(stderr, "mCoreLoadFile failed for player %d (%s)\n", i, this_rom);
             return 1;
         }
 
@@ -575,6 +648,7 @@ int main(int argc, char** argv) {
         struct timespec tstart;
         clock_gettime(CLOCK_MONOTONIC, &tstart);
         int nextEvent = 0;
+        int lastShot = -1;
         while (1) {
             struct timespec now;
             clock_gettime(CLOCK_MONOTONIC, &now);
@@ -587,6 +661,19 @@ int main(int argc, char** argv) {
                 struct KeyEvent* e = &events[nextEvent++];
                 if (e->player >= 0 && e->player < players) {
                     set_keys(e->player, e->keys);
+                }
+            }
+            int shot = (int) (elapsed_ms / 5000);
+            if (shot != lastShot) {
+                lastShot = shot;
+                for (int i = 0; i < players; ++i) {
+                    char path[128];
+                    snprintf(path, sizeof(path), "/tmp/sshot_p%d_t%d.ppm", i + 1, shot);
+                    pthread_mutex_lock(&g_players[i].snapMutex);
+                    if (g_players[i].frameReady) {
+                        dump_ppm(path, g_players[i].snapshot);
+                    }
+                    pthread_mutex_unlock(&g_players[i].snapMutex);
                 }
             }
             sleep_ms(1);

@@ -31,6 +31,7 @@ struct AppState {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientCommand {
     Keys { player: u8, keys: u32 },
+    Turbo { enabled: bool },
 }
 
 fn parse_players() -> usize {
@@ -126,6 +127,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     Some(Ok(Message::Text(text))) => {
                         if let Ok(ClientCommand::Keys { player, keys }) = serde_json::from_str(&text) {
                             let _ = state.manager.lock().unwrap().set_keys(player, keys);
+                        } else if let Ok(ClientCommand::Turbo { enabled }) =
+                            serde_json::from_str(&text)
+                        {
+                            state.manager.lock().unwrap().set_turbo(enabled);
                         }
                     }
                     Some(Ok(Message::Close(_))) => break,
