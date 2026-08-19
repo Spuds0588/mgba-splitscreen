@@ -127,6 +127,12 @@ impl GbaInstance {
             }
 
             println!("[GBA {}] Step 2: Loading config...", self.id);
+            // mGBA frontends default opts.volume to 0x100 (100%). With no config
+            // file, opts.volume stays 0 and _GBACoreLoadConfig sets
+            // gba->audio.masterVolume = 0, so the core emits pure digital
+            // silence (the mix runs, but _applyBias multiplies by 0). Set it
+            // explicitly BEFORE loadConfig, which applies it.
+            (*self.core).opts.volume = 0x100;
             bindings::mCoreInitConfig(self.core, std::ptr::null_mut());
             bindings::mCoreLoadConfig(self.core);
 
@@ -186,6 +192,19 @@ impl GbaInstance {
     /// wrap as long as the measured span is well under 2^31 cycles (a frame is ~280k).
     pub fn current_time(&self) -> i32 {
         unsafe { bindings::mTimingCurrentTime((*self.core).timing) }
+    }
+
+    /// The core's current audio output rate (32768 Hz at SOUNDBIAS resolution 0,
+    /// 65536 Hz at resolution 1). The GBA resamples internally to this rate, so
+    /// the playback sink must match it or audio plays at the wrong speed.
+    pub fn sample_rate(&self) -> u32 {
+        unsafe {
+            if let Some(f) = (*self.core).audioSampleRate {
+                f(self.core)
+            } else {
+                32768
+            }
+        }
     }
 
     /// Video frame counter (increments once per rendered frame at vblank start).

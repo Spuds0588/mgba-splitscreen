@@ -36,7 +36,7 @@ struct AlsaSink {
 }
 
 impl AlsaSink {
-    unsafe fn open() -> Option<Self> {
+    unsafe fn open(rate: u32) -> Option<Self> {
         let lib = match libloading::Library::new("libasound.so.2") {
             Ok(l) => l,
             Err(e) => {
@@ -114,8 +114,8 @@ impl AlsaSink {
             SND_PCM_FORMAT_S16_LE,
             SND_PCM_ACCESS_RW_INTERLEAVED,
             2,
-            32768,
-            1, // soft_resample: let the plug layer resample 32768 -> device rate
+            rate,
+            1, // soft_resample: let the plug layer resample rate -> device rate
             LATENCY_US,
         );
         if r < 0 {
@@ -126,7 +126,7 @@ impl AlsaSink {
             let _ = snd_pcm_close(pcm);
             return None;
         }
-        eprintln!("[AUDIO] ALSA sink open: default device at 32768 Hz stereo s16");
+        eprintln!("[AUDIO] ALSA sink open: default device at {rate} Hz stereo s16");
         // Keep the symbols alive by extracting the raw fn pointers; the Library
         // itself stays in the struct so the symbols remain valid.
         let writei = *writei;
@@ -187,13 +187,15 @@ impl Drop for AlsaSink {
     }
 }
 
-static AUDIO_TX: OnceLock<SyncSender<Vec<i16>>> = OnceLock::new();
+type AudioChunk = (u32, Vec<i16>); // (sample rate, interleaved stereo s16)
+
+static AUDIO_TX: OnceLock<SyncSender<AudioChunk>> = OnceLock::new();
 
 /// Get (or lazily start) the audio output thread and return its sender.
 /// Callers use `try_send` so a full/absent device never blocks emulation.
-pub fn tx() -> &'static SyncSender<Vec<i16>> {
+pub fn tx() -> &'static SyncSender<AudioChunk> {
     AUDIO_TX.get_or_init(|| {
-        let (tx, rx) = sync_channel::<Vec<i16>>(256);
+        let (tx, rx) = sync_channel::<AudioChunk>(256);
         std::thread::Builder::new()
             .name("dualboy-audio".into())
             .spawn(move || audio_loop(rx))
@@ -202,22 +204,30 @@ pub fn tx() -> &'static SyncSender<Vec<i16>> {
     })
 }
 
-fn audio_loop(rx: Receiver<Vec<i16>>) {
-    let mut sink = unsafe { AlsaSink::open() };
+fn audio_loop(rx: Receiver<AudioChunk>) {
+    let mut sink: Option<AlsaSink> = None;
+    let mut sink_rate: u32 = 0;
     let mut played_chunks: u64 = 0;
     let mut played_samples: u64 = 0;
     let mut last_report = std::time::Instant::now();
     loop {
         match rx.recv() {
-            Ok(samples) => {
+            Ok((rate, samples)) => {
                 played_chunks += 1;
                 played_samples += samples.len() as u64;
+                // Reopen the PCM when the source's rate changes (games switch
+                // SOUNDBIAS resolution at runtime), so playback never drifts.
+                if sink_rate != rate {
+                    sink = None;
+                    sink_rate = rate;
+                    sink = unsafe { AlsaSink::open(rate) };
+                }
                 if let Some(sink) = sink.as_mut() {
                     sink.play(&samples);
                 }
                 if last_report.elapsed().as_secs() >= 5 {
                     eprintln!(
-                        "[AUDIO] thread: {played_chunks} chunks, {played_samples} samples played, sink {}",
+                        "[AUDIO] thread: {played_chunks} chunks, {played_samples} samples played, sink {} @ {sink_rate} Hz",
                         if sink.is_some() { "OPEN" } else { "FAILED" }
                     );
                     last_report = std::time::Instant::now();

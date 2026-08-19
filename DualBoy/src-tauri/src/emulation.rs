@@ -614,14 +614,18 @@ impl EmulationManager {
                         let src = AUDIO_SOURCE.load(Ordering::Relaxed);
                         if src != 0 && !turbo_on {
                             let mut out: Vec<i16> = Vec::with_capacity(2048);
+                            let mut rate = 0u32;
                             if (src as usize) <= guards.len() {
                                 if let Some(g) = guards.get_mut((src as usize) - 1) {
+                                    rate = g.sample_rate();
                                     out.extend_from_slice(g.drain_audio());
                                 }
                             } else if src == 5 && guards.len() >= 2 {
-                                // Mix all instances: saturating sum per sample.
+                                // Mix all instances: saturating sum per sample. The
+                                // mixed rate is the fastest of the sources.
                                 let mut bufs: Vec<&[i16]> = Vec::with_capacity(guards.len());
                                 for g in guards.iter_mut() {
+                                    rate = rate.max(g.sample_rate());
                                     bufs.push(g.drain_audio());
                                 }
                                 let max = bufs.iter().map(|b| b.len()).max().unwrap_or(0);
@@ -641,11 +645,11 @@ impl EmulationManager {
                                 audio_played_samples += out.len() as u64;
                                 if audio_played_chunks % 300 == 0 {
                                     eprintln!(
-                                        "[AUDIO] frame loop: src={src} sent {out_len} samples (total {audio_played_chunks} chunks / {audio_played_samples} samples)",
+                                        "[AUDIO] frame loop: src={src} sent {out_len} samples @ {rate} Hz (total {audio_played_chunks} chunks / {audio_played_samples} samples)",
                                         out_len = out.len()
                                     );
                                 }
-                                let _ = audio::tx().try_send(out);
+                                let _ = audio::tx().try_send((rate, out));
                             }
                         }
                     }
