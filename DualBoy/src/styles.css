@@ -108,6 +108,7 @@ body {
   padding: 6px;
   min-height: 0;
   background: #000;
+  position: relative;
 }
 
 .screen-cell {
@@ -167,6 +168,24 @@ body {
 .screen-tag.player-2 { background: #4488ff; }
 .screen-tag.player-3 { background: #2eaa44; }
 .screen-tag.player-4 { background: #e08a1e; }
+
+/* ---- View modes (video-call arrangements) ---- */
+/* The "focused" tile is the one speaker/focus/overlay enlarge or show. */
+.screen-container[data-view="speaker"] .focused-tile {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+.screen-container[data-view="focus"] .screen-cell { display: none; }
+.screen-container[data-view="focus"] .screen-cell.focused-tile { display: flex; }
+.screen-container[data-view="overlay"] .focused-tile {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 58%;
+  height: 58%;
+  z-index: 50;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.75);
+}
 
 /* ---- Debug overlay (bottom ticker, pointer-transparent) ---- */
 .overlay {

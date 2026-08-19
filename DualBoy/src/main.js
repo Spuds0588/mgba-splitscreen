@@ -88,10 +88,13 @@ const DEFAULT_KEYBOARD_MAPS = [P1_MAP, P2_MAP, P3_MAP, P4_MAP];
 const DEFAULT_GAMEPAD_BUTTONS = {
   0: GBA_BUTTONS.A,
   1: GBA_BUTTONS.B,
-  2: GBA_BUTTONS.L,
-  3: GBA_BUTTONS.R,
-  4: GBA_BUTTONS.L, // LB as an alternate L
-  5: GBA_BUTTONS.R, // RB as an alternate R
+  // L/R default to the shoulder controls: both bumpers (LB/RB) and analog
+  // triggers (LT/RT) map to L/R so the layout works on any controller. X/Y
+  // (buttons 2/3) are left unbound by default so they're free for remapping.
+  4: GBA_BUTTONS.L, // LB bumper -> L
+  5: GBA_BUTTONS.R, // RB bumper -> R
+  6: GBA_BUTTONS.L, // LT trigger -> L (alternate)
+  7: GBA_BUTTONS.R, // RT trigger -> R (alternate)
   8: GBA_BUTTONS.SELECT,
   9: GBA_BUTTONS.START,
   12: GBA_BUTTONS.UP,
@@ -105,7 +108,7 @@ const DEFAULT_GAMEPAD_AXES = {
   1: { neg: GBA_BUTTONS.UP, pos: GBA_BUTTONS.DOWN }, // left stick Y (up = -1)
 };
 
-const CONTROLS_KEY = 'dualboy_controls_v1';
+const CONTROLS_KEY = 'dualboy_controls_v2'; // v2: L/R default to bumpers/triggers
 let controls = []; // 4 entries: { keyboard, gamepadButtons, gamepadAxes }
 
 function defaultControlFor(p) {
@@ -196,6 +199,8 @@ const HOTKEY_ACTIONS = [
   { id: 'save', label: 'Quick Save State' },
   { id: 'load', label: 'Quick Load State' },
   { id: 'pause', label: 'Pause' },
+  { id: 'cycle_view', label: 'Cycle View Mode' },
+  { id: 'cycle_focus', label: 'Cycle Focus Player' },
 ];
 
 function defaultHotkeys() {
@@ -204,6 +209,8 @@ function defaultHotkeys() {
     save: { keyboard: 'F5', gamepad: null },
     load: { keyboard: 'F7', gamepad: null },
     pause: { keyboard: 'Escape', gamepad: null },
+    cycle_view: { keyboard: 'F8', gamepad: null },
+    cycle_focus: { keyboard: 'F9', gamepad: null },
   };
 }
 
@@ -232,6 +239,7 @@ function saveHotkeys() {
     // localStorage unavailable (private mode): remaps just won't persist.
   }
   refreshHotkeyLabels();
+  refreshFocusLabel();
 }
 
 // Pretty name(s) for a hotkey's current binding(s).
@@ -250,6 +258,7 @@ function refreshHotkeyLabels() {
     save: '#quick-save-state',
     load: '#quick-load-state',
     pause: '#toggle-pause',
+    cycle_view: '#cycle-view',
   };
   for (const id in map) {
     const el = document.querySelector(map[id]);
@@ -271,6 +280,12 @@ let padStates = []; // gamepad-derived mask per player
 let socket = null;
 let turboOn = false;
 let paused = false;
+let debugOn = true;
+// View layout: 'grid' | 'speaker' (1 big + smalls) | 'focus' (single screen) |
+// 'overlay' (one tile floating enlarged on top of the grid). focusPlayer selects
+// which player's screen is enlarged/shown in speaker/focus/overlay modes.
+let viewMode = 'grid';
+let focusPlayer = 0;
 
 function setStatus(text) {
   document.getElementById('status').textContent = text;
@@ -292,6 +307,18 @@ function menuOpen() {
 // button and steals Enter/Space from the emulator.
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.menu')) closeMenus();
+});
+
+// Only one menu open at a time: opening one closes its siblings (mouse or
+// keyboard). Fixes the overlap bug where clicking a second menu without
+// dismissing the first left both open.
+document.querySelectorAll('.menu').forEach((m) => {
+  m.addEventListener('toggle', () => {
+    if (!m.open) return;
+    document.querySelectorAll('.menu[open]').forEach((other) => {
+      if (other !== m) other.removeAttribute('open');
+    });
+  });
 });
 
 // ---- Turbo / fast-forward ----
@@ -336,6 +363,8 @@ function triggerHotkey(id) {
   else if (id === 'save') quickSaveState();
   else if (id === 'load') quickLoadState();
   else if (id === 'pause') togglePause();
+  else if (id === 'cycle_view') cycleViewMode();
+  else if (id === 'cycle_focus') cycleFocusPlayer();
 }
 
 // The backend recreates the emulator (and resets turbo/pause to off) on
@@ -425,21 +454,156 @@ async function quickLoadState() {
   }
 }
 
-// ---- Screen grid (video-call style) ----
+// ---- Screen layout + view modes (video-call style) ----
+// Four arrangements, mirroring video-call platforms:
+//   grid    — all screens equal (default)
+//   speaker — one big screen on top, the rest in a strip underneath
+//   focus   — only one screen visible (the others still emulate behind it)
+//   overlay — equal grid behind, with one screen floating enlarged on top (PiP)
+const VIEW_MODES = [
+  { id: 'grid', label: 'Grid' },
+  { id: 'speaker', label: 'Speaker (1 big + small)' },
+  { id: 'focus', label: 'Focus (single screen)' },
+  { id: 'overlay', label: 'Overlay (PiP)' },
+];
+const VIEW_KEY = 'dualboy_view_v1';
+const BG_KEY = 'dualboy_background_v1';
 
-function layout(count) {
+function layout() {
   const el = document.getElementById('screens');
+  const count = playerCount;
   const wide = window.innerWidth >= window.innerHeight;
-  let cols, rows;
-  if (count === 2) { cols = wide ? 2 : 1; rows = wide ? 1 : 2; }
-  else if (count === 3) { cols = wide ? 3 : 1; rows = wide ? 1 : 3; }
-  else { cols = 2; rows = 2; }
-  el.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
-  el.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+
+  el.dataset.view = viewMode;
+
+  if (viewMode === 'grid') {
+    let cols, rows;
+    if (count === 2) { cols = wide ? 2 : 1; rows = wide ? 1 : 2; }
+    else if (count === 3) { cols = wide ? 3 : 1; rows = wide ? 1 : 3; }
+    else { cols = 2; rows = 2; }
+    el.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    el.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+  } else if (viewMode === 'speaker') {
+    el.style.gridTemplateColumns = `repeat(${Math.max(1, count - 1)}, minmax(0, 1fr))`;
+    el.style.gridTemplateRows = '3fr 1fr';
+  } else if (viewMode === 'focus') {
+    el.style.gridTemplateColumns = '1fr';
+    el.style.gridTemplateRows = '1fr';
+  } else if (viewMode === 'overlay') {
+    // The rest of the screens fill the grid; the focused one floats on top (CSS).
+    el.style.gridTemplateColumns = `repeat(${Math.max(1, count - 1)}, minmax(0, 1fr))`;
+    el.style.gridTemplateRows = '1fr';
+  }
+
+  // Focus mode hides every non-focused tile (they still emulate behind it).
+  for (let i = 0; i < screens.length; i++) {
+    const cell = document.getElementById('screens').children[i];
+    if (!cell) continue;
+    cell.style.display = (viewMode === 'focus' && i !== focusPlayer) ? 'none' : '';
+  }
+}
+
+function refreshFocusLabel() {
+  const btn = document.getElementById('cycle-focus');
+  if (btn) btn.textContent = `Focus: P${focusPlayer + 1} (${hotkeyLabel('cycle_focus')})`;
+}
+
+function applyViewMode() {
+  const container = document.getElementById('screens');
+  container.dataset.view = viewMode;
+  document.querySelectorAll('#view-menu [data-view]').forEach((b) => {
+    b.classList.toggle('active', b.dataset.view === viewMode);
+  });
+  document.querySelectorAll('.screen-cell').forEach((c, i) => {
+    c.classList.toggle('focused-tile', i === focusPlayer);
+  });
+  layout();
+  refreshFocusLabel();
+  saveViewPrefs();
+}
+
+function saveViewPrefs() {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify({ mode: viewMode, focus: focusPlayer }));
+  } catch (e) {}
+}
+
+function loadViewPrefs() {
+  try {
+    const raw = localStorage.getItem(VIEW_KEY);
+    if (!raw) return;
+    const v = JSON.parse(raw);
+    if (VIEW_MODES.some((m) => m.id === v.mode)) viewMode = v.mode;
+    if (Number.isInteger(v.focus) && v.focus >= 0) focusPlayer = v.focus;
+  } catch (e) {}
+}
+
+function setViewMode(mode) {
+  const m = VIEW_MODES.find((x) => x.id === mode);
+  if (!m) return;
+  viewMode = m.id;
+  applyViewMode();
+  setStatus(`View: ${m.label}`);
+}
+
+function cycleViewMode() {
+  const idx = VIEW_MODES.findIndex((m) => m.id === viewMode);
+  setViewMode(VIEW_MODES[(idx + 1) % VIEW_MODES.length].id);
+}
+
+function cycleFocusPlayer() {
+  focusPlayer = (focusPlayer + 1) % Math.max(1, playerCount);
+  applyViewMode();
+  setStatus(`Focus: P${focusPlayer + 1}`);
+}
+
+// ---- Image background (wallpaper behind the tiles) ----
+
+function setBackground(dataUrl) {
+  const el = document.getElementById('screens');
+  if (dataUrl) {
+    el.style.backgroundImage = `url("${dataUrl}")`;
+    el.style.backgroundSize = 'cover';
+    el.style.backgroundPosition = 'center';
+    try { localStorage.setItem(BG_KEY, dataUrl); } catch (e) {}
+  } else {
+    el.style.backgroundImage = '';
+    try { localStorage.removeItem(BG_KEY); } catch (e) {}
+  }
+}
+
+function loadBackground() {
+  try {
+    const data = localStorage.getItem(BG_KEY);
+    if (data) setBackground(data);
+  } catch (e) {}
+}
+
+function pickBackground() {
+  closeMenus();
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = () => {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { setBackground(r.result); setStatus('Background image set'); };
+    r.onerror = () => setStatus('Failed to read image');
+    r.readAsDataURL(f);
+  };
+  input.click();
+}
+
+function clearBackground() {
+  closeMenus();
+  setBackground(null);
+  setStatus('Background cleared');
 }
 
 function initScreens(count) {
   playerCount = count;
+  focusPlayer = Math.min(focusPlayer, Math.max(0, count - 1));
   const container = document.getElementById('screens');
   container.innerHTML = '';
   screens = [];
@@ -492,7 +656,7 @@ function initScreens(count) {
     saveMenu.appendChild(importBtn);
   }
 
-  layout(count);
+  applyViewMode();
 }
 
 // The backend broadcasts every emulated frame at 60 FPS and never blocks on us.
@@ -525,6 +689,7 @@ function onFrame(data) {
 
 let overlayLastAt = 0;
 function pushOverlay(text) {
+  if (!debugOn) return; // Debug log toggled off: skip all DOM work.
   // Defensive throttle: a debug flood (e.g. SIO chatter) must never DOM-thrash
   // the main thread and make inputs feel laggy. Cap updates at ~30/s; the full
   // stream is still in the server log, and WARN/ERROR lines are rare.
@@ -540,6 +705,40 @@ function pushOverlay(text) {
   line.textContent = text;
   el.appendChild(line);
   while (el.children.length > OVERLAY_MAX) el.removeChild(el.firstChild);
+}
+
+// ---- Debug log toggle ----
+// The overlay (per-second stats + mGBA WARN/ERROR lines) can be shown/hidden at
+// runtime; the preference persists so a "quiet" setting sticks across sessions.
+const DEBUG_KEY = 'dualboy_debug_v1';
+
+function applyDebugToggle() {
+  const el = document.getElementById('overlay');
+  if (el) el.style.display = debugOn ? '' : 'none';
+  const btn = document.getElementById('toggle-debug');
+  if (btn) {
+    btn.textContent = `Debug Log: ${debugOn ? 'On' : 'Off'}`;
+    btn.classList.toggle('active', debugOn);
+  }
+}
+
+function toggleDebug() {
+  debugOn = !debugOn;
+  try { localStorage.setItem(DEBUG_KEY, JSON.stringify(debugOn)); } catch (e) {}
+  applyDebugToggle();
+  if (!debugOn) {
+    const el = document.getElementById('overlay');
+    if (el) el.innerHTML = '';
+  }
+  setStatus(debugOn ? 'Debug log on' : 'Debug log off');
+}
+
+function loadDebugToggle() {
+  try {
+    const raw = localStorage.getItem(DEBUG_KEY);
+    if (raw !== null) debugOn = JSON.parse(raw) === true;
+  } catch (e) {}
+  applyDebugToggle();
 }
 
 async function setKeys(player, keys) {
@@ -1268,6 +1467,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   loadControls();
   loadHotkeys();
   refreshHotkeyLabels();
+  loadDebugToggle();
+  loadViewPrefs();
+  loadBackground();
   initScreens(playerCount);
   highlightPlayersMenu(playerCount);
 
@@ -1304,6 +1506,26 @@ window.addEventListener('DOMContentLoaded', async () => {
     closeMenus();
     togglePause();
   });
+  document.getElementById('toggle-debug').addEventListener('click', () => {
+    closeMenus();
+    toggleDebug();
+  });
+  document.querySelectorAll('#view-menu [data-view]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      closeMenus();
+      setViewMode(btn.dataset.view);
+    });
+  });
+  document.getElementById('cycle-view').addEventListener('click', () => {
+    closeMenus();
+    cycleViewMode();
+  });
+  document.getElementById('cycle-focus').addEventListener('click', () => {
+    closeMenus();
+    cycleFocusPlayer();
+  });
+  document.getElementById('bg-image').addEventListener('click', pickBackground);
+  document.getElementById('bg-clear').addEventListener('click', clearBackground);
   document.querySelectorAll('#audio-menu button').forEach((btn) => {
     btn.addEventListener('click', () => {
       closeMenus();
@@ -1318,7 +1540,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   window.addEventListener('keydown', (e) => handleKey(e, true));
   window.addEventListener('keyup', (e) => handleKey(e, false));
-  window.addEventListener('resize', () => layout(playerCount));
+  window.addEventListener('resize', () => layout());
 
   // Browsers require a user gesture before audio may start; unlock on any
   // click or keypress so game sound starts the moment the user interacts.

@@ -348,6 +348,20 @@ pub struct EmulationManager {
 unsafe impl Send for EmulationManager {}
 unsafe impl Sync for EmulationManager {}
 
+/// Per-player battery-save path next to a ROM, matching mGBA's convention:
+/// Player 1 -> `<stem>.sav`, Player N>1 -> `<stem>.saN`. Used to auto-load a
+/// user's existing save when a ROM is loaded (no manual import needed).
+fn autoload_save_path(rom_path: &str, player_index: usize) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(rom_path);
+    let stem = path.file_stem()?.to_str()?;
+    let name = if player_index == 0 {
+        format!("{stem}.sav")
+    } else {
+        format!("{stem}.sa{}", player_index + 1)
+    };
+    Some(path.parent()?.join(name))
+}
+
 impl EmulationManager {
     /// Create `count` GBA instances. 2-4 instances are linked over the virtual link
     /// cable (GBA supports up to `MAX_GBAS` = 4 players); 1 instance runs SOLO with
@@ -509,6 +523,19 @@ impl EmulationManager {
                 }
             }
         }
+
+        // Auto-load each player's battery save from next to the ROM, while the
+        // instance locks are still held, so the frame loop can't step the
+        // freshly-booted ROM before its save is in place.
+        let mut autoloaded = Vec::new();
+        for (i, gba) in guards.iter_mut().enumerate() {
+            let Some(save_path) = autoload_save_path(path, i) else { continue; };
+            if let Ok(data) = std::fs::read(&save_path) {
+                if !data.is_empty() && gba.import_save(&data) {
+                    autoloaded.push(format!("P{}", i + 1));
+                }
+            }
+        }
         drop(guards);
         *self.loaded_rom.lock().unwrap() = Some(path.to_string());
         if let Some(tx) = OVERLAY_TX.get() {
@@ -517,6 +544,11 @@ impl EmulationManager {
                 .and_then(|n| n.to_str())
                 .unwrap_or(path);
             let _ = tx.send(format!("ROM loaded: {name}"));
+            if !autoloaded.is_empty() {
+                let msg = format!("Autoloaded save for {}", autoloaded.join(", "));
+                println!("{msg}");
+                let _ = tx.send(msg);
+            }
         }
         Ok(())
     }
