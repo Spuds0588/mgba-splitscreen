@@ -234,6 +234,67 @@ fn deserialize_save_set(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     Ok(saves)
 }
 
+/// Save-state set format: all instances' in-memory save states in one blob.
+/// Layout: b"DUALSTATE" | version:u32(1) | count:u32 | (size:u32, bytes)*
+const STATE_SET_MAGIC: &[u8; 9] = b"DUALSTATE";
+
+fn serialize_state_set(states: &[Vec<u8>]) -> Vec<u8> {
+    let mut out =
+        Vec::with_capacity(STATE_SET_MAGIC.len() + 8 + states.iter().map(|s| s.len() + 4).sum::<usize>());
+    out.extend_from_slice(STATE_SET_MAGIC);
+    out.extend_from_slice(&1u32.to_le_bytes());
+    out.extend_from_slice(&(states.len() as u32).to_le_bytes());
+    for s in states {
+        out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+        out.extend_from_slice(s);
+    }
+    out
+}
+
+fn deserialize_state_set(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    let hdr = STATE_SET_MAGIC.len() + 8;
+    if data.len() < hdr || &data[0..STATE_SET_MAGIC.len()] != STATE_SET_MAGIC {
+        return Err("Not a DualBoy save state set".into());
+    }
+    let version = u32::from_le_bytes(
+        data[STATE_SET_MAGIC.len()..STATE_SET_MAGIC.len() + 4]
+            .try_into()
+            .unwrap(),
+    );
+    if version != 1 {
+        return Err(format!("Unsupported save state set version {version}"));
+    }
+    let count = u32::from_le_bytes(
+        data[STATE_SET_MAGIC.len() + 4..STATE_SET_MAGIC.len() + 8]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let mut states = Vec::with_capacity(count);
+    let mut off = hdr;
+    for _ in 0..count {
+        if off + 4 > data.len() {
+            return Err("Truncated save state set".into());
+        }
+        let size = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+        off += 4;
+        if off + size > data.len() {
+            return Err("Truncated save state set".into());
+        }
+        states.push(data[off..off + size].to_vec());
+        off += size;
+    }
+    Ok(states)
+}
+
+/// Global quick-save-state slot: (player count, serialized state set). Lives outside
+/// any manager so it survives `quit_game` / `set_player_count` recreations, like the
+/// audio source. `load_state_set` checks the count matches before restoring.
+static QUICK_STATE: OnceLock<Mutex<Option<(usize, Vec<u8>)>>> = OnceLock::new();
+
+fn quick_state_slot() -> &'static Mutex<Option<(usize, Vec<u8>)>> {
+    QUICK_STATE.get_or_init(|| Mutex::new(None))
+}
+
 /// Owns the lockstep coordinator and deinitializes it on drop.
 /// Declared last in `EmulationManager` so the GBA instances are dropped first: their SIO
 /// drivers call back into the coordinator during teardown, so it must outlive them.
@@ -504,6 +565,83 @@ impl EmulationManager {
             self.import_save((p + 1) as u8, save)?;
         }
         Ok(())
+    }
+
+    /// Capture a full save state of every instance as one blob. For linked play the
+    /// whole set must be captured together so the round counters stay in lockstep.
+    pub fn save_state_set(&self) -> Result<Vec<u8>, String> {
+        let mut states = Vec::with_capacity(self.player_count());
+        let mut guards: Vec<_> = self
+            .instances
+            .iter()
+            .map(|i| i.lock().map_err(|e| e.to_string()))
+            .collect::<Result<_, _>>()?;
+        for g in guards.iter() {
+            states.push(g.save_state().ok_or_else(|| "Failed to capture save state".to_string())?);
+        }
+        drop(guards);
+        Ok(serialize_state_set(&states))
+    }
+
+    /// Restore every instance from a save-state-set blob captured by `save_state_set`.
+    pub fn load_state_set(&self, data: &[u8]) -> Result<(), String> {
+        let states = deserialize_state_set(data)?;
+        if states.len() != self.player_count() {
+            return Err(format!(
+                "Save state set has {} states but {} players are running",
+                states.len(),
+                self.player_count()
+            ));
+        }
+        let mut guards: Vec<_> = self
+            .instances
+            .iter()
+            .map(|i| i.lock().map_err(|e| e.to_string()))
+            .collect::<Result<_, _>>()?;
+        for (g, state) in guards.iter_mut().zip(&states) {
+            if !g.load_state(state) {
+                return Err("Failed to restore save state".into());
+            }
+        }
+        drop(guards);
+
+        // The core state includes the SIO registers but NOT the external lockstep
+        // coordinator's pending transfer/ack events, so restoring a linked game
+        // mid-transfer would leave a player sleeping forever. Reset each driver to
+        // abort any stale transfer and wake the players so the games re-handshake.
+        // (Full coordinator-state capture is a follow-up; this makes loading a
+        // state saved at a stable moment work in linked play.)
+        for driver in &self.drivers {
+            unsafe {
+                let d = &mut (**driver).d;
+                if let Some(reset) = d.reset {
+                    reset(d as *mut _);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Quick-save: capture the set into the process-global slot (survives
+    /// `quit_game`/player-count changes for the rest of the session).
+    pub fn quick_save_state(&self) -> Result<(), String> {
+        let blob = self.save_state_set()?;
+        *quick_state_slot().lock().unwrap() = Some((self.player_count(), blob));
+        Ok(())
+    }
+
+    /// Quick-load: restore the set from the global slot. Errors if the slot is
+    /// empty or was captured at a different player count.
+    pub fn quick_load_state(&self) -> Result<(), String> {
+        let slot = quick_state_slot().lock().unwrap();
+        let (count, blob) = slot.as_ref().ok_or("No quick save state yet")?;
+        if *count != self.player_count() {
+            return Err(format!(
+                "Quick state was saved with {count} players but {} are running",
+                self.player_count()
+            ));
+        }
+        self.load_state_set(blob)
     }
 
     /// Is a given instance (0-based) currently waiting on the link (skipped by the

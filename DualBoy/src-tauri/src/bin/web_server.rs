@@ -34,6 +34,8 @@ enum ClientCommand {
     Turbo { enabled: bool },
     AudioSource { source: u8 },
     QuitGame,
+    SaveState,
+    LoadState,
 }
 
 fn parse_players() -> usize {
@@ -181,6 +183,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 drop(old);
                                 guard.start(60);
                             }
+                        } else if let Ok(ClientCommand::SaveState) = serde_json::from_str(&text) {
+                            let _ = state.manager.lock().unwrap().quick_save_state();
+                        } else if let Ok(ClientCommand::LoadState) = serde_json::from_str(&text) {
+                            let _ = state.manager.lock().unwrap().quick_load_state();
                         }
                     }
                     Some(Ok(Message::Close(_))) => break,

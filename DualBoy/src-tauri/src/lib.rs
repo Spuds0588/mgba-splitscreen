@@ -141,6 +141,18 @@ async fn import_save_set(path: String) -> Result<(), String> {
     with_emulator(|em| em.import_save_set(&data))?
 }
 
+/// Quick save state (all instances into one in-memory slot). F5 hotkey.
+#[tauri::command]
+async fn save_state() -> Result<(), String> {
+    with_emulator(|em| em.quick_save_state())?
+}
+
+/// Quick load state (all instances from the in-memory slot). F7 hotkey.
+#[tauri::command]
+async fn load_state() -> Result<(), String> {
+    with_emulator(|em| em.quick_load_state())?
+}
+
 #[derive(serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientCommand {
@@ -149,6 +161,8 @@ enum ClientCommand {
     Turbo { enabled: bool },
     AudioSource { source: u8 },
     QuitGame,
+    SaveState,
+    LoadState,
 }
 
 async fn start_websocket_server() {
@@ -214,6 +228,12 @@ async fn start_websocket_server() {
                                         ClientCommand::QuitGame => {
                                             let _ = quit_game_inner();
                                         }
+                                        ClientCommand::SaveState => {
+                                            let _ = emulator.quick_save_state();
+                                        }
+                                        ClientCommand::LoadState => {
+                                            let _ = emulator.quick_load_state();
+                                        }
                                     }
                                 }
                             }
@@ -256,7 +276,9 @@ pub fn run() {
             export_save,
             import_save,
             export_save_set,
-            import_save_set
+            import_save_set,
+            save_state,
+            load_state
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

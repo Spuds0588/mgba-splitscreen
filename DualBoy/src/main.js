@@ -178,6 +178,38 @@ async function quitGame() {
   setStatus('Waiting for ROM\u2026');
 }
 
+// ---- Save state (quick save/load, all players together) ----
+
+async function quickSaveState() {
+  closeMenus();
+  if (IS_TAURI) {
+    try {
+      await invoke('save_state');
+      setStatus('Quick state saved (F5)');
+    } catch (err) {
+      setStatus('Save state failed: ' + err);
+    }
+  } else if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'save_state' }));
+    setStatus('Quick state saved (F5)');
+  }
+}
+
+async function quickLoadState() {
+  closeMenus();
+  if (IS_TAURI) {
+    try {
+      await invoke('load_state');
+      setStatus('Quick state loaded (F7)');
+    } catch (err) {
+      setStatus('Load state failed: ' + err);
+    }
+  } else if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'load_state' }));
+    setStatus('Quick state loaded (F7)');
+  }
+}
+
 // ---- Screen grid (video-call style) ----
 
 function layout(count) {
@@ -310,6 +342,18 @@ async function handleKey(e, isDown) {
   if (e.code === 'Tab') {
     e.preventDefault();
     if (isDown) toggleTurbo();
+    return;
+  }
+
+  // F5/F7 quick save/load state (all players together) — never routed to a player.
+  if (e.code === 'F5') {
+    e.preventDefault();
+    if (isDown) quickSaveState();
+    return;
+  }
+  if (e.code === 'F7') {
+    e.preventDefault();
+    if (isDown) quickLoadState();
     return;
   }
 
@@ -658,6 +702,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('load-rom').addEventListener('click', () =>
     IS_TAURI ? pickRomTauri() : pickRomBrowser());
   document.getElementById('quit-game').addEventListener('click', quitGame);
+  document.getElementById('quick-save-state').addEventListener('click', quickSaveState);
+  document.getElementById('quick-load-state').addEventListener('click', quickLoadState);
   document.getElementById('toggle-turbo').addEventListener('click', () => {
     closeMenus();
     toggleTurbo();

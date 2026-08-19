@@ -284,6 +284,40 @@ impl GbaInstance {
         }
         false
     }
+
+    /// Capture a full save state (CPU/RAM/IO/audio/timers) as an in-memory
+    /// byte blob. This is the core's native state format, not a battery save.
+    pub fn save_state(&self) -> Option<Vec<u8>> {
+        if !self.is_running {
+            return None;
+        }
+        unsafe {
+            let size_fn = (*self.core).stateSize?;
+            let size = size_fn(self.core);
+            if size == 0 {
+                return None;
+            }
+            let save_fn = (*self.core).saveState?;
+            let mut buf = vec![0u8; size];
+            if !save_fn(self.core, buf.as_mut_ptr() as *mut _) {
+                return None;
+            }
+            Some(buf)
+        }
+    }
+
+    /// Restore a full save state previously captured with `save_state`.
+    pub fn load_state(&mut self, data: &[u8]) -> bool {
+        if !self.is_running {
+            return false;
+        }
+        unsafe {
+            if let Some(load_fn) = (*self.core).loadState {
+                return load_fn(self.core, data.as_ptr() as *const _);
+            }
+        }
+        false
+    }
 }
 
 impl Drop for GbaInstance {
