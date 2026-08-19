@@ -128,8 +128,9 @@ fn ensure_logger() {
             (*filter).defaultLevels = (bindings::mLogLevel_mLOG_WARN
                 | bindings::mLogLevel_mLOG_ERROR
                 | bindings::mLogLevel_mLOG_FATAL) as i32;
-            // TEMP: SIO debug for link-handshake triage
-            bindings::mLogFilterSet(filter, c"gba.sio".as_ptr(), bindings::mLogLevel_mLOG_DEBUG as i32);
+            // No per-category DEBUG here: enabling gba.sio DEBUG floods the log
+            // AND the browser overlay with hundreds of lockstep lines per second,
+            // which DOM-thrashes the frontend and makes inputs feel sluggish.
         }
         (*logger).d.log = Some(overlay_log);
         bindings::mLogSetDefaultLogger(&mut (*logger).d as *mut bindings::mLogger);

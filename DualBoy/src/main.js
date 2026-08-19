@@ -275,7 +275,14 @@ function onFrame(data) {
 
 // ---- Debug overlay (backend status text frames) ----
 
+let overlayLastAt = 0;
 function pushOverlay(text) {
+  // Defensive throttle: a debug flood (e.g. SIO chatter) must never DOM-thrash
+  // the main thread and make inputs feel laggy. Cap updates at ~30/s; the full
+  // stream is still in the server log, and WARN/ERROR lines are rare.
+  const now = performance.now();
+  if (now - overlayLastAt < 33) return;
+  overlayLastAt = now;
   const el = document.getElementById('overlay');
   const line = document.createElement('div');
   line.className = 'line';
