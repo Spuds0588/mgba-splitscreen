@@ -831,3 +831,27 @@ animations are unbearable to watch at 1x). Added a turbo toggle:
 
 Next: use Tab to fast-forward FS character creation, then re-evaluate the link
 handshake in the fresh `/tmp/dualboy_app.log`.
+
+## Mario Kart Super Circuit 4P + quit-game + audio (2026-08-18, ~23:30)
+
+- **MKSC 4P log**: 72,144 transfers, 0 drops/desyncs, all four at 60 fps for
+  298s. "Touchy" linking is the game's boot-time progressive join (slots FFFF ->
+  active, visible in the early payloads + sleep:[.TTT] markers), not driver
+  errors. Same class as SMW2's detection phase. Driver-side "keep-alive" help
+  remains the upstream lockstep alignment experiment (restore per-transfer hard
+  sync) — not yet applied.
+- **Quit Game**: File -> Quit Game (Tauri `quit_game` + WS `quit_game`) swaps in
+  a fresh EmulationManager at the same player count with no ROM; frontend clears
+  screens. Keeps the app running for a new load.
+- **Audio**: core outputs ONE mixed stereo stream per instance (32768 Hz s16,
+  always written to the psg ring — verified `_sample()` writes unconditionally).
+  The core CANNOT separate music from SFX (that's game-side channel usage, mixed
+  before it reaches mCore), so the menu selects WHOSE mix you hear (P1 default,
+  P2-P4, Mix-all with saturating sum, Mute) rather than music-vs-SFX. Capture:
+  `setAudioBufferSize(2048)` per instance + `mAudioBufferRead` drain each tick
+  (gba.rs `drain_audio`); routing lives in the frame loop (AUDIO_SOURCE atomic,
+  skipped in turbo); playback = `src/audio.rs` dlopen of libasound.so.2
+  (snd_pcm_open "default" / set_params 32768 stereo / writei) on a dedicated
+  thread, bounded 256-msg channel with try_send so a slow device never stalls
+  emulation. Validated the ALSA call sequence opens and configures on this
+  machine. Non-Linux silently no-ops (video-first).

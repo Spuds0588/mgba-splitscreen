@@ -1,5 +1,6 @@
 pub mod gba;
 pub mod emulation;
+pub mod audio;
 mod bindings;
 
 use std::sync::{Arc, Mutex};
@@ -53,6 +54,37 @@ async fn set_turbo(enabled: bool) -> Result<(), String> {
     with_emulator(|em| {
         em.set_turbo(enabled);
     })
+}
+
+/// Route audio to a specific instance (1-4), mix all (5), or mute (0).
+/// The core cannot separate a game's music from its SFX — each instance's
+/// output is one mixed stereo stream — so this selects WHICH mix you hear.
+#[tauri::command]
+async fn set_audio_source(source: u8) -> Result<(), String> {
+    emulation::set_audio_source(source);
+    Ok(())
+}
+
+/// Unload the current ROM and stop emulation without quitting the app.
+/// Swaps in a fresh manager (same player count, no ROM) so the next
+/// File->Load picks up clean cores.
+fn quit_game_inner() -> Result<(), String> {
+    let mut guard = EMULATOR.lock().map_err(|e| e.to_string())?;
+    if guard.loaded_rom_path().is_none() {
+        return Ok(()); // nothing loaded
+    }
+    let n = guard.player_count();
+    let old = std::mem::replace(&mut *guard, Arc::new(EmulationManager::new(n)));
+    old.stop_and_join();
+    drop(old);
+    guard.start(60);
+    println!("Quit game: ROM unloaded, emulation stopped");
+    Ok(())
+}
+
+#[tauri::command]
+async fn quit_game() -> Result<(), String> {
+    quit_game_inner()
 }
 
 #[tauri::command]
@@ -115,6 +147,8 @@ enum ClientCommand {
     Keys { player: u8, keys: u32 },
     LoadRom { path: String },
     Turbo { enabled: bool },
+    AudioSource { source: u8 },
+    QuitGame,
 }
 
 async fn start_websocket_server() {
@@ -169,6 +203,12 @@ async fn start_websocket_server() {
                                         ClientCommand::Turbo { enabled } => {
                                             emulator.set_turbo(enabled);
                                         }
+                                        ClientCommand::AudioSource { source } => {
+                                            emulation::set_audio_source(source);
+                                        }
+                                        ClientCommand::QuitGame => {
+                                            let _ = quit_game_inner();
+                                        }
                                     }
                                 }
                             }
@@ -206,6 +246,8 @@ pub fn run() {
             set_player_count,
             set_turbo,
             turbo_enabled,
+            set_audio_source,
+            quit_game,
             export_save,
             import_save,
             export_save_set,

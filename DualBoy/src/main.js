@@ -133,6 +133,51 @@ async function toggleTurbo() {
   setStatus(turboOn ? 'TURBO ON — fast-forwarding (Tab to toggle)' : 'Turbo off (Tab to toggle)');
 }
 
+// ---- Audio routing ----
+// The core mixes each game's music + SFX into ONE stereo stream per instance;
+// there is no music-vs-SFX split at the core level. These options pick WHOSE
+// mix you hear (default Player 1) or blend all players together.
+
+let audioSource = 1;
+
+function highlightAudio(n) {
+  document.querySelectorAll('#audio-menu button').forEach((btn) => {
+    btn.classList.toggle('active', parseInt(btn.dataset.audio, 10) === n);
+  });
+}
+
+async function setAudioSource(n) {
+  audioSource = n;
+  if (IS_TAURI) {
+    await invoke('set_audio_source', { source: n });
+  } else if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'audio_source', source: n }));
+  }
+  highlightAudio(n);
+  const label = n === 0 ? 'Muted' : n === 5 ? 'Mix all players' : `Player ${n}`;
+  setStatus(`Audio: ${label}`);
+}
+
+// ---- Quit game (unload ROM, keep the app open) ----
+
+function clearScreens() {
+  for (const s of screens) {
+    s.ctx.fillStyle = '#000';
+    s.ctx.fillRect(0, 0, GBA_WIDTH, GBA_HEIGHT);
+  }
+}
+
+async function quitGame() {
+  closeMenus();
+  if (IS_TAURI) {
+    await invoke('quit_game');
+  } else if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'quit_game' }));
+  }
+  clearScreens();
+  setStatus('Waiting for ROM\u2026');
+}
+
 // ---- Screen grid (video-call style) ----
 
 function layout(count) {
@@ -487,10 +532,18 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('load-rom').addEventListener('click', () =>
     IS_TAURI ? pickRomTauri() : pickRomBrowser());
+  document.getElementById('quit-game').addEventListener('click', quitGame);
   document.getElementById('toggle-turbo').addEventListener('click', () => {
     closeMenus();
     toggleTurbo();
   });
+  document.querySelectorAll('#audio-menu button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      closeMenus();
+      setAudioSource(parseInt(btn.dataset.audio, 10));
+    });
+  });
+  highlightAudio(audioSource);
   document.getElementById('export-set').addEventListener('click', () =>
     IS_TAURI ? exportSetTauri() : exportSetBrowser());
   document.getElementById('import-set').addEventListener('click', () =>

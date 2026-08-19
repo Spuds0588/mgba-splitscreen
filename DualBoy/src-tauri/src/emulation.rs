@@ -1,10 +1,11 @@
 use std::io::Write;
 use std::os::raw::{c_char, c_int};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
+use crate::audio;
 use crate::gba::GbaInstance;
 use crate::bindings;
 
@@ -27,6 +28,26 @@ static FRAME_TX: OnceLock<broadcast::Sender<Vec<u8>>> = OnceLock::new();
 /// so mGBA WARN+ lines and per-second stats share one stream that WS clients
 /// subscribe to once and keep receiving across manager recreations.
 static STATUS_TX: OnceLock<broadcast::Sender<String>> = OnceLock::new();
+
+/// Audio routing: 1-4 = play that instance's full mix, 5 = mix all instances,
+/// 0 = mute. Default 1 (Player 1). Lives outside any manager so it survives
+/// manager recreation (player-count changes, quit game).
+static AUDIO_SOURCE: AtomicU8 = AtomicU8::new(1);
+
+pub fn set_audio_source(source: u8) {
+    let s = source.clamp(0, 5);
+    AUDIO_SOURCE.store(s, Ordering::Relaxed);
+    let msg = match s {
+        0 => "AUDIO muted".to_string(),
+        5 => "AUDIO source: mix all players".to_string(),
+        n => format!("AUDIO source: player {n}"),
+    };
+    println!("{msg}");
+    let _ = std::io::stdout().flush();
+    if let Some(tx) = OVERLAY_TX.get() {
+        let _ = tx.send(msg);
+    }
+}
 
 /// mGBA installs no default logger by itself; without one, `mLog()` prints every level
 /// (including DEBUG BIOS SWI traces and lockstep chatter) to stdout on every call, which
@@ -476,6 +497,10 @@ impl EmulationManager {
             // WS relay with hundreds of frames/s — the display only shows ~60 Hz, so
             // ~100 video fps is plenty and keeps the socket healthy.
             let mut last_video = Instant::now();
+            // Audio diagnostics (throttled): how many mix chunks we handed to the
+            // audio thread, and how many samples total.
+            let mut audio_played_chunks = 0u64;
+            let mut audio_played_samples = 0u64;
             let mut prev_emu = emu_frames.clone();
             let mut prev_video = 0u64;
             let mut any_running;
@@ -581,6 +606,47 @@ impl EmulationManager {
                             let _ = tx.send(combined);
                             last_video = now;
                             video_frames += 1;
+                        }
+
+                        // ---- Audio: drain every instance once per tick, route
+                        // per AUDIO_SOURCE. Skipped in turbo (the mix would play
+                        // at real time while the game runs 3-8x, going stale).
+                        let src = AUDIO_SOURCE.load(Ordering::Relaxed);
+                        if src != 0 && !turbo_on {
+                            let mut out: Vec<i16> = Vec::with_capacity(2048);
+                            if (src as usize) <= guards.len() {
+                                if let Some(g) = guards.get_mut((src as usize) - 1) {
+                                    out.extend_from_slice(g.drain_audio());
+                                }
+                            } else if src == 5 && guards.len() >= 2 {
+                                // Mix all instances: saturating sum per sample.
+                                let mut bufs: Vec<&[i16]> = Vec::with_capacity(guards.len());
+                                for g in guards.iter_mut() {
+                                    bufs.push(g.drain_audio());
+                                }
+                                let max = bufs.iter().map(|b| b.len()).max().unwrap_or(0);
+                                out.reserve(max);
+                                for i in 0..max {
+                                    let mut sum: i32 = 0;
+                                    for b in bufs.iter() {
+                                        if i < b.len() {
+                                            sum += b[i] as i32;
+                                        }
+                                    }
+                                    out.push(sum.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
+                                }
+                            }
+                            if !out.is_empty() {
+                                audio_played_chunks += 1;
+                                audio_played_samples += out.len() as u64;
+                                if audio_played_chunks % 300 == 0 {
+                                    eprintln!(
+                                        "[AUDIO] frame loop: src={src} sent {out_len} samples (total {audio_played_chunks} chunks / {audio_played_samples} samples)",
+                                        out_len = out.len()
+                                    );
+                                }
+                                let _ = audio::tx().try_send(out);
+                            }
                         }
                     }
                 }

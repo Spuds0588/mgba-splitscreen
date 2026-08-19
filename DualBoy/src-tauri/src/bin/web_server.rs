@@ -32,6 +32,8 @@ struct AppState {
 enum ClientCommand {
     Keys { player: u8, keys: u32 },
     Turbo { enabled: bool },
+    AudioSource { source: u8 },
+    QuitGame,
 }
 
 fn parse_players() -> usize {
@@ -131,6 +133,22 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             serde_json::from_str(&text)
                         {
                             state.manager.lock().unwrap().set_turbo(enabled);
+                        } else if let Ok(ClientCommand::AudioSource { source }) =
+                            serde_json::from_str(&text)
+                        {
+                            dualboy_lib::emulation::set_audio_source(source);
+                        } else if let Ok(ClientCommand::QuitGame) = serde_json::from_str(&text) {
+                            let mut guard = state.manager.lock().unwrap();
+                            if guard.loaded_rom_path().is_some() {
+                                let n = guard.player_count();
+                                let old = std::mem::replace(
+                                    &mut *guard,
+                                    Arc::new(EmulationManager::new(n)),
+                                );
+                                old.stop_and_join();
+                                drop(old);
+                                guard.start(60);
+                            }
                         }
                     }
                     Some(Ok(Message::Close(_))) => break,

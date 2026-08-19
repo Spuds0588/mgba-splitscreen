@@ -35,6 +35,7 @@ futures-util = "0.3"
 image = "0.24" # For potential frame processing/dumping
 once_cell = "1.18"
 axum = { version = "0.7", features = ["ws"] }
+libloading = "0.8" # Runtime dlopen of libasound for audio output (no system headers needed)
 
 # The emulation core (libmgba) is already built -O3 by build.rs, but the Rust
 # wrapper, the per-frame pixel conversion, and the Tauri/WebView glue were all

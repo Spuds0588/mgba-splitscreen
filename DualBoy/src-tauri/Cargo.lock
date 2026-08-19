@@ -980,6 +980,7 @@ dependencies = [
  "cmake",
  "futures-util",
  "image",
+ "libloading 0.8.9",
  "once_cell",
  "serde",
  "serde_json",

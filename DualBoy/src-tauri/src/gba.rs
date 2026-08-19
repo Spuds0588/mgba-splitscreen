@@ -1,11 +1,25 @@
 use std::ffi::CString;
 use crate::bindings;
 
+// mAudioBuffer is opaque in the bindings; the ring-drain helpers below are real
+// symbols in libmgba.a (src/util/audio-buffer.c) even though bindgen didn't
+// emit them. mAudioBufferRead reads whole interleaved frames and returns the
+// number of frames read; mAudioBufferAvailable reports how many frames are
+// queued.
+extern "C" {
+    fn mAudioBufferRead(buffer: *mut bindings::mAudioBuffer, samples: *mut i16, count: usize) -> usize;
+    fn mAudioBufferAvailable(buffer: *const bindings::mAudioBuffer) -> usize;
+}
+
 pub struct GbaInstance {
     pub id: u8,
     pub core: *mut bindings::mCore,
     pub is_running: bool,
     video_buffer: Vec<u32>,
+    /// Per-instance audio drain destination (interleaved stereo s16).
+    audio_buffer: Vec<i16>,
+    /// Diagnostic tick counter for throttled audio logging.
+    audio_dbg: u64,
 }
 
 impl GbaInstance {
@@ -21,8 +35,58 @@ impl GbaInstance {
                 core,
                 is_running: false,
                 video_buffer: vec![0u32; 240 * 160],
+                audio_buffer: Vec::new(),
+                audio_dbg: 0,
             }
         }
+    }
+
+    /// Enable the core's audio ring (32768 Hz stereo s16, always written by the
+    /// GBA audio mixer) and return how many interleaved stereo FRAMES queued
+    /// since the last drain. Call once per emulation tick. Returns an empty
+    /// slice when no ROM is loaded.
+    pub fn drain_audio(&mut self) -> &[i16] {
+        self.audio_buffer.clear();
+        let mut avail = 0usize;
+        let mut read = 0usize;
+        unsafe {
+            if !self.is_running {
+                return &self.audio_buffer;
+            }
+            let get = (*self.core).getAudioBuffer;
+            let Some(get) = get else {
+                return &self.audio_buffer;
+            };
+            let buf = get(self.core);
+            if buf.is_null() {
+                return &self.audio_buffer;
+            }
+            avail = mAudioBufferAvailable(buf);
+            if avail == 0 {
+                return &self.audio_buffer;
+            }
+            let count = avail.min(4096);
+            self.audio_buffer.resize(count * 2, 0);
+            read = mAudioBufferRead(buf, self.audio_buffer.as_mut_ptr(), count);
+            self.audio_buffer.truncate(read * 2);
+        }
+        // Throttled diagnostic: report ring fills + peak amplitude once per ~5s.
+        self.audio_dbg += 1;
+        if self.audio_dbg % 300 == 0 {
+            let peak = self
+                .audio_buffer
+                .iter()
+                .map(|s| s.unsigned_abs())
+                .max()
+                .unwrap_or(0);
+            let nonzero = self.audio_buffer.iter().filter(|s| **s != 0).count();
+            eprintln!(
+                "[AUDIO] core ring: avail={avail} read={read} frames -> {} samples, peak={peak}, nonzero={nonzero}/{}",
+                self.audio_buffer.len(),
+                self.audio_buffer.len()
+            );
+        }
+        &self.audio_buffer
     }
 
     /// Load a ROM and boot it. If `link_driver` is provided, it is attached to the
@@ -54,6 +118,12 @@ impl GbaInstance {
                     let _ = std::fs::remove_file(temp_name);
                     return false;
                 }
+            }
+
+            // Enable the core's audio ring so the mixer always writes samples;
+            // the frame loop drains it once per tick for playback/routing.
+            if let Some(set_size) = (*self.core).setAudioBufferSize {
+                set_size(self.core, 2048);
             }
 
             println!("[GBA {}] Step 2: Loading config...", self.id);
