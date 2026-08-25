@@ -46,6 +46,11 @@ both inside the Tauri desktop app and in a plain web browser.
 - **Turbo mode** (Q): fast-forward past 60 fps for grinding through menus/animations.
 - **Save import/export** per instance or as a set across all running instances.
 - **Web demo**: play in the browser with no install (frames + audio stream over WebSocket).
+  The static UI shell is hosted on
+  [GitHub Pages](https://spuds0588.github.io/mgba-splitscreen/); to actually play,
+  grab a `dualboy-web` binary from the latest
+  [Release](https://github.com/Spuds0588/mgba-splitscreen/releases) and open its
+  `http://127.0.0.1:8080` address.
 
 ## Controls
 
@@ -123,6 +128,29 @@ cargo run --bin dualboy-web -- --players 4   # 2, 3, or 4 players
 Load a ROM via the file picker; screens, controls, save states, and audio work the same
 as the desktop app.
 
+## Play in the browser (web version)
+
+The web UI is hosted on
+**[GitHub Pages](https://spuds0588.github.io/mgba-splitscreen/)** — you can open the
+link and see the launcher in your browser with no install. One important caveat: the
+hosted page is the *interface only*. GBA emulation runs in the `dualboy-web` backend
+(a Rust server that hosts the emulator cores and streams frames + audio to your
+browser), and browsers can't run that server on someone else's machine — it needs a
+host to emulate on.
+
+To actually play, download the `dualboy-web` binary for your OS from the
+[Releases](https://github.com/Spuds0588/mgba-splitscreen/releases) page, run it, and
+open <http://127.0.0.1:8080>:
+
+```bash
+./dualboy-web --players 2    # 2, 3, or 4 linked players
+# then open http://127.0.0.1:8080 in any browser on your network
+```
+
+Frames, audio, controls, save states, and the game library all work exactly as in the
+desktop app. (A future "hosted multiplayer" mode could relay a host's frames to remote
+players over WebRTC — see the roadmap.)
+
 ## Beta releases
 
 Beta builds are produced from version tags (`vX.Y.Z-beta.N`) by the
@@ -134,6 +162,10 @@ Beta builds are produced from version tags (`vX.Y.Z-beta.N`) by the
 | macOS | `dualboy_*.dmg` |
 | Windows | `dualboy_*.msi` (installer) |
 | Web | `dualboy-web-<os>-<arch>` static server binary + `dualboy-web-*.zip` |
+
+The web UI shell is also always live on
+[GitHub Pages](https://spuds0588.github.io/mgba-splitscreen/) (auto-deployed from
+`master` by [.github/workflows/pages.yml](.github/workflows/pages.yml)).
 
 To cut a beta:
 

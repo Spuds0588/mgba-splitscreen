@@ -5,10 +5,18 @@
     <link rel="stylesheet" href="styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DualBoy</title>
-    <script type="module" src="/main.js" defer></script>
+    <script type="module" src="main.js" defer></script>
   </head>
 
   <body>
+    <!-- Shown only when this page is served from a static host (e.g. GitHub
+         Pages) without the dualboy-web backend running. -->
+    <div id="hosted-note" class="hosted-note" hidden>
+      <strong>DualBoy web shell</strong> &mdash; this page is the UI only. To actually play, download the
+      <code>dualboy-web</code> binary for your OS from the
+      <a href="https://github.com/Spuds0588/mgba-splitscreen/releases" target="_blank" rel="noreferrer">Releases</a>
+      page, run it, and open <code>http://127.0.0.1:8080</code>.
+    </div>
     <!-- Traditional top menu bar. Mouse-driven; game keys never navigate it. -->
     <header class="menubar">
       <span class="brand">DualBoy</span>

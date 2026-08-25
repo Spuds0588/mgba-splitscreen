@@ -19,6 +19,27 @@ body {
   background: #0d0d0d;
 }
 
+/* Banner shown when the frontend is served from a static host without the
+   dualboy-web backend (e.g. GitHub Pages). */
+.hosted-note {
+  flex: 0 0 auto;
+  margin: 8px;
+  padding: 10px 14px;
+  border: 1px solid #8a6d3b;
+  border-radius: 6px;
+  background: #2d2417;
+  color: #e8c87a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.hosted-note code {
+  background: #1a1a1a;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.hosted-note a { color: #7ec8ff; }
+
 /* ---- Top menu bar ---- */
 .menubar {
   display: flex;

@@ -2130,6 +2130,11 @@ window.addEventListener('DOMContentLoaded', async () => {
       playerCount = 2;
     }
   }
+  // Hosted-shell banner: when served from a static host (e.g. GitHub Pages)
+  // there is no dualboy-web backend on this origin, so tell the user how to play.
+  if (!IS_TAURI && !['127.0.0.1', 'localhost'].includes(location.hostname)) {
+    document.getElementById('hosted-note').hidden = false;
+  }
   loadControls();
   loadHotkeys();
   refreshHotkeyLabels();

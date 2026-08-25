@@ -1,0 +1,40 @@
+# Publish the DualBoy web UI (static frontend) to GitHub Pages.
+#
+# Note: the web UI is only the shell -- playing a game requires the dualboy-web
+# backend (the Rust server that runs the emulator cores and streams frames +
+# audio). The hosted page explains how to get it; the backend itself is never
+# deployed, since it needs a machine to emulate on.
+name: Deploy web UI to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload frontend
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: DualBoy/src
+      - name: Deploy to Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
