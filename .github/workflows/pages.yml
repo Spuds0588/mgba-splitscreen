@@ -31,6 +31,9 @@ jobs:
         uses: actions/checkout@v4
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # Auto-enable GitHub Pages (Actions build type) on the first run.
+          enablement: true
       - name: Upload frontend
         uses: actions/upload-pages-artifact@v3
         with:
