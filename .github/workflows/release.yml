@@ -1,9 +1,11 @@
 name: Release beta builds
 
-# Cut a beta release by tagging a commit with a version tag (e.g. v0.1.0-beta.1).
-# The workflow builds the desktop app bundle (Tauri) plus the standalone web
-# server binary on Linux, macOS, and Windows and attaches them to a GitHub
-# Release marked as a prerelease.
+# Cut a release by tagging a commit with a version tag (e.g. v0.2.0-alpha.1).
+# Builds the desktop app bundle (Tauri) plus the standalone web server binary on
+# Linux, macOS, and Windows, then uploads everything to a GitHub Release marked
+# as a prerelease. A separate "release" job creates/updates the Release exactly
+# once (the matrix jobs only build + stash artifacts), which avoids the
+# tauri-action create-release 403 and concurrent-creation races.
 on:
   push:
     tags:
@@ -13,7 +15,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build:
     strategy:
       fail-fast: false
       matrix:
@@ -34,7 +36,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf libasound2-dev libpulse-dev
+          librsvg2-dev patchelf libasound2-dev libpulse-dev
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -53,39 +55,54 @@ jobs:
         working-directory: DualBoy
         run: npm ci
 
-      # Desktop bundle: tauri-action runs `npm run tauri build` and uploads the
-      # produced installer/bundle artifacts to the release.
       - name: Build desktop bundle (Tauri)
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "DualBoy ${{ github.ref_name }}"
-          releaseDraft: false
-          prerelease: true
+        working-directory: DualBoy
+        run: npm run tauri build
 
-      # Web server binary: a self-contained static server that streams frames +
-      # audio to browsers over HTTP/WebSocket. Uploaded per-platform so users can
-      # host it anywhere (it serves the frontend from DualBoy/src at runtime).
       - name: Build web server binary
         working-directory: DualBoy/src-tauri
         run: cargo build --release --bin dualboy-web
 
-      - name: Upload web server binary (Linux/macOS)
-        if: matrix.os != 'windows'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: |
-            DualBoy/src-tauri/target/release/dualboy-web
-          fail_on_unmatched_files: false
+      - name: Rename web binary per platform
+        shell: bash
+        run: |
+          cd DualBoy/src-tauri/target/release
+          case "${{ matrix.os }}" in
+            windows) mv dualboy-web.exe dualboy-web-windows-x64.exe ;;
+            macos)   mv dualboy-web dualboy-web-macos-x64 ;;
+            linux)   mv dualboy-web dualboy-web-linux-x64 ;;
+          esac
 
-      - name: Upload web server binary (Windows)
-        if: matrix.os == 'windows'
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            DualBoy/src-tauri/target/release/bundle/**
+            DualBoy/src-tauri/target/release/dualboy-web-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create/update release and upload assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: |
-            DualBoy/src-tauri/target/release/dualboy-web.exe
+          name: "DualBoy ${{ github.ref_name }}"
+          body: |
+            Prebuilt DualBoy binaries.
+
+            - **Desktop app** (Linux: .deb/.rpm/.AppImage, macOS: .dmg, Windows: .msi installer)
+            - **Web server** (`dualboy-web-<os>-x64`): run it, then open http://127.0.0.1:8080
+              to play in a browser. The static UI shell is also on
+              https://spuds0588.github.io/mgba-splitscreen/
+          prerelease: true
+          files: artifacts/**/*
           fail_on_unmatched_files: false

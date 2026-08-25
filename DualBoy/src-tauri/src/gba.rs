@@ -1,4 +1,4 @@
-use std::ffi::CString;
+use std::ffi::{CString, c_char};
 use crate::bindings;
 
 // mAudioBuffer is opaque in the bindings; the ring-drain helpers below are real
@@ -9,6 +9,9 @@ use crate::bindings;
 extern "C" {
     fn mAudioBufferRead(buffer: *mut bindings::mAudioBuffer, samples: *mut i16, count: usize) -> usize;
     fn mAudioBufferAvailable(buffer: *const bindings::mAudioBuffer) -> usize;
+    /// Declared in include/mgba/core/core.h but missing from the MSVC-generated
+    /// bindings; declare it explicitly so the build is portable.
+    fn mCorePreloadFile(core: *mut bindings::mCore, path: *const c_char) -> bool;
     /// The mCore struct is allocated with malloc by `GBACoreCreate`; free it the
     /// same way when the core was never initialized (see Drop below).
     fn free(ptr: *mut core::ffi::c_void);
@@ -153,7 +156,7 @@ impl GbaInstance {
             }
 
             println!("[GBA {}] Step 4: Preloading ROM file...", self.id);
-            if !bindings::mCorePreloadFile(self.core, c_path.as_ptr()) {
+            if !mCorePreloadFile(self.core, c_path.as_ptr()) {
                 println!("[GBA {}] mCorePreloadFile failed.", self.id);
                 let _ = std::fs::remove_file(temp_name);
                 return false;

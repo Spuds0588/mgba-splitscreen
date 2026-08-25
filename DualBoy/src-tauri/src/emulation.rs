@@ -117,6 +117,10 @@ fn ensure_logger() {
     use std::sync::Once;
     static INIT: Once = Once::new();
     INIT.call_once(|| unsafe {
+        // C stdout is fully buffered when redirected to a file, so log lines can be
+        // lost in a buffer on a hard crash. Make it unbuffered on Linux; on macOS and
+        // Windows `stdout` is a macro (not a bindgen variable), so skip the tweak.
+        #[cfg(target_os = "linux")]
         bindings::setvbuf(bindings::stdout, std::ptr::null_mut(), bindings::_IONBF as c_int, 0);
 
         let logger: *mut bindings::mStandardLogger =
@@ -137,6 +141,28 @@ fn ensure_logger() {
     });
 }
 
+/// va_list representation differs per platform in the generated bindings: on Linux
+/// bindgen exposes the glibc `__va_list_tag` struct, while macOS/Windows CRTs map
+/// `va_list` to `char*` (no such type exists in the bindings there).
+#[cfg(target_os = "linux")]
+type MLogVaList = *mut bindings::__va_list_tag;
+#[cfg(not(target_os = "linux"))]
+type MLogVaList = *mut core::ffi::c_char;
+
+#[cfg(not(target_os = "windows"))]
+unsafe fn log_vsnprintf(buf: *mut c_char, len: usize, format: *const c_char, args: MLogVaList) -> c_int {
+    bindings::vsnprintf(buf, len as std::os::raw::c_ulong, format, args)
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn log_vsnprintf(buf: *mut c_char, len: usize, format: *const c_char, args: MLogVaList) -> c_int {
+    // `vsnprintf` isn't in the MSVC bindings; it is a real CRT export since VS2015.
+    extern "C" {
+        fn vsnprintf(_Buffer: *mut c_char, _Count: usize, _Format: *const c_char, _ArgList: MLogVaList) -> c_int;
+    }
+    vsnprintf(buf, len, format, args)
+}
+
 /// mLogger callback: formats the message (mGBA passes a printf-style format + va_list),
 /// prints it to stdout, and forwards it to the on-screen overlay channel.
 unsafe extern "C" fn overlay_log(
@@ -144,18 +170,13 @@ unsafe extern "C" fn overlay_log(
     _category: c_int,
     _level: bindings::mLogLevel,
     format: *const c_char,
-    args: *mut bindings::__va_list_tag,
+    args: MLogVaList,
 ) {
     if format.is_null() {
         return;
     }
     let mut buf = [0i8; 2048];
-    let n = bindings::vsnprintf(
-        buf.as_mut_ptr(),
-        buf.len() as std::os::raw::c_ulong,
-        format,
-        args,
-    );
+    let n = log_vsnprintf(buf.as_mut_ptr(), buf.len(), format, args);
     if n <= 0 {
         return;
     }
