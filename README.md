@@ -138,9 +138,10 @@ hosted page is the *interface only*. GBA emulation runs in the `dualboy-web` bac
 browser), and browsers can't run that server on someone else's machine — it needs a
 host to emulate on.
 
-To actually play, download the `dualboy-web` binary for your OS from the
+To actually play, download the `dualboy-web-linux-x64` binary from the
 [Releases](https://github.com/Spuds0588/mgba-splitscreen/releases) page, run it, and
-open <http://127.0.0.1:8080>:
+open <http://127.0.0.1:8080> (the backend runs on any Linux machine; for Windows/macOS
+use the desktop app):
 
 ```bash
 ./dualboy-web --players 2    # 2, 3, or 4 linked players
@@ -161,7 +162,7 @@ Beta builds are produced from version tags (`vX.Y.Z-beta.N`) by the
 | Linux | `dualboy_*.deb` + `dualboy_*.AppImage` |
 | macOS | `dualboy_*.dmg` |
 | Windows | `dualboy_*.msi` (installer) |
-| Web | `dualboy-web-<os>-<arch>` static server binary + `dualboy-web-*.zip` |
+| Web | `dualboy-web-linux-x64` static server binary (self-host the backend; Windows/macOS users can run the desktop app) |
 
 The web UI shell is also always live on
 [GitHub Pages](https://spuds0588.github.io/mgba-splitscreen/) (auto-deployed from

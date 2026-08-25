@@ -59,28 +59,32 @@ jobs:
         working-directory: DualBoy
         run: npm run tauri build
 
-      - name: Build web server binary
+      - name: Build web server binary (Linux only)
+        if: matrix.os == 'linux'
         working-directory: DualBoy/src-tauri
         run: cargo build --release --bin dualboy-web
 
-      - name: Rename web binary per platform
+      - name: Rename web binary
+        if: matrix.os == 'linux'
         shell: bash
         run: |
           cd DualBoy/src-tauri/target/release
-          case "${{ matrix.os }}" in
-            windows) mv dualboy-web.exe dualboy-web-windows-x64.exe ;;
-            macos)   mv dualboy-web dualboy-web-macos-x64 ;;
-            linux)   mv dualboy-web dualboy-web-linux-x64 ;;
-          esac
+          mv dualboy-web dualboy-web-linux-x64
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: bundles-${{ matrix.os }}
           if-no-files-found: error
-          path: |
-            DualBoy/src-tauri/target/release/bundle/**
-            DualBoy/src-tauri/target/release/dualboy-web-*
+          path: DualBoy/src-tauri/target/release/bundle/**
+
+      - name: Upload web binary (Linux only)
+        if: matrix.os == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-linux
+          if-no-files-found: error
+          path: DualBoy/src-tauri/target/release/dualboy-web-linux-x64
 
   release:
     needs: build
