@@ -1,11 +1,12 @@
 name: Release beta builds
 
 # Cut a release by tagging a commit with a version tag (e.g. v0.2.0-alpha.1).
-# Builds the desktop app bundle (Tauri) plus the standalone web server binary on
-# Linux, macOS, and Windows, then uploads everything to a GitHub Release marked
-# as a prerelease. A separate "release" job creates/updates the Release exactly
-# once (the matrix jobs only build + stash artifacts), which avoids the
-# tauri-action create-release 403 and concurrent-creation races.
+# Builds the desktop app bundle (Tauri) on Linux, macOS, and Windows, then
+# uploads everything to a GitHub Release marked as a prerelease. A separate
+# "release" job creates/updates the Release exactly once (the matrix jobs only
+# build + stash artifacts), which avoids the tauri-action create-release 403
+# and concurrent-creation races. (The web version needs no release artifacts:
+# it's pure WASM served by GitHub Pages.)
 on:
   push:
     tags:
@@ -59,32 +60,12 @@ jobs:
         working-directory: DualBoy
         run: npm run tauri build
 
-      - name: Build web server binary (Linux only)
-        if: matrix.os == 'linux'
-        working-directory: DualBoy/src-tauri
-        run: cargo build --release --bin dualboy-web
-
-      - name: Rename web binary
-        if: matrix.os == 'linux'
-        shell: bash
-        run: |
-          cd DualBoy/src-tauri/target/release
-          mv dualboy-web dualboy-web-linux-x64
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: bundles-${{ matrix.os }}
           if-no-files-found: error
           path: DualBoy/src-tauri/target/release/bundle/**
-
-      - name: Upload web binary (Linux only)
-        if: matrix.os == 'linux'
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-linux
-          if-no-files-found: error
-          path: DualBoy/src-tauri/target/release/dualboy-web-linux-x64
 
   release:
     needs: build
@@ -104,8 +85,7 @@ jobs:
             Prebuilt DualBoy binaries.
 
             - **Desktop app** (Linux: .deb/.rpm/.AppImage, macOS: .dmg, Windows: .msi installer)
-            - **Web server** (`dualboy-web-<os>-x64`): run it, then open http://127.0.0.1:8080
-              to play in a browser. The static UI shell is also on
+            - **Web version**: fully in-browser, no install or backend needed —
               https://spuds0588.github.io/mgba-splitscreen/
           prerelease: true
           files: artifacts/**/*

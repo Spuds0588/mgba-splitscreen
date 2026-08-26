@@ -120,26 +120,14 @@ npm run tauri build      # production build (bundles .deb/.AppImage on Linux, et
 The first build compiles all of `libmgba` from source, which takes a few minutes and
 several GB of RAM; subsequent builds are incremental.
 
-### Web server build (browser play)
-
-A standalone server streams frames + audio to any browser for a network-shareable
-session:
-
-```bash
-cd DualBoy/src-tauri
-cargo run --bin dualboy-web -- --players 4   # 2, 3, or 4 players
-# then open http://127.0.0.1:8080 in a browser
-```
-
-Load a ROM via the file picker; screens, controls, save states, and audio work the same
-as the desktop app.
-
 ### In-browser (WebAssembly) build
 
-The GitHub Pages version needs no backend at all — the mGBA core is compiled to WASM
-and runs client-side. Rebuild it with `DualBoy/web/build.sh` (requires the Emscripten
-SDK; produces `DualBoy/web/dualboy-web.{js,wasm}`, which the script also copies into
-`DualBoy/src/` for deployment).
+The web version is fully client-side — the mGBA core is compiled to WASM and runs in
+the page; no backend is involved, so GitHub Pages (or any static host) can serve it.
+Rebuild the engine with `DualBoy/web/build.sh` (requires the Emscripten SDK; produces
+`DualBoy/web/dualboy-web.{js,wasm}`, which are committed and staged alongside
+`DualBoy/src` by the Pages workflow). The desktop app never ships or loads the WASM
+engine — it embeds only `DualBoy/src` and runs the native Rust backend.
 
 ## Play in the browser (web version)
 
@@ -152,9 +140,8 @@ and all players' screens, controls (keyboard + gamepad), save states, audio rout
 and view modes work identically.
 
 You can also self-host the same static site locally (`python3 -m http.server 8090 -d
-DualBoy/src`) or download a `dualboy-web` server binary from the
-[Releases](https://github.com/Spuds0588/mgba-splitscreen/releases) page for a
-network-shareable session. (A future "hosted multiplayer" mode could relay a host's
+DualBoy/src` — copy `DualBoy/web/dualboy-web.{js,wasm}` into `DualBoy/src/` first, or
+run `DualBoy/web/build.sh`). (A future "hosted multiplayer" mode could relay a host's
 frames to remote players over WebRTC — see the roadmap.)
 
 ## Beta releases
@@ -167,7 +154,7 @@ Beta builds are produced from version tags (`vX.Y.Z-beta.N`) by the
 | Linux | `dualboy_*.deb` + `dualboy_*.AppImage` |
 | macOS | `dualboy_*.dmg` |
 | Windows | `dualboy_*.msi` (installer) |
-| Web | `dualboy-web-linux-x64` static server binary (network-shareable session); the fully in-browser WebAssembly build is always live on GitHub Pages |
+| Web | no artifact needed — the fully in-browser WebAssembly build is always live on GitHub Pages |
 
 The fully playable web version is always live on
 [GitHub Pages](https://spuds0588.github.io/mgba-splitscreen/) (auto-deployed from
@@ -184,9 +171,6 @@ git push origin v0.1.0-beta.1
 
 To build a platform's bundle locally instead of via CI, run `npm run tauri build` on
 that platform (each platform must build its own bundle — no cross-compilation).
-
-The web server binary is also published per-platform; it needs no install and serves the
-browser frontend from `DualBoy/src` (see `.freebuff/run.md` for the runbook).
 
 ## Project status
 

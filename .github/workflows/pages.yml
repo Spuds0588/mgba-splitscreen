@@ -1,9 +1,6 @@
-# Publish the DualBoy web UI (static frontend) to GitHub Pages.
-#
-# Note: the web UI is only the shell -- playing a game requires the dualboy-web
-# backend (the Rust server that runs the emulator cores and streams frames +
-# audio). The hosted page explains how to get it; the backend itself is never
-# deployed, since it needs a machine to emulate on.
+# Publish the DualBoy web UI to GitHub Pages. The page is fully playable in
+# the browser: it ships the WASM engine (web/dualboy-web.{js,wasm}) alongside
+# the frontend, so no backend is needed.
 name: Deploy web UI to GitHub Pages
 
 on:
@@ -34,10 +31,15 @@ jobs:
         with:
           # Auto-enable GitHub Pages (Actions build type) on the first run.
           enablement: true
+      - name: Stage frontend + WASM engine
+        run: |
+          mkdir -p staged
+          cp -r DualBoy/src/. staged/
+          cp DualBoy/web/dualboy-web.js DualBoy/web/dualboy-web.wasm staged/
       - name: Upload frontend
         uses: actions/upload-pages-artifact@v3
         with:
-          path: DualBoy/src
+          path: staged
       - name: Deploy to Pages
         id: deployment
         uses: actions/deploy-pages@v4

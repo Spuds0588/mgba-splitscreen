@@ -9,11 +9,11 @@
   </head>
 
   <body>
-    <!-- Shown only when neither the in-browser WASM engine nor the dualboy-web
-         backend could start. Normally this page runs fully client-side. -->
+    <!-- Shown only when the in-browser WASM engine fails to start. Normally
+         this page runs fully client-side with no backend. -->
     <div id="hosted-note" class="hosted-note" hidden>
       <strong>DualBoy could not start its engine.</strong> The in-browser WebAssembly core failed to
-      load and no <code>dualboy-web</code> backend is reachable. Try reloading the page, or download the
+      load. Try reloading the page, or download the
       <a href="https://github.com/Spuds0588/mgba-splitscreen/releases" target="_blank" rel="noreferrer">desktop app</a>.
     </div>
     <!-- Traditional top menu bar. Mouse-driven; game keys never navigate it. -->

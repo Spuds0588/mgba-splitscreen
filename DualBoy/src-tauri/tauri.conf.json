@@ -4,7 +4,8 @@
   "version": "0.2.0-alpha.1",
   "identifier": "com.coreyb.dualboy",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../src",
+    "beforeBuildCommand": "node -e \"const fs=require('fs'),p=require('path');let d=process.cwd();for(;;){if(fs.existsSync(p.join(d,'src-tauri','tauri.conf.json'))){for(const f of ['dualboy-web.js','dualboy-web.wasm','dualboy-web-dbg.js','dualboy-web-dbg.wasm']){try{fs.unlinkSync(p.join(d,'src',f))}catch(e){}}break}const up=p.dirname(d);if(up===d)break;d=up}\""
   },
   "app": {
     "withGlobalTauri": true,

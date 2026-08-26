@@ -13,8 +13,8 @@ streaming, input mapping, save management, and the UI.
 
 ## Repo layout
 
-- `DualBoy/` — the application (a Tauri v2 app; the same frontend is served by a
-  standalone web server for browser play).
+- `DualBoy/` — the application (a Tauri v2 app; the web version runs the same
+  frontend with the mGBA core compiled to WASM, fully in the browser).
 - Everything else — upstream mGBA source, compiled into `libmgba` by
   `DualBoy/src-tauri/build.rs`.
 
@@ -34,17 +34,20 @@ cd DualBoy/src-tauri
 # Desktop app (a window on your display)
 cargo build --release
 ./target/release/dualboy
-
-# Browser demo (open http://127.0.0.1:8080)
-cargo run --release --bin dualboy-web -- --players 4 --fps 30
 ```
+
+# Web version (no backend): serve DualBoy/src statically, with the WASM engine
+# staged in (web/build.sh does this):
+#   cp DualBoy/web/dualboy-web.{js,wasm} DualBoy/src/
+#   python3 -m http.server 8090 -d DualBoy/src/   # open http://127.0.0.1:8090
 
 **Always use `--release`.** The emulation core is built `-O3` either way, but the Rust
 frame pipeline and UI glue are ~10x slower in a debug build (the debug desktop binary
 is ~223 MB vs ~11 MB release).
 
 Load a ROM with **File → Load ROM…** (desktop: native file dialog; browser: file
-picker). `Test Roms/` (gitignored) holds the owner's legal ROMs for testing.
+picker; web ROM bytes are cached in IndexedDB so recents relaunch). `Test Roms/`
+(gitignored) holds the owner's legal ROMs for testing.
 
 ## Controls
 

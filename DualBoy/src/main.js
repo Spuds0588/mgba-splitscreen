@@ -288,10 +288,10 @@ let viewMode = 'grid';
 let focusPlayer = 0;
 
 // ---- In-browser engine (fully client-side, no backend) ----
-// When no dualboy-web backend is reachable (e.g. GitHub Pages), the mGBA core
-// compiled to WebAssembly runs right here in the page: all N linked instances
-// step cooperatively on the JS thread through the same lockstep coordinator
-// the desktop app uses. Every backend call below branches on `wasmMode`.
+// The mGBA core compiled to WebAssembly runs right here in the page: all N
+// linked instances step cooperatively on the JS thread through the same
+// lockstep coordinator the desktop app uses. Every backend call below branches
+// on `wasmMode` (browser builds always use it; the desktop never does).
 let wasmMode = false;
 let wasmModule = null;     // emscripten module (Module["_db_*"] + HEAPU8)
 let wasmStates = [];       // per-player quick-save blobs (Uint8Array)
@@ -1900,9 +1900,6 @@ async function setPlayerCount(n) {
   } else if (IS_TAURI) {
     await invoke('set_player_count', { n });
     playerCount = await invoke('player_count');
-  } else {
-    await fetch('/set_player_count', { method: 'POST', body: String(n) });
-    playerCount = parseInt(await (await fetch('/player_count')).text(), 10) || n;
   }
   resetRuntimeState();
   initScreens(playerCount);
@@ -2308,10 +2305,12 @@ function wasmStopLoop() {
   }
 }
 
-// ---- WebSocket (frames; also input in browser mode) ----
+// ---- WebSocket (desktop only: streams video/audio frames from the Rust
+// backend on 127.0.0.1:8088). ----
 
 function connectWebSocket() {
-  const url = IS_TAURI ? 'ws://127.0.0.1:8088' : 'ws://127.0.0.1:8080/ws';
+  // Desktop-only: the Tauri backend streams frames over this WebSocket.
+  const url = 'ws://127.0.0.1:8088';
   socket = new WebSocket(url);
   socket.binaryType = 'arraybuffer';
   socket.onmessage = (event) => {
@@ -2333,38 +2332,20 @@ window.addEventListener('DOMContentLoaded', async () => {
       playerCount = 2;
     }
   } else {
-    // Probe for the dualboy-web backend. If it's absent (GitHub Pages, or the
-    // binary isn't running), fall back to the in-browser WASM engine so the
-    // page is fully playable with no server at all.
-    let backendUp = false;
+    // Browser builds are always fully client-side: the WASM core is the only
+    // engine. No backend is expected (GitHub Pages / static hosting), so we go
+    // straight to it instead of probing for a server.
+    playerCount = 2;
+    wasmMode = true;
     try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 1500);
-      const resp = await fetch('/player_count', { signal: ctrl.signal });
-      clearTimeout(t);
-      backendUp = resp.ok;
-    } catch {
-      backendUp = false;
-    }
-    if (backendUp) {
-      try {
-        playerCount = parseInt(await (await fetch('/player_count')).text(), 10) || 2;
-      } catch {
-        playerCount = 2;
-      }
-    } else {
-      playerCount = 2;
-      wasmMode = true;
-      try {
-        await loadWasmModule();
-        wasmModule._db_init(playerCount);
-        setStatus('In-browser engine ready \u2014 2 linked GBAs (load a ROM)');
-      } catch (err) {
-        // Engine failed AND no backend: only now show the hosted-shell notice.
-        wasmMode = false;
-        document.getElementById('hosted-note').hidden = false;
-        setStatus('Engine failed to start: ' + err);
-      }
+      await loadWasmModule();
+      wasmModule._db_init(playerCount);
+      setStatus('In-browser engine ready \u2014 2 linked GBAs (load a ROM)');
+    } catch (err) {
+      // Engine failed: only now show the hosted-shell notice.
+      wasmMode = false;
+      document.getElementById('hosted-note').hidden = false;
+      setStatus('Engine failed to start: ' + err);
     }
   }
   loadControls();
@@ -2471,9 +2452,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Gamepad polling runs on the animation frame; controller slot i -> player i+1.
   pollGamepads();
 
-  if (wasmMode) {
-    wasmStartLoop();
-  } else {
+  // Desktop (Tauri) streams frames over the WebSocket backend; the browser
+  // build is always the in-browser WASM engine.
+  if (IS_TAURI) {
     connectWebSocket();
+  } else {
+    wasmStartLoop();
   }
 });

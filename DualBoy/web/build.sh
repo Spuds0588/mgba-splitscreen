@@ -3,8 +3,13 @@
 #
 # Produces (in DualBoy/web/):
 #   dualboy_web.c   - the bridge source (committed)
-#   dualboy-web.js  - emscripten glue + exports (committed, deployed as-is)
-#   dualboy-web.wasm- the compiled core (committed, deployed as-is)
+#   dualboy-web.js  - emscripten glue + exports (tracked; GitHub Pages
+#                     stages these alongside DualBoy/src at deploy time)
+#   dualboy-web.wasm- the compiled core (tracked; deployed as-is)
+#
+# The desktop (Tauri) app NEVER ships these: it embeds only DualBoy/src and
+# runs the native Rust backend. The copy into src/ below is a gitignored
+# convenience for local previews of the web UI.
 #
 # Prereqs: Emscripten SDK on PATH (emsdk_env.sh sourced).
 #
@@ -49,7 +54,7 @@ emcc -O3 -D_GNU_SOURCE -DNDEBUG $DEFINES \
   -sSTRICT=0 \
   DualBoy/web/dualboy_web.c "$BUILD_DIR/libmgba.a" -o DualBoy/web/dualboy-web.js
 
-# 3. Deploy copies into the frontend bundle (desktop embeds DualBoy/src; the
-#    web + GitHub Pages serve it directly).
+# 3. Local-preview copies into src/ (gitignored, so the desktop bundle stays
+#    wasm-free; GitHub Pages stages from web/ instead).
 cp DualBoy/web/dualboy-web.js DualBoy/web/dualboy-web.wasm DualBoy/src/
-echo "Built DualBoy/web/dualboy-web.{js,wasm} and copied into DualBoy/src/"
+echo "Built DualBoy/web/dualboy-web.{js,wasm} and copied into DualBoy/src/ (gitignored, local preview only)"

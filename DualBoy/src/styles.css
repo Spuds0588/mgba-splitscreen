@@ -19,8 +19,7 @@ body {
   background: #0d0d0d;
 }
 
-/* Banner shown when the frontend is served from a static host without the
-   dualboy-web backend (e.g. GitHub Pages). */
+/* Banner shown only when the in-browser WASM engine fails to load. */
 .hosted-note {
   flex: 0 0 auto;
   margin: 8px;
