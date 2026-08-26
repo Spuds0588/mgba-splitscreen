@@ -2274,14 +2274,21 @@ function wasmFrame(now) {
       M._db_run_frame();
     }
   } else {
+    // Fixed-timestep 60 fps: the accumulator tracks real time and each pass
+    // runs as many game frames as are owed. A heavy frame (link handshakes,
+    // DMA bursts) simply delays the display; game time is NEVER dropped — the
+    // old `wasmAccum = 0` reset below threw away up to 4 frames of progress
+    // whenever the tab fell behind, making slowdowns permanent instead of
+    // transient. The ran<6 cap only bounds a single rAF's catch-up work; the
+    // accumulator clamp is belt-and-suspenders after a long stall.
     wasmAccum += delta;
     let ran = 0;
-    while (wasmAccum >= FRAME_MS && ran < 4) {
+    while (wasmAccum >= FRAME_MS && ran < 6) {
       if (!paused) M._db_run_frame();
       wasmAccum -= FRAME_MS;
       ran++;
     }
-    if (wasmAccum >= FRAME_MS * 4) wasmAccum = 0; // too far behind: reset
+    if (wasmAccum > FRAME_MS * 6) wasmAccum = FRAME_MS * 6;
   }
   wasmRenderVideo();
   if (!turboOn) wasmPumpAudio();

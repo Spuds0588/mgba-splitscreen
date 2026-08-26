@@ -36,12 +36,14 @@ emcmake cmake -S . -B "$BUILD_DIR" \
 emmake make -C "$BUILD_DIR" -j"$(nproc)" >/dev/null
 
 # 2. Link the bridge + libmgba into the module. Layout defines MUST match step 1.
+# Fixed heap (no memory-growth bounds checks in every access) sized for 4 cores
+# plus the largest (32MB) ROM copies: 4x32MB + states + core state.
 emcc -O3 -D_GNU_SOURCE -DNDEBUG $DEFINES \
   -Iinclude -I"$BUILD_DIR/include" -I"$BUILD_DIR" \
   -sENVIRONMENT=web \
-  -sEXPORTED_FUNCTIONS=_db_init,_db_load_rom,_db_run_frame,_db_get_video,_db_set_keys,_db_get_audio,_db_audio_frames,_db_set_audio_source,_db_save_state,_db_state_ptr,_db_load_state,_db_load_state_bytes,_db_quit,_db_enable_debug,_malloc,_free,_fflush \
+  -sEXPORTED_FUNCTIONS=_db_init,_db_load_rom,_db_run_frame,_db_get_video,_db_set_keys,_db_get_audio,_db_audio_frames,_db_set_audio_source,_db_save_state,_db_state_ptr,_db_load_state,_db_load_state_bytes,_db_quit,_db_enable_debug,_db_get_stats,_malloc,_free,_fflush \
   -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,HEAP8,HEAP16,HEAPU8,HEAP32,HEAPU32,HEAP64 \
-  -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=67108864 -sSTACK_SIZE=1048576 \
+  -sALLOW_MEMORY_GROWTH=0 -sINITIAL_MEMORY=268435456 -sSTACK_SIZE=1048576 \
   -sMODULARIZE=1 -sEXPORT_NAME=DualBoyWasm \
   -sNO_EXIT_RUNTIME=1 -sERROR_ON_UNDEFINED_SYMBOLS=1 -sASSERTIONS=0 \
   -sSTRICT=0 \

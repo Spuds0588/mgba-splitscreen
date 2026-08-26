@@ -59,26 +59,49 @@ struct Player {
 	uint8_t rgba[FRAME_PIXELS * 4];
 };
 
-/* Optional full-debug logger (mGBA DEBUG level) for diagnosing the lockstep
- * link. Off by default; call db_enable_debug() from JS to turn on. Every mLOG
- * line lands in the browser console (stdout -> console.log). */
+/* Logging.
+ *
+ * mGBA's mLog() falls back to printf/vprintf when NO logger is installed, which
+ * formats AND prints every message — including the lockstep driver's DEBUG
+ * chatter on every transfer event. On the web build that meant hundreds of
+ * console.log calls per second during link-heavy play (the FS linking screen),
+ * and browser console output is expensive, tanking the frame rate exactly when
+ * the link is busiest. So we always install a silent logger: the filter test is
+ * a cheap bitmask, DEBUG/INFO are suppressed by default, and db_enable_debug()
+ * flips the filter to mLOG_ALL when you want the lockstep trace in the console.
+ */
 static struct mStandardLogger g_logger;
-static bool g_debug = false;
+static bool g_logger_ready = false;
+
+/* Install the logger if needed and set its filter level. db_init always wants
+ * the silent defaults, but must NOT clobber a level db_enable_debug() already
+ * raised (call order isn't guaranteed), so force=false only installs the first
+ * time and force=true always sets the level. */
+static void install_logger(int levels, bool force) {
+	if (!g_logger_ready) {
+		mStandardLoggerInit(&g_logger);
+		g_logger.logToStdout = true;
+		mLogSetDefaultLogger(&g_logger.d);
+		g_logger_ready = true;
+	}
+	if (force || g_logger.d.filter->defaultLevels == 0) {
+		g_logger.d.filter->defaultLevels = levels;
+	}
+}
 
 EMSCRIPTEN_KEEPALIVE
 void db_enable_debug(void) {
-	if (g_debug) {
-		return;
-	}
-	mStandardLoggerInit(&g_logger);
-	g_logger.logToStdout = true;
-	g_logger.d.filter->defaultLevels = mLOG_ALL;
-	mLogSetDefaultLogger(&g_logger.d);
-	g_debug = true;
+	install_logger(mLOG_ALL, true);
 }
 
 static struct Player g_players[MAX_PLAYERS];
 static int g_count = 0;
+
+/* Per-frame stepping stats, for profiling the cooperative loop. */
+static int g_stat_steps = 0;
+static int g_stat_sleeps = 0;
+static int g_stat_wakes = 0;
+static int64_t g_stat_cycles = 0;
 
 /* Last completed frame counter per player, for tear-free snapshots in
  * db_run_frame (the live buffer is only complete between finishFrame and the
@@ -100,13 +123,18 @@ static int user_index(struct mLockstepUser* u) {
 }
 static void user_sleep(struct mLockstepUser* u) {
 	g_asleep[user_index(u)] = true;
+	++g_stat_sleeps;
 }
 static void user_wake(struct mLockstepUser* u) {
 	g_asleep[user_index(u)] = false;
+	++g_stat_wakes;
 }
 
 EMSCRIPTEN_KEEPALIVE
 void db_init(int count) {
+	/* Silent-by-default logger: suppress DEBUG/INFO so mLog never falls back to
+	 * printf/vprintf (see the logging note above). WARN/ERROR/FATAL still pass. */
+	install_logger(mLOG_WARN | mLOG_ERROR | mLOG_FATAL | mLOG_GAME_ERROR, false);
 	g_count = count < 1 ? 1 : (count > MAX_PLAYERS ? MAX_PLAYERS : count);
 	memset(g_players, 0, sizeof(g_players));
 	memset(g_asleep, 0, sizeof(g_asleep));
@@ -202,6 +230,10 @@ void db_run_frame(void) {
 	for (int i = 0; i < g_count; ++i) {
 		budgets[i] = FRAME_CYCLES;
 	}
+	g_stat_steps = 0;
+	g_stat_sleeps = 0;
+	g_stat_wakes = 0;
+	g_stat_cycles = 0;
 	bool made_progress = true;
 	int steps = 0;
 	while (made_progress && steps < 100000) {
@@ -219,9 +251,11 @@ void db_run_frame(void) {
 				delta = 1;
 			}
 			budgets[i] -= delta;
+			g_stat_cycles += delta;
 			++steps;
 		}
 	}
+	g_stat_steps = steps;
 
 	/* Pack each player's latest COMPLETED frame as RGBA8888 for direct
 	 * putImageData use. A player that ends the tick mid-frame keeps its last
@@ -427,6 +461,16 @@ int db_load_state_bytes(int player, const uint8_t* data, size_t size) {
 		return -1;
 	}
 	return g_players[player].core->loadState(g_players[player].core, data) ? 0 : -3;
+}
+
+/* Stepping stats for the most recent db_run_frame: loop iterations, lockstep
+ * sleep/wake counts (transfer rendezvous activity), and emulated cycles. */
+EMSCRIPTEN_KEEPALIVE
+void db_get_stats(int out[4]) {
+	out[0] = g_stat_steps;
+	out[1] = g_stat_sleeps;
+	out[2] = g_stat_wakes;
+	out[3] = (int) g_stat_cycles;
 }
 
 EMSCRIPTEN_KEEPALIVE
