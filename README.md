@@ -1,5 +1,11 @@
 # DualBoy
 
+> ## 🕹️ [Try it in your browser — no install](https://spuds0588.github.io/mgba-splitscreen/)
+>
+> The full emulator runs in-browser via WebAssembly: pick a ROM, choose 1–4 linked
+> players, and play. (A ROM is required to play; use the **Games Library** or
+> **File → Load ROM**.)
+
 DualBoy is a **split-screen Game Boy Advance emulator**: run multiple GBA instances
 side by side, linked together over a virtual link cable, so two to four players can
 play multiplayer GBA games (trading, link battles, co-op, etc.) on a single machine —
@@ -45,12 +51,11 @@ both inside the Tauri desktop app and in a plain web browser.
   image, per-player outline toggles, and a toggleable debug log are all in the View menu.
 - **Turbo mode** (Q): fast-forward past 60 fps for grinding through menus/animations.
 - **Save import/export** per instance or as a set across all running instances.
-- **Web demo**: play in the browser with no install (frames + audio stream over WebSocket).
-  The static UI shell is hosted on
-  [GitHub Pages](https://spuds0588.github.io/mgba-splitscreen/); to actually play,
-  grab a `dualboy-web` binary from the latest
-  [Release](https://github.com/Spuds0588/mgba-splitscreen/releases) and open its
-  `http://127.0.0.1:8080` address.
+- **Web version**: play fully in the browser with no install. The mGBA core is compiled
+  to WebAssembly and runs client-side (all 1–4 linked instances step cooperatively on
+  the page), so the
+  [GitHub Pages](https://spuds0588.github.io/mgba-splitscreen/) site is a real,
+  playable emulator — no server, no download.
 
 ## Controls
 
@@ -117,7 +122,8 @@ several GB of RAM; subsequent builds are incremental.
 
 ### Web server build (browser play)
 
-A standalone server streams frames + audio to any browser — no install needed:
+A standalone server streams frames + audio to any browser for a network-shareable
+session:
 
 ```bash
 cd DualBoy/src-tauri
@@ -128,29 +134,28 @@ cargo run --bin dualboy-web -- --players 4   # 2, 3, or 4 players
 Load a ROM via the file picker; screens, controls, save states, and audio work the same
 as the desktop app.
 
+### In-browser (WebAssembly) build
+
+The GitHub Pages version needs no backend at all — the mGBA core is compiled to WASM
+and runs client-side. Rebuild it with `DualBoy/web/build.sh` (requires the Emscripten
+SDK; produces `DualBoy/web/dualboy-web.{js,wasm}`, which the script also copies into
+`DualBoy/src/` for deployment).
+
 ## Play in the browser (web version)
 
-The web UI is hosted on
-**[GitHub Pages](https://spuds0588.github.io/mgba-splitscreen/)** — you can open the
-link and see the launcher in your browser with no install. One important caveat: the
-hosted page is the *interface only*. GBA emulation runs in the `dualboy-web` backend
-(a Rust server that hosts the emulator cores and streams frames + audio to your
-browser), and browsers can't run that server on someone else's machine — it needs a
-host to emulate on.
+Open **[https://spuds0588.github.io/mgba-splitscreen/](https://spuds0588.github.io/mgba-splitscreen/)**
+and you get a complete, playable emulator with **no install and no server**: the mGBA
+core is compiled to WebAssembly and runs entirely on your machine, in the tab. The
+link cable works exactly like the desktop app — run 2, 3, or 4 linked instances with
+the **Players** menu, load a ROM (from the **Games Library** or **File → Load ROM**),
+and all players' screens, controls (keyboard + gamepad), save states, audio routing,
+and view modes work identically.
 
-To actually play, download the `dualboy-web-linux-x64` binary from the
-[Releases](https://github.com/Spuds0588/mgba-splitscreen/releases) page, run it, and
-open <http://127.0.0.1:8080> (the backend runs on any Linux machine; for Windows/macOS
-use the desktop app):
-
-```bash
-./dualboy-web --players 2    # 2, 3, or 4 linked players
-# then open http://127.0.0.1:8080 in any browser on your network
-```
-
-Frames, audio, controls, save states, and the game library all work exactly as in the
-desktop app. (A future "hosted multiplayer" mode could relay a host's frames to remote
-players over WebRTC — see the roadmap.)
+You can also self-host the same static site locally (`python3 -m http.server 8090 -d
+DualBoy/src`) or download a `dualboy-web` server binary from the
+[Releases](https://github.com/Spuds0588/mgba-splitscreen/releases) page for a
+network-shareable session. (A future "hosted multiplayer" mode could relay a host's
+frames to remote players over WebRTC — see the roadmap.)
 
 ## Beta releases
 
@@ -162,9 +167,9 @@ Beta builds are produced from version tags (`vX.Y.Z-beta.N`) by the
 | Linux | `dualboy_*.deb` + `dualboy_*.AppImage` |
 | macOS | `dualboy_*.dmg` |
 | Windows | `dualboy_*.msi` (installer) |
-| Web | `dualboy-web-linux-x64` static server binary (self-host the backend; Windows/macOS users can run the desktop app) |
+| Web | `dualboy-web-linux-x64` static server binary (network-shareable session); the fully in-browser WebAssembly build is always live on GitHub Pages |
 
-The web UI shell is also always live on
+The fully playable web version is always live on
 [GitHub Pages](https://spuds0588.github.io/mgba-splitscreen/) (auto-deployed from
 `master` by [.github/workflows/pages.yml](.github/workflows/pages.yml)).
 
