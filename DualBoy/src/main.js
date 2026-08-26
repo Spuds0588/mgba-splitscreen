@@ -287,6 +287,19 @@ let debugOn = false; // Debug overlay is off by default (View menu toggles it).
 let viewMode = 'grid';
 let focusPlayer = 0;
 
+// ---- In-browser engine (fully client-side, no backend) ----
+// When no dualboy-web backend is reachable (e.g. GitHub Pages), the mGBA core
+// compiled to WebAssembly runs right here in the page: all N linked instances
+// step cooperatively on the JS thread through the same lockstep coordinator
+// the desktop app uses. Every backend call below branches on `wasmMode`.
+let wasmMode = false;
+let wasmModule = null;     // emscripten module (Module["_db_*"] + HEAPU8)
+let wasmStates = [];       // per-player quick-save blobs (Uint8Array)
+let wasmLoopId = 0;        // requestAnimationFrame id
+let wasmLast = 0;          // last rAF timestamp
+let wasmAccum = 0;         // fixed-timestep accumulator (ms) for 60fps pacing
+const FRAME_MS = 1000 / 60;
+
 function setStatus(text) {
   document.getElementById('status').textContent = text;
 }
@@ -330,7 +343,11 @@ function highlightTurbo(on) {
 
 async function toggleTurbo() {
   turboOn = !turboOn;
-  if (IS_TAURI) {
+  if (wasmMode) {
+    // The frame loop honors the flag; flush buffered audio so fast-forwarded
+    // sound doesn't burst out when turbo is released.
+    if (!turboOn) wasmFlushAudio();
+  } else if (IS_TAURI) {
     await invoke('set_turbo', { enabled: turboOn });
   } else if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'turbo', enabled: turboOn }));
@@ -348,7 +365,9 @@ function highlightPause(on) {
 
 async function togglePause() {
   paused = !paused;
-  if (IS_TAURI) {
+  if (wasmMode) {
+    // The frame loop freezes all cores while paused; nothing to send.
+  } else if (IS_TAURI) {
     await invoke('set_paused', { paused });
   } else if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'pause', paused }));
@@ -394,7 +413,10 @@ function highlightAudio(n) {
 
 async function setAudioSource(n) {
   audioSource = n;
-  if (IS_TAURI) {
+  if (wasmMode) {
+    wasmModule._db_set_audio_source(n);
+    if (n === 0) wasmFlushAudio();
+  } else if (IS_TAURI) {
     await invoke('set_audio_source', { source: n });
   } else if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'audio_source', source: n }));
@@ -415,7 +437,13 @@ function clearScreens() {
 
 async function quitGame() {
   closeMenus();
-  if (IS_TAURI) {
+  if (wasmMode) {
+    wasmModule._db_quit();
+    wasmStates = [];
+    // Re-create empty cores so the loop keeps idling cheaply; the next ROM
+    // load re-arms them (mirrors the backend's recreate-on-quit).
+    wasmModule._db_init(playerCount);
+  } else if (IS_TAURI) {
     await invoke('quit_game');
   } else if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'quit_game' }));
@@ -431,6 +459,19 @@ async function quitGame() {
 
 async function quickSaveState() {
   closeMenus();
+  if (wasmMode) {
+    wasmStates = [];
+    const M = wasmModule;
+    let ok = playerCount > 0;
+    for (let i = 0; i < playerCount; i++) {
+      const sz = M._db_save_state(i);
+      if (!sz) { ok = false; break; }
+      const ptr = M._db_state_ptr();
+      wasmStates.push(new Uint8Array(M.HEAPU8.slice(ptr, ptr + sz)));
+    }
+    setStatus(ok ? `Quick state saved (${wasmStates.length} player${wasmStates.length === 1 ? '' : 's'})` : 'Save state failed');
+    return;
+  }
   if (IS_TAURI) {
     try {
       await invoke('save_state');
@@ -446,6 +487,22 @@ async function quickSaveState() {
 
 async function quickLoadState() {
   closeMenus();
+  if (wasmMode) {
+    const M = wasmModule;
+    if (!wasmStates.length) { setStatus('No quick state to load'); return; }
+    let ok = true;
+    for (let i = 0; i < Math.min(playerCount, wasmStates.length); i++) {
+      const blob = wasmStates[i];
+      const ptr = M._malloc(blob.length);
+      if (!ptr) { ok = false; break; }
+      M.HEAPU8.set(blob, ptr);
+      const rc = M._db_load_state_bytes(i, ptr, blob.length);
+      M._free(ptr);
+      if (rc !== 0) { ok = false; break; }
+    }
+    setStatus(ok ? 'Quick state loaded (F7)' : 'Load state failed');
+    return;
+  }
   if (IS_TAURI) {
     try {
       await invoke('load_state');
@@ -777,7 +834,10 @@ function loadDebugToggle() {
 }
 
 async function setKeys(player, keys) {
-  if (IS_TAURI) {
+  if (wasmMode) {
+    // Frontend keys are 1-indexed; the bridge expects 0-indexed players.
+    wasmModule._db_set_keys(player - 1, keys);
+  } else if (IS_TAURI) {
     await invoke('set_keys', { player, keys });
   } else if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'keys', player, keys }));
@@ -1139,6 +1199,20 @@ async function loadGamePath(path, name, boxArtPath) {
 
 async function loadGameFile(file, name) {
   setStatus(`Loading: ${name}`);
+  if (wasmMode) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const ok = wasmLoadRomBytes(bytes) === 0;
+    if (ok) resetRuntimeState();
+    setStatus(ok ? `Running: ${name}` : 'Error: ROM load failed in browser engine');
+    let key = null;
+    if (ok) {
+      key = `rom_${name}`;
+      try { await cacheGameBytes(key, name, bytes); } catch (e) { key = null; }
+    }
+    recordRecent(name, null, null, key);
+    closeLibrary();
+    return;
+  }
   const resp = await fetch('/load_rom', { method: 'POST', body: file });
   if (resp.ok) resetRuntimeState();
   setStatus(resp.ok ? `Running: ${name}` : 'Error: ' + (await resp.text()));
@@ -1324,9 +1398,15 @@ async function startGameWithPlayers(n) {
     const cached = await getCachedGame(g.key);
     if (cached) {
       setStatus(`Loading: ${g.name}`);
-      const resp = await fetch('/load_rom', { method: 'POST', body: cached.bytes });
-      if (resp.ok) resetRuntimeState();
-      setStatus(resp.ok ? `Running: ${g.name}` : 'Error: ' + (await resp.text()));
+      if (wasmMode) {
+        const ok = wasmLoadRomBytes(cached.bytes) === 0;
+        if (ok) resetRuntimeState();
+        setStatus(ok ? `Running: ${g.name}` : 'Error: ROM load failed');
+      } else {
+        const resp = await fetch('/load_rom', { method: 'POST', body: cached.bytes });
+        if (resp.ok) resetRuntimeState();
+        setStatus(resp.ok ? `Running: ${g.name}` : 'Error: ' + (await resp.text()));
+      }
       recordRecent(g.name, null, null, g.key);
       closeLibrary();
     } else {
@@ -1814,7 +1894,10 @@ function highlightPlayersMenu(count) {
 
 async function setPlayerCount(n) {
   if (n < 1 || n > 4) return;
-  if (IS_TAURI) {
+  if (wasmMode) {
+    wasmModule._db_init(n);
+    playerCount = n;
+  } else if (IS_TAURI) {
     await invoke('set_player_count', { n });
     playerCount = await invoke('player_count');
   } else {
@@ -1854,12 +1937,26 @@ function pickRomBrowser() {
   input.onchange = async () => {
     const file = input.files[0];
     if (!file) return;
+    const name = file.name.replace(/\.[^.]+$/, '');
     setStatus('Loading: ' + file.name);
+    if (wasmMode) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const ok = wasmLoadRomBytes(bytes) === 0;
+      if (ok) resetRuntimeState();
+      setStatus(ok ? 'Running: ' + file.name : 'Error: ROM load failed');
+      let key = null;
+      if (ok) {
+        key = `rom_${name}`;
+        try { await cacheGameBytes(key, name, bytes); } catch (e) { key = null; }
+      }
+      recordRecent(name, null, null, key);
+      closeMenus();
+      return;
+    }
     const resp = await fetch('/load_rom', { method: 'POST', body: file });
     if (resp.ok) resetRuntimeState();
     if (resp.ok) setStatus('Running: ' + file.name);
     else setStatus('Error: ' + (await resp.text()));
-    const name = file.name.replace(/\.[^.]+$/, '');
     let key = null;
     if (resp.ok) {
       key = `rom_${name}`;
@@ -2098,6 +2195,112 @@ function onAudio(data) {
   }
 }
 
+// ---- In-browser engine (WASM) ----
+
+// The emscripten output only exposes `DualBoyWasm` as a plain global (its
+// export guards target CommonJS/AMD, which browsers don't provide), so load it
+// as a classic script and grab the factory it declares.
+function loadWasmModule() {
+  return new Promise((resolve, reject) => {
+    if (window.DualBoyWasm) { resolve(window.DualBoyWasm); return; }
+    const s = document.createElement('script');
+    s.src = new URL('dualboy-web.js', location.href).href;
+    s.onload = () => resolve(window.DualBoyWasm);
+    s.onerror = () => reject(new Error('failed to load dualboy-web.js'));
+    document.head.appendChild(s);
+  }).then(async (factory) => {
+    wasmModule = await factory({ locateFile: (path) => new URL('dualboy-web.wasm', location.href).href });
+    return wasmModule;
+  });
+}
+
+// Push a ROM's bytes into every linked core. Returns 0 on success.
+function wasmLoadRomBytes(bytes) {
+  const M = wasmModule;
+  const ptr = M._malloc(bytes.length);
+  if (!ptr) return -99;
+  M.HEAPU8.set(bytes, ptr);
+  const rc = M._db_load_rom(ptr, bytes.length);
+  M._free(ptr);
+  return rc;
+}
+
+// Drain the audio buffer without playing (turbo mute-on-exit, like desktop).
+function wasmFlushAudio() {
+  if (!wasmModule) return;
+  wasmModule._db_get_audio();
+}
+
+// Copy every player's latest finished frame into the canvases.
+function wasmRenderVideo() {
+  const M = wasmModule;
+  const heap = M.HEAPU8;
+  for (let i = 0; i < playerCount; i++) {
+    const ptr = M._db_get_video(i);
+    if (!ptr) continue;
+    screens[i].imgData.data.set(heap.subarray(ptr, ptr + FRAME_SIZE));
+    screens[i].ctx.putImageData(screens[i].imgData, 0, 0);
+  }
+}
+
+// Feed this frame's mixed audio into the existing WebAudio resampler, tagged
+// the same way the backend streams it (u32 LE rate + interleaved stereo s16).
+function wasmPumpAudio() {
+  if (!audioCtx) return;
+  const M = wasmModule;
+  const frames = M._db_audio_frames();
+  if (frames <= 0) return;
+  const ptr = M._db_get_audio();
+  const sampleBytes = M.HEAPU8.subarray(ptr, ptr + frames * 4);
+  const tagged = new Uint8Array(4 + sampleBytes.length);
+  new DataView(tagged.buffer).setUint32(0, 32768, true);
+  tagged.set(sampleBytes, 4);
+  onAudio(tagged.buffer);
+}
+
+// Fixed-timestep 60 fps loop. At 60 Hz displays one frame runs per rAF; on
+// 120/144 Hz panels the accumulator throttles to exactly 60 game-fps. Turbo
+// runs as many frames per rAF as the browser can chew, with audio muted.
+function wasmFrame(now) {
+  wasmLoopId = requestAnimationFrame(wasmFrame);
+  const M = wasmModule;
+  let delta = now - wasmLast;
+  wasmLast = now;
+  if (delta > 100) delta = 100; // tab hidden: don't spiral the accumulator
+  if (turboOn) {
+    const TURBO_FRAMES = 4; // ~4x at 60 Hz rAF; adjust for stronger fast-forward
+    for (let i = 0; i < TURBO_FRAMES; i++) {
+      if (paused) break;
+      M._db_run_frame();
+    }
+  } else {
+    wasmAccum += delta;
+    let ran = 0;
+    while (wasmAccum >= FRAME_MS && ran < 4) {
+      if (!paused) M._db_run_frame();
+      wasmAccum -= FRAME_MS;
+      ran++;
+    }
+    if (wasmAccum >= FRAME_MS * 4) wasmAccum = 0; // too far behind: reset
+  }
+  wasmRenderVideo();
+  if (!turboOn) wasmPumpAudio();
+}
+
+function wasmStartLoop() {
+  if (wasmLoopId || !wasmModule) return;
+  wasmLast = performance.now();
+  wasmAccum = 0;
+  wasmLoopId = requestAnimationFrame(wasmFrame);
+}
+
+function wasmStopLoop() {
+  if (wasmLoopId) {
+    cancelAnimationFrame(wasmLoopId);
+    wasmLoopId = 0;
+  }
+}
+
 // ---- WebSocket (frames; also input in browser mode) ----
 
 function connectWebSocket() {
@@ -2123,17 +2326,39 @@ window.addEventListener('DOMContentLoaded', async () => {
       playerCount = 2;
     }
   } else {
+    // Probe for the dualboy-web backend. If it's absent (GitHub Pages, or the
+    // binary isn't running), fall back to the in-browser WASM engine so the
+    // page is fully playable with no server at all.
+    let backendUp = false;
     try {
-      const resp = await fetch('/player_count');
-      playerCount = parseInt(await resp.text(), 10) || 2;
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 1500);
+      const resp = await fetch('/player_count', { signal: ctrl.signal });
+      clearTimeout(t);
+      backendUp = resp.ok;
     } catch {
-      playerCount = 2;
+      backendUp = false;
     }
-  }
-  // Hosted-shell banner: when served from a static host (e.g. GitHub Pages)
-  // there is no dualboy-web backend on this origin, so tell the user how to play.
-  if (!IS_TAURI && !['127.0.0.1', 'localhost'].includes(location.hostname)) {
-    document.getElementById('hosted-note').hidden = false;
+    if (backendUp) {
+      try {
+        playerCount = parseInt(await (await fetch('/player_count')).text(), 10) || 2;
+      } catch {
+        playerCount = 2;
+      }
+    } else {
+      playerCount = 2;
+      wasmMode = true;
+      try {
+        await loadWasmModule();
+        wasmModule._db_init(playerCount);
+        setStatus('In-browser engine ready \u2014 2 linked GBAs (load a ROM)');
+      } catch (err) {
+        // Engine failed AND no backend: only now show the hosted-shell notice.
+        wasmMode = false;
+        document.getElementById('hosted-note').hidden = false;
+        setStatus('Engine failed to start: ' + err);
+      }
+    }
   }
   loadControls();
   loadHotkeys();
@@ -2239,5 +2464,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Gamepad polling runs on the animation frame; controller slot i -> player i+1.
   pollGamepads();
 
-  connectWebSocket();
+  if (wasmMode) {
+    wasmStartLoop();
+  } else {
+    connectWebSocket();
+  }
 });

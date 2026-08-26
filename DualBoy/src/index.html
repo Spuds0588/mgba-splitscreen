@@ -9,13 +9,12 @@
   </head>
 
   <body>
-    <!-- Shown only when this page is served from a static host (e.g. GitHub
-         Pages) without the dualboy-web backend running. -->
+    <!-- Shown only when neither the in-browser WASM engine nor the dualboy-web
+         backend could start. Normally this page runs fully client-side. -->
     <div id="hosted-note" class="hosted-note" hidden>
-      <strong>DualBoy web shell</strong> &mdash; this page is the UI only. To actually play, download the
-      <code>dualboy-web</code> binary for your OS from the
-      <a href="https://github.com/Spuds0588/mgba-splitscreen/releases" target="_blank" rel="noreferrer">Releases</a>
-      page, run it, and open <code>http://127.0.0.1:8080</code>.
+      <strong>DualBoy could not start its engine.</strong> The in-browser WebAssembly core failed to
+      load and no <code>dualboy-web</code> backend is reachable. Try reloading the page, or download the
+      <a href="https://github.com/Spuds0588/mgba-splitscreen/releases" target="_blank" rel="noreferrer">desktop app</a>.
     </div>
     <!-- Traditional top menu bar. Mouse-driven; game keys never navigate it. -->
     <header class="menubar">
