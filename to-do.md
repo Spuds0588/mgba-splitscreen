@@ -336,3 +336,16 @@ Next experiments (see `history.md` "What to try next" for full reasoning):
       work + the `a0647ffac` timing-loosen cherry-pick. Plan a clean commit
       sequence once the fix is confirmed (the cherry-pick may be dropped if
       the assist makes it unnecessary).
+### Release pipeline — verify before the next tag
+
+- [ ] Re-run a release tag now that the upload path is fixed and confirm the
+      Release page gets **only** installers (`.deb`, `.rpm`, `.AppImage`,
+      `.dmg`, `.msi`, plus `.exe` if NSIS is enabled). The three platform
+      builds have been green since the Windows quoting fix; only the publish
+      step was ever broken.
+- [ ] Any JavaScript embedded in `tauri.conf.json` runs through a shell on
+      Linux/macOS but is spawned directly on Windows. Keep such work in a
+      script file under `scripts/` invoked via an npm script.
+- [ ] The `Cache Rust build` key includes the package name, so the rename
+      forced cold Windows/macOS builds (~10-20 min). Expected, but it makes a
+      tag run look slow the first time.

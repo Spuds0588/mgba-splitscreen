@@ -1395,3 +1395,41 @@ changed. Details worth knowing:
 - Versions unified to **0.3.0** (Cargo said beta.1, npm/tauri said alpha.1).
   Tagged `v0.3.0`, which triggers `release.yml` to build Linux/macOS/Windows
   bundles. macOS and Windows cannot be built on this Linux box.
+
+### 2026-09-11 (release pipeline) — two CI bugs stood between the fix and a release
+
+Getting v0.3.0 published took three tag runs, and both failures were real
+defects rather than flakiness. Worth knowing before the next release:
+
+1. **The rename commit carried stale file contents.** `git mv` ran before the
+   text pass, so the index held the renames with their *pre-rename* contents
+   and the 39 modified files were left unstaged. `git log --stat` looked perfect
+   (all renames) while shipping `DualBoy` strings inside. Fixed by staging the
+   content properly (commit `9722462b2`); `git grep -i dualboy HEAD` is the
+   cheap check that would have caught it before pushing.
+
+2. **Windows never ran `beforeBuildCommand`.** Tauri runs it through a shell on
+   Linux/macOS but *directly* on Windows, so `node -e "const fs=require('fs')…"`
+   arrived with the wrapping double quotes attached and node died on
+   `SyntaxError: Invalid or unexpected token` before executing a line. Any JS
+   embedded in `tauri.conf.json` is therefore Unix-only. Replaced with
+   `npm run strip-web-engine`, which also removes the working-directory guess
+   (the old command walked up from `process.cwd()` hunting for
+   `src-tauri/tauri.conf.json`, which is a tell that cwd is not the package
+   root; `npm run` finds the package from either place).
+
+3. **The release job published the wrong thing.** `path: bundle/**` shipped the
+   unpacked AppImage tree too — ~250 files including its bundled `.so`s,
+   `copyright`, and the raw executable — and duplicate names across the
+   deb/rpm/AppImage trees make `softprops/action-gh-release` fail with
+   `Not Found … update-a-release-asset` before any release exists. This is why
+   **v0.2.0-alpha.1 also failed at exactly this step while all three of its
+   platform builds passed**: a long-standing bug, not rename fallout. The
+   upload now lists the installers explicitly.
+
+Local-only gotcha, for anyone building the desktop app right after a directory
+rename: the cached `target/release/build/tauri-*` output embeds absolute paths
+from before the move, so `cargo build` dies with
+`failed to read plugin permissions: …/DualBoy/src-tauri/…`. Delete
+`target/release/build/tauri-*` (keeping the expensive `mgba-splitscreen-*`
+cmake output) and rebuild. CI is unaffected — it always starts clean.
