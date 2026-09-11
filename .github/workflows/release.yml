@@ -65,7 +65,23 @@ jobs:
         with:
           name: bundles-${{ matrix.os }}
           if-no-files-found: error
-          path: mgba-splitscreen/src-tauri/target/release/bundle/**
+          # Only the installers, NOT `bundle/**`. A recursive glob uploads the
+          # unpacked AppImage tree too (its bundled .so files, `copyright`, and
+          # the raw executable), which is ~250 files; several then collide by
+          # name across the deb/rpm/AppImage trees, and softprops/action-gh-release
+          # fails the whole job with "Not Found ... update-a-release-asset" when it
+          # tries to update an already-present asset. That is what broke the
+          # v0.2.0-alpha.1 and first v0.3.0 releases even though every platform
+          # build had succeeded. Patterns that match nothing on a given platform
+          # are fine as long as one file is found overall.
+          path: |
+            mgba-splitscreen/src-tauri/target/release/bundle/deb/*.deb
+            mgba-splitscreen/src-tauri/target/release/bundle/rpm/*.rpm
+            mgba-splitscreen/src-tauri/target/release/bundle/appimage/*.AppImage
+            mgba-splitscreen/src-tauri/target/release/bundle/dmg/*.dmg
+            mgba-splitscreen/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            mgba-splitscreen/src-tauri/target/release/bundle/msi/*.msi
+            mgba-splitscreen/src-tauri/target/release/bundle/nsis/*.exe
 
   release:
     needs: build
