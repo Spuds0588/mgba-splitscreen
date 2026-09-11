@@ -1,5 +1,5 @@
 /*
- * DualBoy GBA audio test ROM.
+ * mgba-splitscreen GBA audio test ROM.
  *
  * The absolute minimal audio program: enable the APU, start a square wave on
  * channel 2 (pure PSG, no DMA, no FIFO, no link, no display), and spin.

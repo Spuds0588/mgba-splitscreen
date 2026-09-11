@@ -7,7 +7,7 @@ const invoke = IS_TAURI ? window.__TAURI__.core.invoke : null;
 // The in-browser WASM engine logs only to the devtools console; nothing ever
 // reaches disk, so a crashed/frozen session leaves no trace to inspect. Mirror
 // console output into a ring buffer and forward new lines to the server's
-// /session_log endpoint (appended to /tmp/dualboy_session.log server-side) so
+// /session_log endpoint (appended to /tmp/mgba-splitscreen_session.log server-side) so
 // sessions can be reviewed after the fact. Best-effort: failures are silent.
 const sessionLog = [];
 const SESSION_LOG_MAX = 4000;
@@ -92,16 +92,16 @@ function fsAssistRequested() {
 
 function applyFsAssist() {
   try {
-    if (wasmModule && wasmModule._db_set_fs_assist) {
-      wasmModule._db_set_fs_assist(fsAssistRequested() ? 1 : 0);
+    if (wasmModule && wasmModule._mgs_set_fs_assist) {
+      wasmModule._mgs_set_fs_assist(fsAssistRequested() ? 1 : 0);
     }
   } catch (_) { /* older builds without the export: nothing to switch */ }
 }
 
-// Every _db_init() re-creates the coordinator (and with it the assist flags), so
+// Every _mgs_init() re-creates the coordinator (and with it the assist flags), so
 // route the creations through here to keep the setting applied.
 function dbInit(count) {
-  wasmModule._db_init(count);
+  wasmModule._mgs_init(count);
   applyFsAssist();
 }
 
@@ -226,7 +226,7 @@ const DEFAULT_GAMEPAD_AXES = {
   1: { neg: GBA_BUTTONS.UP, pos: GBA_BUTTONS.DOWN }, // left stick Y (up = -1)
 };
 
-const CONTROLS_KEY = 'dualboy_controls_v2'; // v2: L/R default to bumpers/triggers
+const CONTROLS_KEY = 'mgba-splitscreen_controls_v2'; // v2: L/R default to bumpers/triggers
 let controls = []; // 4 entries: { keyboard, gamepadButtons, gamepadAxes }
 
 function defaultControlFor(p) {
@@ -310,7 +310,7 @@ function padButtonForBit(map, bit) {
 // ---- Global hotkeys (turbo / quick save / quick load / pause) ----
 // Global (not per-player) system actions. Keyboard keys plus optional gamepad
 // buttons, persisted independently of the per-player control maps.
-const HOTKEYS_KEY = 'dualboy_hotkeys_v1';
+const HOTKEYS_KEY = 'mgba-splitscreen_hotkeys_v1';
 
 const HOTKEY_ACTIONS = [
   { id: 'turbo', label: 'Turbo' },
@@ -399,7 +399,7 @@ let keyStates = []; // keyboard-derived mask per player
 // One keyboard drives the ACTIVE player using Player 1's control map; digits
 // 1-4 switch which player is active. Lets a single tester drive all players
 // without juggling four control schemes (default on; persisted).
-const SOLO_KEY = 'dualboy_solo_v1';
+const SOLO_KEY = 'mgba-splitscreen_solo_v1';
 let soloKeyboard = true;
 let soloPlayer = 0; // 0-based active player index
 
@@ -466,7 +466,7 @@ let focusPlayer = 0;
 // lockstep coordinator the desktop app uses. Every backend call below branches
 // on `wasmMode` (browser builds always use it; the desktop never does).
 let wasmMode = false;
-let wasmModule = null;     // emscripten module (Module["_db_*"] + HEAPU8)
+let wasmModule = null;     // emscripten module (Module["_mgs_*"] + HEAPU8)
 let wasmStates = [];       // per-player quick-save blobs (Uint8Array)
 let wasmLoopId = 0;        // requestAnimationFrame id
 let wasmLast = 0;          // last rAF timestamp
@@ -587,7 +587,7 @@ function highlightAudio(n) {
 async function setAudioSource(n) {
   audioSource = n;
   if (wasmMode) {
-    wasmModule._db_set_audio_source(n);
+    wasmModule._mgs_set_audio_source(n);
     if (n === 0) wasmFlushAudio();
   } else if (IS_TAURI) {
     await invoke('set_audio_source', { source: n });
@@ -611,7 +611,7 @@ function clearScreens() {
 async function quitGame() {
   closeMenus();
   if (wasmMode) {
-    wasmModule._db_quit();
+    wasmModule._mgs_quit();
     wasmStates = [];
     // Re-create empty cores so the loop keeps idling cheaply; the next ROM
     // load re-arms them (mirrors the backend's recreate-on-quit).
@@ -637,9 +637,9 @@ async function quickSaveState() {
     const M = wasmModule;
     let ok = playerCount > 0;
     for (let i = 0; i < playerCount; i++) {
-      const sz = M._db_save_state(i);
+      const sz = M._mgs_save_state(i);
       if (!sz) { ok = false; break; }
-      const ptr = M._db_state_ptr();
+      const ptr = M._mgs_state_ptr();
       wasmStates.push(new Uint8Array(M.HEAPU8.slice(ptr, ptr + sz)));
     }
     setStatus(ok ? `Quick state saved (${wasmStates.length} player${wasmStates.length === 1 ? '' : 's'})` : 'Save state failed');
@@ -669,14 +669,14 @@ async function quickLoadState() {
       const ptr = M._malloc(blob.length);
       if (!ptr) { ok = false; break; }
       M.HEAPU8.set(blob, ptr);
-      const rc = M._db_load_state_bytes(i, ptr, blob.length);
+      const rc = M._mgs_load_state_bytes(i, ptr, blob.length);
       M._free(ptr);
       if (rc !== 0) { ok = false; break; }
     }
     // Mirror the desktop wrapper: reset the link drivers after restoring
     // states so stale mid-link queues/asleep flags can't corrupt the
-    // re-handshake (see db_reset_sio in dualboy_web.c).
-    if (ok) M._db_reset_sio();
+    // re-handshake (see mgs_reset_sio in mgba_splitscreen_web.c).
+    if (ok) M._mgs_reset_sio();
     setStatus(ok ? 'Quick state loaded (F7)' : 'Load state failed');
     return;
   }
@@ -705,9 +705,9 @@ const VIEW_MODES = [
   { id: 'focus', label: 'Focus (single screen)' },
   { id: 'overlay', label: 'Overlay (PiP)' },
 ];
-const VIEW_KEY = 'dualboy_view_v1';
-const BG_KEY = 'dualboy_background_v1';
-const OUTLINES_KEY = 'dualboy_outlines_v1';
+const VIEW_KEY = 'mgba-splitscreen_view_v1';
+const BG_KEY = 'mgba-splitscreen_background_v1';
+const OUTLINES_KEY = 'mgba-splitscreen_outlines_v1';
 let outlinesOn = true; // Colored per-player borders around each screen
 
 function layout() {
@@ -981,7 +981,7 @@ function pushOverlay(text) {
 // ---- Debug log toggle ----
 // The overlay (per-second stats + mGBA WARN/ERROR lines) can be shown/hidden at
 // runtime; the preference persists so a "quiet" setting sticks across sessions.
-const DEBUG_KEY = 'dualboy_debug_v2'; // v2: default is now OFF (bump discards the old stored "on")
+const DEBUG_KEY = 'mgba-splitscreen_debug_v2'; // v2: default is now OFF (bump discards the old stored "on")
 
 function applyDebugToggle() {
   const el = document.getElementById('overlay');
@@ -1015,7 +1015,7 @@ function loadDebugToggle() {
 async function setKeys(player, keys) {
   if (wasmMode) {
     // Frontend keys are 1-indexed; the bridge expects 0-indexed players.
-    wasmModule._db_set_keys(player - 1, keys);
+    wasmModule._mgs_set_keys(player - 1, keys);
   } else if (IS_TAURI) {
     await invoke('set_keys', { player, keys });
   } else if (socket && socket.readyState === WebSocket.OPEN) {
@@ -1125,8 +1125,8 @@ async function handleKey(e, isDown) {
 //   - library: ROMs scanned from a folder the user added (Tauri: scan_games_dir
 //     command; web: <input webkitdirectory>). Box art comes from a sibling image
 //     with the same stem; otherwise a generated gradient tile stands in.
-const RECENTS_KEY = 'dualboy_recents_v1';
-const LIBRARY_KEY = 'dualboy_library_v1';
+const RECENTS_KEY = 'mgba-splitscreen_recents_v1';
+const LIBRARY_KEY = 'mgba_splitscreen_library_v1';
 
 let recents = [];        // { name, path (null on web), boxArtPath }
 let libraryGames = [];   // Tauri: { name, path, boxArtPath } | web: { name, file, boxArtUrl }
@@ -1476,7 +1476,7 @@ function addFolderWeb() {
 // caches the bytes of recently played games in IndexedDB (GBA ROMs are 4-64MB;
 // localStorage's ~5MB cap is far too small). A cached recent relaunches instantly
 // instead of forcing the user to re-pick the file.
-const CACHE_DB = 'dualboy_cache';
+const CACHE_DB = 'mgba-splitscreen_cache';
 const CACHE_STORE = 'games';
 const CACHE_MAX = 6;
 
@@ -2227,8 +2227,8 @@ async function exportSetTauri() {
   closeMenus();
   const { save } = window.__TAURI__.dialog;
   const path = await save({
-    filters: [{ name: 'DualBoy Save Set', extensions: ['dualbysave'] }],
-    defaultPath: 'dualboy.dualbysave',
+    filters: [{ name: 'mgba-splitscreen Save Set', extensions: ['dualbysave'] }],
+    defaultPath: 'mgba-splitscreen.dualbysave',
   });
   if (path) {
     await invoke('export_save_set', { path });
@@ -2247,7 +2247,7 @@ async function exportSetBrowser() {
   const url = URL.createObjectURL(await resp.blob());
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'dualboy.dualbysave';
+  a.download = 'mgba-splitscreen.dualbysave';
   a.click();
   URL.revokeObjectURL(url);
   setStatus('Downloaded save set');
@@ -2258,7 +2258,7 @@ async function importSetTauri() {
   const { open } = window.__TAURI__.dialog;
   const selected = await open({
     multiple: false,
-    filters: [{ name: 'DualBoy Save Set', extensions: ['dualbysave'] }],
+    filters: [{ name: 'mgba-splitscreen Save Set', extensions: ['dualbysave'] }],
   });
   if (selected) {
     await invoke('import_save_set', { path: selected });
@@ -2308,7 +2308,7 @@ function serializeStateSet(states) {
 function deserializeStateSet(bytes) {
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (new TextDecoder().decode(bytes.subarray(0, 9)) !== STATE_SET_MAGIC) {
-    throw new Error('Not a DualBoy state set');
+    throw new Error('Not a mgba-splitscreen state set');
   }
   if (dv.getUint32(9, true) !== 1) throw new Error('Unsupported state set version');
   const count = dv.getUint32(13, true);
@@ -2342,8 +2342,10 @@ async function exportStateTauri() {
   closeMenus();
   const { save } = window.__TAURI__.dialog;
   const path = await save({
-    filters: [{ name: 'DualBoy State Set', extensions: ['dualbystate'] }],
-    defaultPath: 'dualboy.dualbystate',
+    // Legacy '.dualbystate' stays accepted so sets exported before the rename
+    // still load; new exports use the product-derived extension.
+    filters: [{ name: 'mgba-splitscreen State Set', extensions: ['mgsstate', 'dualbystate'] }],
+    defaultPath: 'mgba-splitscreen.mgsstate',
   });
   if (path) {
     await invoke('export_state_set', { path });
@@ -2357,7 +2359,7 @@ async function importStateTauri() {
   const { open } = window.__TAURI__.dialog;
   const selected = await open({
     multiple: false,
-    filters: [{ name: 'DualBoy State Set', extensions: ['dualbystate'] }],
+    filters: [{ name: 'mgba-splitscreen State Set', extensions: ['mgsstate', 'dualbystate'] }],
   });
   if (selected) {
     await invoke('import_state_set', { path: selected });
@@ -2371,13 +2373,13 @@ async function exportStateBrowser() {
   if (wasmMode) {
     const blob = wasmCurrentStates();
     if (!blob) { setStatus('No quick state to export (F5 to save first)'); return; }
-    downloadBlob(blob, 'dualboy.dualbystate');
+    downloadBlob(blob, 'mgba-splitscreen.mgsstate');
     setStatus(`Downloaded state set (${wasmStates.length} players)`);
     return;
   }
   const resp = await fetch('/state');
   if (!resp.ok) { setStatus('Error: ' + (await resp.text())); return; }
-  downloadBlob(await resp.blob(), 'dualboy.dualbystate');
+  downloadBlob(await resp.blob(), 'mgba-splitscreen.mgsstate');
   setStatus('Downloaded state set');
 }
 
@@ -2385,7 +2387,7 @@ function importStateBrowser() {
   closeMenus();
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.dualbystate';
+  input.accept = '.mgsstate,.dualbystate';
   input.onchange = async () => {
     const file = input.files[0];
     if (!file) return;
@@ -2400,14 +2402,14 @@ function importStateBrowser() {
           const ptr = M._malloc(states[i].length);
           if (!ptr) { ok = false; break; }
           M.HEAPU8.set(states[i], ptr);
-          const rc = M._db_load_state_bytes(i, ptr, states[i].length);
+          const rc = M._mgs_load_state_bytes(i, ptr, states[i].length);
           M._free(ptr);
           if (rc !== 0) { ok = false; break; }
         }
         // Mirror the desktop wrapper: reset the link drivers after restoring
         // states so stale mid-link queues/asleep flags can't corrupt the
-        // re-handshake (see db_reset_sio in dualboy_web.c).
-        if (ok) M._db_reset_sio();
+        // re-handshake (see mgs_reset_sio in mgba_splitscreen_web.c).
+        if (ok) M._mgs_reset_sio();
         setStatus(ok ? `Imported state set (${states.length} players)` : 'Load state failed');
       } catch (err) {
         setStatus('Import failed: ' + err.message);
@@ -2546,19 +2548,19 @@ function onAudio(data) {
 
 // ---- In-browser engine (WASM) ----
 
-// The emscripten output only exposes `DualBoyWasm` as a plain global (its
+// The emscripten output only exposes `MgbaSplitScreenWasm` as a plain global (its
 // export guards target CommonJS/AMD, which browsers don't provide), so load it
 // as a classic script and grab the factory it declares.
 function loadWasmModule() {
   return new Promise((resolve, reject) => {
-    if (window.DualBoyWasm) { resolve(window.DualBoyWasm); return; }
+    if (window.MgbaSplitScreenWasm) { resolve(window.MgbaSplitScreenWasm); return; }
     const s = document.createElement('script');
-    s.src = new URL('dualboy-web.js', location.href).href;
-    s.onload = () => resolve(window.DualBoyWasm);
-    s.onerror = () => reject(new Error('failed to load dualboy-web.js'));
+    s.src = new URL('mgba-splitscreen-web.js', location.href).href;
+    s.onload = () => resolve(window.MgbaSplitScreenWasm);
+    s.onerror = () => reject(new Error('failed to load mgba-splitscreen-web.js'));
     document.head.appendChild(s);
   }).then(async (factory) => {
-    wasmModule = await factory({ locateFile: (path) => new URL('dualboy-web.wasm', location.href).href });
+    wasmModule = await factory({ locateFile: (path) => new URL('mgba-splitscreen-web.wasm', location.href).href });
     return wasmModule;
   });
 }
@@ -2569,7 +2571,7 @@ function wasmLoadRomBytes(bytes) {
   const ptr = M._malloc(bytes.length);
   if (!ptr) return -99;
   M.HEAPU8.set(bytes, ptr);
-  const rc = M._db_load_rom(ptr, bytes.length);
+  const rc = M._mgs_load_rom(ptr, bytes.length);
   M._free(ptr);
   return rc;
 }
@@ -2577,7 +2579,7 @@ function wasmLoadRomBytes(bytes) {
 // Drain the audio buffer without playing (turbo mute-on-exit, like desktop).
 function wasmFlushAudio() {
   if (!wasmModule) return;
-  wasmModule._db_get_audio();
+  wasmModule._mgs_get_audio();
 }
 
 // Copy every player's latest finished frame into the canvases.
@@ -2585,7 +2587,7 @@ function wasmRenderVideo() {
   const M = wasmModule;
   const heap = M.HEAPU8;
   for (let i = 0; i < playerCount; i++) {
-    const ptr = M._db_get_video(i);
+    const ptr = M._mgs_get_video(i);
     if (!ptr) continue;
     screens[i].imgData.data.set(heap.subarray(ptr, ptr + FRAME_SIZE));
     screens[i].ctx.putImageData(screens[i].imgData, 0, 0);
@@ -2597,9 +2599,9 @@ function wasmRenderVideo() {
 function wasmPumpAudio() {
   if (!audioCtx) return;
   const M = wasmModule;
-  const frames = M._db_audio_frames();
+  const frames = M._mgs_audio_frames();
   if (frames <= 0) return;
-  const ptr = M._db_get_audio();
+  const ptr = M._mgs_get_audio();
   const sampleBytes = M.HEAPU8.subarray(ptr, ptr + frames * 4);
   const tagged = new Uint8Array(4 + sampleBytes.length);
   new DataView(tagged.buffer).setUint32(0, 32768, true);
@@ -2620,7 +2622,7 @@ function wasmFrame(now) {
     const TURBO_FRAMES = 4; // ~4x at 60 Hz rAF; adjust for stronger fast-forward
     for (let i = 0; i < TURBO_FRAMES; i++) {
       if (paused) break;
-      M._db_run_frame();
+      M._mgs_run_frame();
     }
   } else {
     // Fixed-timestep 60 fps: the accumulator tracks real time and each pass
@@ -2633,7 +2635,7 @@ function wasmFrame(now) {
     wasmAccum += delta;
     let ran = 0;
     while (wasmAccum >= FRAME_MS && ran < 6) {
-      if (!paused) M._db_run_frame();
+      if (!paused) M._mgs_run_frame();
       wasmAccum -= FRAME_MS;
       ran++;
     }

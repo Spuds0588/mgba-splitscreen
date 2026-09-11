@@ -1430,7 +1430,7 @@ void GBASIORendezvousPlayerSleep(struct GBASIORendezvousPlayer* player) {
 	player->driver->d.p->p->cpu->nextEvent = 0;
 	GBAInterrupt(player->driver->d.p->p);
 
-	// DualBoy runs every player sequentially on one thread, so a sleeping player's
+	// mgba-splitscreen runs every player sequentially on one thread, so a sleeping player's
 	// host thread never actually blocks (the user->sleep callback returns
 	// immediately). The frame loop honours the sleep flag: it skips a sleeping
 	// player and instead steps the other player until it wakes this one back up.

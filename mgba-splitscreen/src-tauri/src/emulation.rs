@@ -231,7 +231,7 @@ fn serialize_save_set(saves: &[Vec<u8>]) -> Vec<u8> {
 
 fn deserialize_save_set(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     if data.len() < 16 || &data[0..8] != SAVE_SET_MAGIC {
-        return Err("Not a DualBoy save set".into());
+        return Err("Not a mgba-splitscreen save set".into());
     }
     let version = u32::from_le_bytes(data[8..12].try_into().unwrap());
     if version != 1 {
@@ -275,7 +275,7 @@ fn serialize_state_set(states: &[Vec<u8>]) -> Vec<u8> {
 fn deserialize_state_set(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     let hdr = STATE_SET_MAGIC.len() + 8;
     if data.len() < hdr || &data[0..STATE_SET_MAGIC.len()] != STATE_SET_MAGIC {
-        return Err("Not a DualBoy save state set".into());
+        return Err("Not a mgba-splitscreen save state set".into());
     }
     let version = u32::from_le_bytes(
         data[STATE_SET_MAGIC.len()..STATE_SET_MAGIC.len() + 4]

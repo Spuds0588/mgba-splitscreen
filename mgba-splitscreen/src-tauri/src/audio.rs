@@ -197,7 +197,7 @@ pub fn tx() -> &'static SyncSender<AudioChunk> {
     AUDIO_TX.get_or_init(|| {
         let (tx, rx) = sync_channel::<AudioChunk>(256);
         std::thread::Builder::new()
-            .name("dualboy-audio".into())
+            .name("mgba-splitscreen-audio".into())
             .spawn(move || audio_loop(rx))
             .expect("failed to spawn audio thread");
         tx

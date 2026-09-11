@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    dualboy_lib::run()
+    mgba_splitscreen_lib::run()
 }

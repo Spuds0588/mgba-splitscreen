@@ -2,7 +2,7 @@
  * bench_wasm.js — in-page benchmark for the WASM engine.
  *
  * Loads a fresh module, inits N linked players, loads a real ROM, runs M frames
- * and reports the per-frame db_run_frame() time distribution (avg / p50 / p95 /
+ * and reports the per-frame mgs_run_frame() time distribution (avg / p50 / p95 /
  * p99 / max) plus how the time is split between emulation and the RGBA pack.
  *
  * Usage (in the page): set window.__BENCH = { players, rom, frames } then eval
@@ -14,25 +14,25 @@
   const cfg = window.__BENCH || { players: 4, rom: 'roms/Mario Kart - Super Circuit (USA).gba', frames: 600 };
   const W = 240, H = 160;
 
-  const factory = window.DualBoyWasm;
-  const M = await factory({ locateFile: (p) => BASE + 'dualboy-web.wasm' });
-  M._db_init(cfg.players);
+  const factory = window.MgbaSplitScreenWasm;
+  const M = await factory({ locateFile: (p) => BASE + 'mgba-splitscreen-web.wasm' });
+  M._mgs_init(cfg.players);
   const rom = await (await fetch(BASE + cfg.rom)).arrayBuffer();
   const bytes = new Uint8Array(rom);
   const ptr = M._malloc(bytes.length);
   M.HEAPU8.set(bytes, ptr);
-  const rc = M._db_load_rom(ptr, bytes.length);
+  const rc = M._mgs_load_rom(ptr, bytes.length);
   M._free(ptr);
   if (rc !== 0) return { error: 'load_rom rc=' + rc };
 
   // Warm up (negotiation settles in the first ~60 frames).
-  for (let f = 0; f < 90; f++) M._db_run_frame();
+  for (let f = 0; f < 90; f++) M._mgs_run_frame();
 
   const times = [];
   const total0 = performance.now();
   for (let f = 0; f < cfg.frames; f++) {
     const t0 = performance.now();
-    M._db_run_frame();
+    M._mgs_run_frame();
     const t1 = performance.now();
     times.push(t1 - t0);
   }
@@ -45,7 +45,7 @@
   // Frame-rate the emulation itself could sustain if the browser were infinite.
   const fps = 1000 / (sum / times.length);
 
-  M._db_quit();
+  M._mgs_quit();
   return {
     rom: cfg.rom,
     players: cfg.players,

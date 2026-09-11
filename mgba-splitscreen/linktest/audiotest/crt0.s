@@ -1,4 +1,4 @@
-@ DualBoy linktest ROM boot header + entry point.
+@ mgba-splitscreen linktest ROM boot header + entry point.
 @
 @ Layout: 0x000 branch to _start, 0x004 Nintendo logo (156 bytes),
 @ 0x0A0 title/code fields, 0x0C0 _start.
@@ -40,7 +40,7 @@
     .byte 0x21,0xD4,0xF8,0x07
 
     @ 0x0A0: game title (12 bytes)
-    .ascii "DUALBOY LINK"
+    .ascii "MGBA_SPLITSCREEN LINK"
     @ 0x0AC: game code (4 bytes)
     .ascii "DLNK"
     @ 0x0B0: maker code (2 bytes)

@@ -1,17 +1,17 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "dualboy",
-  "version": "0.2.0-alpha.1",
-  "identifier": "com.coreyb.dualboy",
+  "productName": "mgba-splitscreen",
+  "version": "0.3.0",
+  "identifier": "com.coreyb.mgbasplitscreen",
   "build": {
     "frontendDist": "../src",
-    "beforeBuildCommand": "node -e \"const fs=require('fs'),p=require('path');let d=process.cwd();for(;;){if(fs.existsSync(p.join(d,'src-tauri','tauri.conf.json'))){for(const f of ['dualboy-web.js','dualboy-web.wasm','dualboy-web-dbg.js','dualboy-web-dbg.wasm']){try{fs.unlinkSync(p.join(d,'src',f))}catch(e){}}break}const up=p.dirname(d);if(up===d)break;d=up}\""
+    "beforeBuildCommand": "node -e \"const fs=require('fs'),p=require('path');let d=process.cwd();for(;;){if(fs.existsSync(p.join(d,'src-tauri','tauri.conf.json'))){for(const f of ['mgba-splitscreen-web.js','mgba-splitscreen-web.wasm','mgba-splitscreen-web-dbg.js','mgba-splitscreen-web-dbg.wasm']){try{fs.unlinkSync(p.join(d,'src',f))}catch(e){}}break}const up=p.dirname(d);if(up===d)break;d=up}\""
   },
   "app": {
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "dualboy",
+        "title": "mgba-splitscreen",
         "width": 800,
         "height": 600
       }
@@ -32,7 +32,7 @@
     ],
     "windows": {
       "wix": {
-        "version": "0.2.0.1"
+        "version": "0.3.0.0"
       }
     }
   }

@@ -1,6 +1,6 @@
-//! Standalone web server for the DualBoy browser demo.
+//! Standalone web server for the mgba-splitscreen browser demo.
 //!
-//! Run with `cargo run --bin dualboy-web -- --players 4`, then open
+//! Run with `cargo run --bin mgba-splitscreen-web -- --players 4`, then open
 //! http://127.0.0.1:8080 in a browser.
 
 use std::net::SocketAddr;
@@ -16,7 +16,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use dualboy_lib::emulation::EmulationManager;
+use mgba_splitscreen_lib::emulation::EmulationManager;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 
@@ -68,12 +68,12 @@ fn parse_fps() -> u32 {
 async fn main() {
     let players = parse_players();
     let fps = parse_fps();
-    println!("Starting DualBoy web server with {players} players at {fps} video FPS...");
+    println!("Starting mgba-splitscreen web server with {players} players at {fps} video FPS...");
     let manager = Arc::new(EmulationManager::new(players));
     manager.start(fps);
     // Web mode: audio plays in the browser (WebAudio) rather than the server's
     // ALSA sink, so a headless/remote server doesn't double up on speakers.
-    dualboy_lib::emulation::set_browser_audio(true);
+    mgba_splitscreen_lib::emulation::set_browser_audio(true);
 
     let state = AppState {
         manager: Arc::new(Mutex::new(manager)),
@@ -107,7 +107,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let manager = state.manager.lock().unwrap().clone();
     let mut frames = manager.frame_sender.subscribe();
     let mut status_rx = manager.status_sender.subscribe();
-    let mut audio_rx = dualboy_lib::emulation::subscribe_audio();
+    let mut audio_rx = mgba_splitscreen_lib::emulation::subscribe_audio();
 
     // Outgoing messages go through a bounded channel to a dedicated writer task.
     // This is the fix for the "inputs stop registering" failure: a slow browser
@@ -131,7 +131,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 match frame {
                     Ok(data) => {
                         // Tag byte 0 = video (the frontend strips it).
-                        let msg = dualboy_lib::emulation::encode_video(&data);
+                        let msg = mgba_splitscreen_lib::emulation::encode_video(&data);
                         let _ = out_tx.try_send(Message::Binary(msg));
                     }
                     // Lagged = we fell behind the frame broadcaster; the receiver
@@ -144,7 +144,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 match audio {
                     Ok((rate, samples)) => {
                         // Tag byte 1 = audio (rate + interleaved stereo s16).
-                        let msg = dualboy_lib::emulation::encode_audio(rate, &samples);
+                        let msg = mgba_splitscreen_lib::emulation::encode_audio(rate, &samples);
                         let _ = out_tx.try_send(Message::Binary(msg));
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
@@ -177,7 +177,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         } else if let Ok(ClientCommand::AudioSource { source }) =
                             serde_json::from_str(&text)
                         {
-                            dualboy_lib::emulation::set_audio_source(source);
+                            mgba_splitscreen_lib::emulation::set_audio_source(source);
                         } else if let Ok(ClientCommand::QuitGame) = serde_json::from_str(&text) {
                             let mut guard = state.manager.lock().unwrap();
                             if guard.loaded_rom_path().is_some() {
@@ -211,7 +211,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 }
 
 async fn load_rom_handler(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
-    let path = std::env::temp_dir().join("dualboy_upload.gba");
+    let path = std::env::temp_dir().join("mgba-splitscreen_upload.gba");
     if let Err(e) = std::fs::write(&path, &body) {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("write failed: {e}")).into_response();
     }
@@ -321,7 +321,7 @@ async fn post_state_set_handler(State(state): State<AppState>, body: Bytes) -> i
 /// trace for post-mortem (see main.js sessionLog).
 async fn session_log_handler(body: Bytes) -> impl IntoResponse {
     use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/dualboy_session.log") {
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/mgba-splitscreen_session.log") {
         let _ = f.write_all(&body);
         let _ = f.flush();
     }

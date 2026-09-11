@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Build the in-browser (WASM) engine: libmgba + the DualBoy bridge.
+# Build the in-browser (WASM) engine: libmgba + the mgba-splitscreen bridge.
 #
-# Produces (in DualBoy/web/):
-#   dualboy_web.c   - the bridge source (committed)
-#   dualboy-web.js  - emscripten glue + exports (tracked; GitHub Pages
-#                     stages these alongside DualBoy/src at deploy time)
-#   dualboy-web.wasm- the compiled core (tracked; deployed as-is)
+# Produces (in mgba-splitscreen/web/):
+#   mgba_splitscreen_web.c   - the bridge source (committed)
+#   mgba-splitscreen-web.js  - emscripten glue + exports (tracked; GitHub Pages
+#                     stages these alongside mgba-splitscreen/src at deploy time)
+#   mgba-splitscreen-web.wasm- the compiled core (tracked; deployed as-is)
 #
-# The desktop (Tauri) app NEVER ships these: it embeds only DualBoy/src and
+# The desktop (Tauri) app NEVER ships these: it embeds only mgba-splitscreen/src and
 # runs the native Rust backend. The copy into src/ below is a gitignored
 # convenience for local previews of the web UI.
 #
@@ -46,15 +46,15 @@ emmake make -C "$BUILD_DIR" -j"$(nproc)" >/dev/null
 emcc -O3 -D_GNU_SOURCE -DNDEBUG $DEFINES \
   -Iinclude -I"$BUILD_DIR/include" -I"$BUILD_DIR" \
   -sENVIRONMENT=web \
-  -sEXPORTED_FUNCTIONS=_db_init,_db_load_rom,_db_run_frame,_db_get_video,_db_set_keys,_db_get_audio,_db_audio_frames,_db_set_audio_source,_db_save_state,_db_state_ptr,_db_load_state,_db_load_state_bytes,_db_reset_sio,_db_quit,_db_enable_debug,_db_get_stats,_malloc,_free,_fflush \
+  -sEXPORTED_FUNCTIONS=_mgs_init,_mgs_load_rom,_mgs_run_frame,_mgs_get_video,_mgs_set_keys,_mgs_get_audio,_mgs_audio_frames,_mgs_set_audio_source,_mgs_save_state,_mgs_state_ptr,_mgs_load_state,_mgs_load_state_bytes,_mgs_reset_sio,_mgs_quit,_mgs_enable_debug,_mgs_get_stats,_malloc,_free,_fflush \
   -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,HEAP8,HEAP16,HEAPU8,HEAP32,HEAPU32,HEAP64 \
   -sALLOW_MEMORY_GROWTH=0 -sINITIAL_MEMORY=268435456 -sSTACK_SIZE=1048576 \
-  -sMODULARIZE=1 -sEXPORT_NAME=DualBoyWasm \
+  -sMODULARIZE=1 -sEXPORT_NAME=MgbaSplitScreenWasm \
   -sNO_EXIT_RUNTIME=1 -sERROR_ON_UNDEFINED_SYMBOLS=1 -sASSERTIONS=0 \
   -sSTRICT=0 \
-  DualBoy/web/dualboy_web.c "$BUILD_DIR/libmgba.a" -o DualBoy/web/dualboy-web.js
+  mgba-splitscreen/web/mgba_splitscreen_web.c "$BUILD_DIR/libmgba.a" -o mgba-splitscreen/web/mgba-splitscreen-web.js
 
 # 3. Local-preview copies into src/ (gitignored, so the desktop bundle stays
 #    wasm-free; GitHub Pages stages from web/ instead).
-cp DualBoy/web/dualboy-web.js DualBoy/web/dualboy-web.wasm DualBoy/src/
-echo "Built DualBoy/web/dualboy-web.{js,wasm} and copied into DualBoy/src/ (gitignored, local preview only)"
+cp mgba-splitscreen/web/mgba-splitscreen-web.js mgba-splitscreen/web/mgba-splitscreen-web.wasm mgba-splitscreen/src/
+echo "Built mgba-splitscreen/web/mgba-splitscreen-web.{js,wasm} and copied into mgba-splitscreen/src/ (gitignored, local preview only)"

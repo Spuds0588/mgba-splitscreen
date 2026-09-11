@@ -8,7 +8,7 @@
 
 use std::time::Instant;
 
-use dualboy_lib::emulation::EmulationManager;
+use mgba_splitscreen_lib::emulation::EmulationManager;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

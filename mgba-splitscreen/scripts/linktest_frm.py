@@ -10,7 +10,7 @@ Usage: python3 linktest_frm.py <players> [label]
 import sys
 import time
 
-sys.path.insert(0, "DualBoy/scripts")
+sys.path.insert(0, "mgba-splitscreen/scripts")
 from raw_ws import Client, GBA_W, GBA_H
 
 # linktest font (digits 0-9), 7 rows x 5 cols, '1' = lit

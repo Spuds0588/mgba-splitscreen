@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Robust frame capture for the DualBoy web server (port 8080).
+"""Robust frame capture for the mgba-splitscreen web server (port 8080).
 
 Retries the connection and waits for a full 2-player video frame, then writes
 per-player PNGs. Usage: python3 cap_frames.py [out_prefix] [players]

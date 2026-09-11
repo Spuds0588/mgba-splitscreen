@@ -13,7 +13,7 @@
 
 use std::time::Duration;
 
-use dualboy_lib::emulation::EmulationManager;
+use mgba_splitscreen_lib::emulation::EmulationManager;
 
 /// mGBA's GBA key masks (see gba/interface.h GBAKey).
 const KEY_START: u32 = 0x0008;
@@ -52,7 +52,7 @@ fn fs_link_state_import_with_start() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(4)
         .clamp(2, 4);
-    let state_name = std::env::var("FS_LINK_STATE").unwrap_or_else(|_| "dualboy.dualbystate".into());
+    let state_name = std::env::var("FS_LINK_STATE").unwrap_or_else(|_| "mgba-splitscreen.dualbystate".into());
     let tag = std::env::var("FS_LINK_TAG").unwrap_or_else(|_| "r".into());
 
     let rom = fs_rom();

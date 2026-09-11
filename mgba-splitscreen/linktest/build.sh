@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the DualBoy GBA linktest ROM.
+# Build the mgba-splitscreen GBA linktest ROM.
 #
 # Needs: clang (ARM target) + binutils-arm-none-eabi
 #   (arm-none-eabi-ld / arm-none-eabi-objcopy). No libc, no devkitARM:

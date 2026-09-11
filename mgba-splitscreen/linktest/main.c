@@ -1,7 +1,7 @@
 /*
- * DualBoy GBA link test ROM (v2.0)
+ * mgba-splitscreen GBA link test ROM (v2.0)
  *
- * What this is for: DualBoy runs two or more GBA instances on one thread and syncs
+ * What this is for: mgba-splitscreen runs two or more GBA instances on one thread and syncs
  * them over mGBA's lockstep link cable. The backend log can count run_frame() calls
  * and video broadcasts, but it cannot see what the GAMES are doing inside those
  * frames — so when the game itself crawls (e.g. Four Swords on the link-heavy
@@ -10,7 +10,7 @@
  *
  * It programs the GBA link port in MULTI mode (the same mode Four Swords'
  * multi-pak uses) and renders live diagnostics. Up to 4 linked units are
- * supported (DualBoy: launch with `--players 2|3|4`); the display adapts:
+ * supported (mgba-splitscreen: launch with `--players 2|3|4`); the display adapts:
  *
  *   - a per-device GAME frame counter (advances once per emulated frame; this is
  *     the number that reveals whether a device's game time is running at speed)
@@ -25,7 +25,7 @@
  *     sparkline of recent round-trip times
  *   - on the master, a live "PEERS" count of slaves that have echoed at least once
  *
- * Expected healthy readouts in the DualBoy wrapper:
+ * Expected healthy readouts in the mgba-splitscreen wrapper:
  *   - Master RTT ~2 frames per slave (ping leaves in transfer N, echo returns in
  *     N+2) for every connected peer,
  *   - stall stays 0,
@@ -453,7 +453,7 @@ static void draw_static(void) {
     draw_str(146, 64, "EXP", C_GRAY);
     draw_str(2, 73, "STALL", C_GRAY);
     draw_str(92, 73, "PING", C_GRAY);
-    draw_str(2, 150, "DUALBOY LINKTEST v2.0 - 4P LINK - watch FRM rates", C_DIM);
+    draw_str(2, 150, "MGBA_SPLITSCREEN LINKTEST v2.0 - 4P LINK - watch FRM rates", C_DIM);
 }
 
 /* Last-drawn values for fields that only change occasionally. Redrawing them

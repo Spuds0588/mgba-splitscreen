@@ -98,23 +98,23 @@
   }
 
   // --- fresh module instance ---
-  const factory = window.DualBoyWasm;
-  const M = await factory({ locateFile: (p) => BASE + 'dualboy-web.wasm' });
-  M._db_init(PLAYERS);
+  const factory = window.MgbaSplitScreenWasm;
+  const M = await factory({ locateFile: (p) => BASE + 'mgba-splitscreen-web.wasm' });
+  M._mgs_init(PLAYERS);
   const rom = await (await fetch(BASE + 'linktest.gba')).arrayBuffer();
   const bytes = new Uint8Array(rom);
   const ptr = M._malloc(bytes.length);
   M.HEAPU8.set(bytes, ptr);
-  const rc = M._db_load_rom(ptr, bytes.length);
+  const rc = M._mgs_load_rom(ptr, bytes.length);
   M._free(ptr);
   if (rc !== 0) return { error: 'load_rom rc=' + rc };
 
   // Let the negotiation settle + counters climb: 480 frames (~8s game time).
-  for (let f = 0; f < 480; f++) M._db_run_frame();
+  for (let f = 0; f < 480; f++) M._mgs_run_frame();
 
   const out = { load_rc: rc, players: [] };
   for (let i = 0; i < PLAYERS; i++) {
-    const p = M._db_get_video(i);
+    const p = M._mgs_get_video(i);
     const rgba = M.HEAPU8.subarray(p, p + W * H * 4);
     out.players.push({
       player: i + 1,
@@ -124,6 +124,6 @@
       frm: readDec(rgba, 36, 37, 8),
     });
   }
-  M._db_quit();
+  M._mgs_quit();
   return out;
 })()

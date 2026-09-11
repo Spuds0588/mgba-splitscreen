@@ -1,7 +1,7 @@
 //! 4-player SIO ground truth through the linktest instrument ROM.
 //!
 //! `fs_link_repro` shows what Four Swords does; this shows what the *link
-//! layer* does, with a ROM written to report it: `DualBoy/linktest/main.c`
+//! layer* does, with a ROM written to report it: `mgba-splitscreen/linktest/main.c`
 //! programs the link port in MULTI mode and renders, live, all four SIOMULTI
 //! slots, TX/RX transfer counters, the per-device stall counter and each
 //! device's frame counter.
@@ -16,13 +16,13 @@
 
 use std::time::Duration;
 
-use dualboy_lib::emulation::EmulationManager;
+use mgba_splitscreen_lib::emulation::EmulationManager;
 
 fn linktest_rom() -> String {
     for candidate in [
         "../linktest/linktest.gba",
-        "DualBoy/linktest/linktest.gba",
-        "../../DualBoy/linktest/linktest.gba",
+        "mgba-splitscreen/linktest/linktest.gba",
+        "../../mgba-splitscreen/linktest/linktest.gba",
     ] {
         let p = std::path::Path::new(candidate);
         if p.is_file() {
@@ -33,7 +33,7 @@ fn linktest_rom() -> String {
 }
 
 #[test]
-#[ignore = "manual ground-truth run; needs DualBoy/linktest/linktest.gba"]
+#[ignore = "manual ground-truth run; needs mgba-splitscreen/linktest/linktest.gba"]
 fn linktest_four_players_cooperative() {
     let players: usize = std::env::var("LINKTEST_PLAYERS")
         .ok()

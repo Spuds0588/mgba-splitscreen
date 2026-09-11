@@ -7,9 +7,9 @@ GBA button inputs per player, reads the real emulated frames back, and verifies 
 keeps animating. No display, no GTK dialog, fully deterministic.
 
 ```bash
-cd DualBoy/src-tauri
+cd mgba-splitscreen/src-tauri
 cargo build --release
-./target/release/dualboy &
+./target/release/mgba-splitscreen &
 python3 ../scripts/ws_play.py "/path/to/rom.gba" \
   --boot 12 \
   --seq "A WAIT:2500 A A A A WAIT:600 START WAIT:600 A" \
@@ -60,7 +60,7 @@ python3 ../scripts/adaptive_play.py "/path/to/rom.gba" --players 2
 
 ## gui_smoke.py — GUI smoke test (headless desktop verification)
 
-`gui_smoke.py` drives the real DualBoy Tauri window over X11 to load a ROM through the
+`gui_smoke.py` drives the real mgba-splitscreen Tauri window over X11 to load a ROM through the
 actual GTK file dialog — no code changes needed. It was used to verify the desktop app
 end-to-end on a headless Linux box (XWayland under KDE, `DISPLAY=:1`).
 
@@ -77,12 +77,12 @@ UI (window, buttons, file dialog) still works.
 ## Usage
 
 ```bash
-cd DualBoy/src-tauri
+cd mgba-splitscreen/src-tauri
 export DISPLAY=:1 \
        WEBKIT_DISABLE_COMPOSITING_MODE=1 \
        WEBKIT_DISABLE_DMABUF_RENDERER=1 \
        LIBGL_ALWAYS_SOFTWARE=1
-./target/release/dualboy >/tmp/dualboy_app.log 2>&1 &
+./target/release/mgba-splitscreen >/tmp/mgba-splitscreen_app.log 2>&1 &
 sleep 15   # let WebKit init
 python3 /path/to/gui_smoke.py "/path/to/Test Roms/Legend of Zelda, The - A Link To The Past Four Swords (U) [!].gba"
 ```
@@ -94,7 +94,7 @@ via an X11 CLIPBOARD selection owner + Ctrl+V → Enter → Escape → End x2 �
 
 ## Verifying the result
 
-- `grep -c "GBA BIOS" /tmp/dualboy_app.log` should be in the hundreds (game booting).
+- `grep -c "GBA BIOS" /tmp/mgba-splitscreen_app.log` should be in the hundreds (game booting).
 - The app log should show lockstep sync: `Primary waiting for players to ack` /
   `All players acked, waking primary`.
 - Live animation: capture the window twice, 2s apart

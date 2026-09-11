@@ -1,17 +1,17 @@
-# DualBoy: Testing Instructions
+# mgba-splitscreen: Testing Instructions
 
-Follow these steps to test the current build of the DualBoy split-screen GBA emulator.
+Follow these steps to test the current build of the mgba-splitscreen split-screen GBA emulator.
 
 ## 1. Launch the app
 
 Build and run a **release** binary (the debug build is ~10x slower):
 
 ```bash
-cd DualBoy/src-tauri
+cd mgba-splitscreen/src-tauri
 cargo build --release
-./target/release/dualboy          # desktop window on your display
+./target/release/mgba-splitscreen          # desktop window on your display
 # or, for the browser demo:
-./target/release/dualboy-web --players 2 --fps 30   # http://127.0.0.1:8080
+./target/release/mgba-splitscreen-web --players 2 --fps 30   # http://127.0.0.1:8080
 ```
 
 ## 2. Load a game

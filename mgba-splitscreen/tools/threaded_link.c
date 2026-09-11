@@ -1,4 +1,4 @@
-/* DualBoy threaded lockstep reference harness.
+/* mgba-splitscreen threaded lockstep reference harness.
  *
  * Runs N GBA cores on N real threads linked through mGBA's own
  * GBASIORendezvousCoordinator + GBASIORendezvousDriver. The per-player thread uses
@@ -7,7 +7,7 @@
  * under the coordinator mutex and MUST NOT block -- and the loop blocks on a
  * condvar after runLoop returns), and each thread paces itself to ~60 FPS so
  * wall-clock scripted inputs are reproducible. This is the ground truth for
- * whether the lockstep DRIVER links a game, independent of DualBoy's
+ * whether the lockstep DRIVER links a game, independent of mgba-splitscreen's
  * single-threaded wrapper.
  *
  * Modes:

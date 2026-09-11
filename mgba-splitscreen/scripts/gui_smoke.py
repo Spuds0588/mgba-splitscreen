@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Drive the DualBoy Tauri app over X11 to load a ROM through the real GTK file dialog.
+"""Drive the mgba-splitscreen Tauri app over X11 to load a ROM through the real GTK file dialog.
 
 Fully self-contained:
-  1. Find the 'dualboy' window, raise + focus it
+  1. Find the 'mgba-splitscreen' window, raise + focus it
   2. Press End to scroll the webview to the bottom (deterministic)
   3. Grab the window pixels (XGetImage), locate the teal 'Load ROM' button
   4. Click it at correct ABSOLUTE screen coordinates
@@ -148,12 +148,12 @@ def serve_clipboard(text, timeout=8.0):
 # ---- main flow ----
 app = None
 for _ in range(40):
-    app = find_window("dualboy")
+    app = find_window("mgba-splitscreen")
     if app:
         break
     time.sleep(0.5)
 if not app:
-    log("FAIL: no dualboy window")
+    log("FAIL: no mgba-splitscreen window")
     sys.exit(1)
 geom = app.get_geometry()
 trans = root.translate_coords(app, 0, 0)

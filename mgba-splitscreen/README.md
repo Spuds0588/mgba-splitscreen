@@ -1,22 +1,22 @@
-# DualBoy
+# mgba-splitscreen
 
 A **split-screen GBA emulator** that runs 2–4 Game Boy Advance instances side by side
 and links them over a **virtual link cable**, so two to four players can trade,
 battle, or co-op in link-cable games (e.g. *The Legend of Zelda: Four Swords*) on a
 single machine — one ROM, one window, one keyboard/gamepads.
 
-DualBoy is **not** its own emulator core. It is a host application built on
+mgba-splitscreen is **not** its own emulator core. It is a host application built on
 **[mGBA](https://mgba.io/)** (`mgba-emu/mgba`), using mGBA's `libmgba` and its
 lockstep multiplayer link implementation. All emulation and link-cable work is
-mGBA's; DualBoy adds the multi-instance orchestration, the synchronized frame
+mGBA's; mgba-splitscreen adds the multi-instance orchestration, the synchronized frame
 streaming, input mapping, save management, and the UI.
 
 ## Repo layout
 
-- `DualBoy/` — the application (a Tauri v2 app; the web version runs the same
+- `mgba-splitscreen/` — the application (a Tauri v2 app; the web version runs the same
   frontend with the mGBA core compiled to WASM, fully in the browser).
 - Everything else — upstream mGBA source, compiled into `libmgba` by
-  `DualBoy/src-tauri/build.rs`.
+  `mgba-splitscreen/src-tauri/build.rs`.
 
 ## How it works
 
@@ -29,17 +29,17 @@ and the lockstep link keeps them in sync; video is streamed independently (defau
 ## Run it
 
 ```bash
-cd DualBoy/src-tauri
+cd mgba-splitscreen/src-tauri
 
 # Desktop app (a window on your display)
 cargo build --release
-./target/release/dualboy
+./target/release/mgba-splitscreen
 ```
 
-# Web version (no backend): serve DualBoy/src statically, with the WASM engine
+# Web version (no backend): serve mgba-splitscreen/src statically, with the WASM engine
 # staged in (web/build.sh does this):
-#   cp DualBoy/web/dualboy-web.{js,wasm} DualBoy/src/
-#   python3 -m http.server 8090 -d DualBoy/src/   # open http://127.0.0.1:8090
+#   cp mgba-splitscreen/web/mgba-splitscreen-web.{js,wasm} mgba-splitscreen/src/
+#   python3 -m http.server 8090 -d mgba-splitscreen/src/   # open http://127.0.0.1:8090
 
 **Always use `--release`.** The emulation core is built `-O3` either way, but the Rust
 frame pipeline and UI glue are ~10x slower in a debug build (the debug desktop binary
@@ -73,7 +73,7 @@ The UI is mouse-driven (a top menu bar), so game keys never fight the UI. Player
 The link-critical constraint is **emulation speed**, and mGBA is fast: on this
 machine 4 synchronized instances of *Shining Soul II* (one of the heavier GBA games)
 emulate at ~4,000 FPS on one thread (0.24 ms/frame), so the 60 FPS target has huge
-headroom. The UI path is the real budget, so DualBoy:
+headroom. The UI path is the real budget, so mgba-splitscreen:
 
 - streams frames as RGBA8888 and feeds them straight into `putImageData` (no
   per-pixel decode in JS),
@@ -86,14 +86,14 @@ speed in isolation.
 ## Testing
 
 ```bash
-cd DualBoy/src-tauri
+cd mgba-splitscreen/src-tauri
 cargo test --release            # 128 unit + 2 smoke tests (needs Test Roms/)
 ```
 
-See `DualBoy/TEST_INSTRUCTIONS.md` and `DualBoy/scripts/README.md` (headless
+See `mgba-splitscreen/TEST_INSTRUCTIONS.md` and `mgba-splitscreen/scripts/README.md` (headless
 gameplay drivers) for more.
 
 ## Credits
 
 Emulation and link-cable multiplayer: **[mGBA](https://mgba.io/)** by endrift and
-contributors. DualBoy is a thin host around `libmgba` and would not exist without it.
+contributors. mgba-splitscreen is a thin host around `libmgba` and would not exist without it.

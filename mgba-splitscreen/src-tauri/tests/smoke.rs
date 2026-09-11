@@ -1,7 +1,7 @@
 //! Headless smoke tests: verify the full emulation pipeline (ROM load -> run frames
 //! -> pixels rendered) and save import/export, using the ROMs in `Test Roms/`.
 
-use dualboy_lib::emulation::EmulationManager;
+use mgba_splitscreen_lib::emulation::EmulationManager;
 
 /// Find the first `.gba` ROM in the (gitignored) `Test Roms/` directory.
 fn find_test_rom() -> String {

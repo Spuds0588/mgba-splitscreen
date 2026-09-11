@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the DualBoy GBA audio test ROM (square wave on channel 2).
+# Build the mgba-splitscreen GBA audio test ROM (square wave on channel 2).
 set -euo pipefail
 cd "$(dirname "$0")"
 CLANG=${CLANG:-clang}

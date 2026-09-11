@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal stdlib-only WebSocket client + frame reader for DualBoy.
+"""Minimal stdlib-only WebSocket client + frame reader for mgba-splitscreen.
 
 No external dependencies (raw socket + RFC6455 handshake). Speaks the app's
 command protocol on both the desktop app (ws://127.0.0.1:8088, path "/") and
@@ -102,7 +102,7 @@ def send_text(sock, payload):
 
 
 class Client:
-    """Connects to a DualBoy frame/command socket and keeps the latest frame."""
+    """Connects to a mgba-splitscreen frame/command socket and keeps the latest frame."""
 
     def __init__(self, host=DEFAULT_HOST, port=DEFAULT_PORT, path=DEFAULT_PATH,
                  players=2, timeout=10):

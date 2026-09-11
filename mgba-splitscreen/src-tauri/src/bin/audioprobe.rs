@@ -4,7 +4,7 @@
 //! `cargo run --release --bin audioprobe -- <rom.gba> [frames=300]`
 
 use std::time::Instant;
-use dualboy_lib::gba::GbaInstance;
+use mgba_splitscreen_lib::gba::GbaInstance;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

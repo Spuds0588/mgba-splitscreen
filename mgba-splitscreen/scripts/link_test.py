@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Full DualBoy multiplayer test: drives BOTH apps into a real Four Swords
+"""Full mgba-splitscreen multiplayer test: drives BOTH apps into a real Four Swords
 session and compares their delivered frame rates.
 
 Dependency-free (raw_ws.py + PIL, both already in this repo's scripts).

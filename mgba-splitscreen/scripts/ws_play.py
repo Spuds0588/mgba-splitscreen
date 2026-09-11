@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive the running DualBoy Tauri app over its WebSocket (ws://127.0.0.1:8088)
+"""Drive the running mgba-splitscreen Tauri app over its WebSocket (ws://127.0.0.1:8088)
 to load a ROM, play into it with GBA button inputs, and verify the game keeps
 animating.
 

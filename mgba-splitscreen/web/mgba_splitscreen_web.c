@@ -1,22 +1,22 @@
-/* DualBoy in-browser emulation bridge.
+/* mgba-splitscreen in-browser emulation bridge.
  *
  * Compiles libmgba to WebAssembly (single-threaded) and exposes a small C API
  * the frontend drives: N GBA instances linked through mGBA's lockstep
  * coordinator, stepped cooperatively on the JS thread (one frame per call),
- * mirroring DualBoy's desktop wrapper (EmulationManager + GbaInstance).
+ * mirroring mgba-splitscreen's desktop wrapper (EmulationManager + GbaInstance).
  *
- * Exported functions (all prefixed db_):
- *   db_init(count)                  create `count` cores + lockstep cable
- *   db_load_rom(ptr, len)           load the same ROM bytes into every core
- *   db_run_frame()                  advance every non-asleep core one frame
- *   db_get_video(player) -> ptr     RGBA8888 frame buffer (240x160)
- *   db_set_keys(player, keys)       GBA key mask (active-high, mGBA order)
- *   db_get_audio() -> ptr           mixed stereo s16 chunk @ 32768 Hz
- *   db_audio_frames() -> int        number of stereo frames in that chunk
- *   db_save_state(player) -> size   capture one core's save state
- *   db_state_ptr() -> ptr           the captured save state bytes
- *   db_load_state(player) -> int    restore the captured state into a core
- *   db_quit()                       tear everything down
+ * Exported functions (all prefixed mgs_):
+ *   mgs_init(count)                  create `count` cores + lockstep cable
+ *   mgs_load_rom(ptr, len)           load the same ROM bytes into every core
+ *   mgs_run_frame()                  advance every non-asleep core one frame
+ *   mgs_get_video(player) -> ptr     RGBA8888 frame buffer (240x160)
+ *   mgs_set_keys(player, keys)       GBA key mask (active-high, mGBA order)
+ *   mgs_get_audio() -> ptr           mixed stereo s16 chunk @ 32768 Hz
+ *   mgs_audio_frames() -> int        number of stereo frames in that chunk
+ *   mgs_save_state(player) -> size   capture one core's save state
+ *   mgs_state_ptr() -> ptr           the captured save state bytes
+ *   mgs_load_state(player) -> int    restore the captured state into a core
+ *   mgs_quit()                       tear everything down
  */
 #include <mgba/core/core.h>
 #include <mgba/core/config.h>
@@ -67,14 +67,14 @@ struct Player {
  * console.log calls per second during link-heavy play (the FS linking screen),
  * and browser console output is expensive, tanking the frame rate exactly when
  * the link is busiest. So we always install a silent logger: the filter test is
- * a cheap bitmask, DEBUG/INFO are suppressed by default, and db_enable_debug()
+ * a cheap bitmask, DEBUG/INFO are suppressed by default, and mgs_enable_debug()
  * flips the filter to mLOG_ALL when you want the lockstep trace in the console.
  */
 static struct mStandardLogger g_logger;
 static bool g_logger_ready = false;
 
-/* Install the logger if needed and set its filter level. db_init always wants
- * the silent defaults, but must NOT clobber a level db_enable_debug() already
+/* Install the logger if needed and set its filter level. mgs_init always wants
+ * the silent defaults, but must NOT clobber a level mgs_enable_debug() already
  * raised (call order isn't guaranteed), so force=false only installs the first
  * time and force=true always sets the level. */
 static void install_logger(int levels, bool force) {
@@ -90,7 +90,7 @@ static void install_logger(int levels, bool force) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-void db_enable_debug(void) {
+void mgs_enable_debug(void) {
 	install_logger(mLOG_ALL, true);
 }
 
@@ -104,7 +104,7 @@ static int g_stat_wakes = 0;
 static int64_t g_stat_cycles = 0;
 
 /* Last completed frame counter per player, for tear-free snapshots in
- * db_run_frame (the live buffer is only complete between finishFrame and the
+ * mgs_run_frame (the live buffer is only complete between finishFrame and the
  * next vblank clear, exactly when frameCounter increments). */
 static uint32_t g_last_fc[MAX_PLAYERS];
 
@@ -116,7 +116,7 @@ static bool g_asleep[MAX_PLAYERS];
 
 /* The lockstep calls sleep/wake while a player waits for the others to catch
  * up (e.g. mid-transfer). We step every core sequentially on one thread, so
- * these just flip a flag and db_run_frame skips sleeping cores — the same
+ * these just flip a flag and mgs_run_frame skips sleeping cores — the same
  * cooperative model as the desktop wrapper. */
 static int user_index(struct mLockstepUser* u) {
 	return (int)(u - g_users);
@@ -131,7 +131,7 @@ static void user_wake(struct mLockstepUser* u) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-void db_init(int count) {
+void mgs_init(int count) {
 	/* Silent-by-default logger: suppress DEBUG/INFO so mLog never falls back to
 	 * printf/vprintf (see the logging note above). WARN/ERROR/FATAL still pass. */
 	install_logger(mLOG_WARN | mLOG_ERROR | mLOG_FATAL | mLOG_GAME_ERROR, false);
@@ -159,7 +159,7 @@ void db_init(int count) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-int db_load_rom(const uint8_t* rom, size_t len) {
+int mgs_load_rom(const uint8_t* rom, size_t len) {
 	if (len < 256 || len > (32u * 1024 * 1024)) {
 		return -1;
 	}
@@ -211,7 +211,7 @@ int db_load_rom(const uint8_t* rom, size_t len) {
 #define FRAME_CYCLES 280896 /* GBA VIDEO_TOTAL_LENGTH */
 
 EMSCRIPTEN_KEEPALIVE
-void db_run_frame(void) {
+void mgs_run_frame(void) {
 	/* Event-by-event cooperative stepping, mirroring the desktop wrapper's
 	 * frame loop: advance every player by one video frame's worth of cycles,
 	 * switching between players whenever one sleeps on the lockstep link (a
@@ -287,7 +287,7 @@ void db_run_frame(void) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-uint8_t* db_get_video(int player) {
+uint8_t* mgs_get_video(int player) {
 	if (player < 0 || player >= g_count) {
 		return NULL;
 	}
@@ -295,7 +295,7 @@ uint8_t* db_get_video(int player) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-void db_set_keys(int player, uint32_t keys) {
+void mgs_set_keys(int player, uint32_t keys) {
 	if (player < 0 || player >= g_count || !g_players[player].running) {
 		return;
 	}
@@ -321,12 +321,12 @@ static inline int16_t clamp16(int32_t v) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-void db_set_audio_source(int n) {
+void mgs_set_audio_source(int n) {
 	g_audio_source = n;
 }
 
 EMSCRIPTEN_KEEPALIVE
-int16_t* db_get_audio(void) {
+int16_t* mgs_get_audio(void) {
 	g_mix_frames = 0;
 	if (g_audio_source == 0) {
 		/* Muted: drain nothing, output silence. */
@@ -400,7 +400,7 @@ int16_t* db_get_audio(void) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-int db_audio_frames(void) {
+int mgs_audio_frames(void) {
 	return g_mix_frames;
 }
 
@@ -408,7 +408,7 @@ static uint8_t* g_state = NULL;
 static size_t g_state_size = 0;
 
 EMSCRIPTEN_KEEPALIVE
-size_t db_save_state(int player) {
+size_t mgs_save_state(int player) {
 	free(g_state);
 	g_state = NULL;
 	g_state_size = 0;
@@ -434,12 +434,12 @@ size_t db_save_state(int player) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-uint8_t* db_state_ptr(void) {
+uint8_t* mgs_state_ptr(void) {
 	return g_state;
 }
 
 EMSCRIPTEN_KEEPALIVE
-int db_load_state(int player) {
+int mgs_load_state(int player) {
 	if (!g_state || g_state_size == 0) {
 		return -1;
 	}
@@ -453,7 +453,7 @@ int db_load_state(int player) {
  * The frontend keeps one state per player (quick-save all), so it malls a
  * buffer, copies the bytes in, and hands them over — no shared global. */
 EMSCRIPTEN_KEEPALIVE
-int db_load_state_bytes(int player, const uint8_t* data, size_t size) {
+int mgs_load_state_bytes(int player, const uint8_t* data, size_t size) {
 	if (player < 0 || player >= g_count || !g_players[player].running) {
 		return -2;
 	}
@@ -471,7 +471,7 @@ int db_load_state_bytes(int player, const uint8_t* data, size_t size) {
  * mirror that here so browser imports behave identically. Call AFTER all
  * players' states are loaded. */
 EMSCRIPTEN_KEEPALIVE
-void db_reset_sio(void) {
+void mgs_reset_sio(void) {
 	if (!g_has_coord) {
 		return;
 	}
@@ -491,17 +491,17 @@ void db_reset_sio(void) {
  * 0xffffeXXX), so the frontend leaves it OFF unless explicitly asked for it with
  * `?fsassist=1`. See GBASIOLockstepCoordinatorSetFSSuppressed. */
 EMSCRIPTEN_KEEPALIVE
-void db_set_fs_assist(int enabled) {
+void mgs_set_fs_assist(int enabled) {
 	if (!g_has_coord) {
 		return;
 	}
 	GBASIOLockstepCoordinatorSetFSSuppressed(&g_coord, !enabled);
 }
 
-/* Stepping stats for the most recent db_run_frame: loop iterations, lockstep
+/* Stepping stats for the most recent mgs_run_frame: loop iterations, lockstep
  * sleep/wake counts (transfer rendezvous activity), and emulated cycles. */
 EMSCRIPTEN_KEEPALIVE
-void db_get_stats(int out[4]) {
+void mgs_get_stats(int out[4]) {
 	out[0] = g_stat_steps;
 	out[1] = g_stat_sleeps;
 	out[2] = g_stat_wakes;
@@ -509,7 +509,7 @@ void db_get_stats(int out[4]) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-void db_quit(void) {
+void mgs_quit(void) {
 	for (int i = 0; i < g_count; ++i) {
 		struct Player* p = &g_players[i];
 		if (p->core) {

@@ -972,28 +972,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dualboy"
-version = "0.2.0-beta.1"
-dependencies = [
- "axum",
- "base64 0.22.1",
- "bindgen",
- "cmake",
- "futures-util",
- "image",
- "libloading 0.8.9",
- "once_cell",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tokio",
- "tokio-tungstenite 0.21.0",
-]
-
-[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2374,6 +2352,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "mgba-splitscreen"
+version = "0.3.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "bindgen",
+ "cmake",
+ "futures-util",
+ "image",
+ "libloading 0.8.9",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tokio",
+ "tokio-tungstenite 0.21.0",
 ]
 
 [[package]]
