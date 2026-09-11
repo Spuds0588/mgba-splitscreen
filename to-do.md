@@ -263,6 +263,49 @@ Next experiments (see `history.md` "What to try next" for full reasoning):
    lockstep.c, document + commit the working state, write a PR-quality patch
    for upstream mGBA if it's genuinely driver-side.
 
+## 🤖 Android (TV, tablets, Chromebooks)
+
+### 2026-09-11 — Android TV shell VERIFIED END TO END
+
+The Android app is a Tauri v2 shell around the **same WASM engine the web build ships**,
+running in the system WebView. No native core is built for Android (`build.rs` returns
+early, src/lib.rs cfg-gates the modules/commands), so a build is minutes rather than an
+NDK cross-compile of the whole emulator. Verified on the `android-36;android-tv;x86_64`
+system image: installs, launches from the leanback launcher, boots the engine, and runs
+Four Swords in two linked cores — screens fully rendered, driven by the `?rom=` deep link
+fetched from the host over CORS. Build/emulator recipe is in `agents.md`.
+
+- [x] Leanback entry (`LEANBACK_LAUNCHER`), 320x180 `tv_banner.png`, `isGame`.
+- [x] `uses-feature android.hardware.touchscreen` declared **not required** — without
+      that, Android/Play treat an undeclared touchscreen as required and filter the app
+      off every TV before it can be installed.
+- [x] `tauri.android.conf.json` swaps `strip-web-engine` for `stage-web-engine`, so the
+      Android bundle ships the engine the desktop bundle deliberately removes.
+- [ ] **Release APK signing is undecided.** Only a debug APK has been built. A
+      distribution build needs a key in `gen/android/keystore.properties` (gitignored);
+      generating a throwaway key would make future updates impossible to install over it,
+      so this needs your real key (or CI secrets).
+- [ ] **Release (minified) Android build is untested.** The generated project sets
+      `isMinifyEnabled = true` + proguard for release; only the debug variant has been
+      exercised. Build the release variant before trusting it.
+- [ ] **Touch controls do not exist.** `pointerdown` is only wired to audio unlock, so a
+      tablet or touchscreen Chromebook needs an on-screen pad. The input plumbing is
+      ready for it: `P1_MAP`..`P4_MAP` already turn buttons into the bitmask that
+      `mgs_set_keys` consumes.
+- [ ] **A TV remote currently drives Player 2**, because P2's defaults are the arrow keys
+      plus Enter and that is exactly what a D-pad remote sends. Add an explicit TV mode so
+      a remote (and a single gamepad) can drive Player 1.
+- [ ] **On-device performance is unmeasured.** The emulator host (x86_64 + KVM +
+      swiftshader) says nothing about an Amlogic/Google-TV-class SoC. Expect 1-2 linked
+      cores to be the honest target on a TV stick, 4 on Chromebooks/tablets — measure on
+      real hardware before promising 4-up on TV.
+- [ ] **The 256 MB fixed WASM heap is the top risk on low-RAM devices.**
+      `web/build.sh` links `-sINITIAL_MEMORY=268435456 -sALLOW_MEMORY_GROWTH=0`; that held
+      on the emulator, but a 2 GB TV stick may reject it. Consider a lower initial size
+      and/or `ALLOW_MEMORY_GROWTH=1` for the Android/mobile build.
+- [ ] `tauri android init` regenerates `gen/android`; the manifest edits (and banner) are
+      committed, but re-running init can overwrite them — diff after any re-init.
+
 ## 🟠 mgba-splitscreen app / web remaining work
 
 - [ ] Root-cause the one observed tokio-worker segfault (`segfault at 4a8` in

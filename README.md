@@ -129,6 +129,44 @@ Rebuild the engine with `mgba-splitscreen/web/build.sh` (requires the Emscripten
 `mgba-splitscreen/src` by the Pages workflow). The desktop app never ships or loads the WASM
 engine — it embeds only `mgba-splitscreen/src` and runs the native Rust backend.
 
+### Android (tablets, Chromebooks, Android TV)
+
+The Android app is a thin **Tauri v2 shell around the same WebAssembly engine the web
+version uses**, running inside the system WebView. No native emulation core is built for
+Android — `build.rs` skips it entirely and the Rust side exposes no commands — so an
+Android build takes a couple of minutes instead of cross-compiling the whole emulator
+through the NDK. That choice is also what makes it work on a Chromecast or Google TV box:
+the system WebView is a platform component, whereas a PWA/Trusted Web Activity needs
+Chrome, which Android TV deliberately does not have.
+
+Prerequisites: **JDK 17**, the **Android SDK** (platform 36 + build-tools 36), **NDK 27**,
+and the Rust Android targets.
+
+```bash
+export JAVA_HOME=/path/to/jdk-17
+export ANDROID_HOME=/path/to/android-sdk
+export NDK_HOME=$ANDROID_HOME/ndk/27.3.13750724
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+
+cd mgba-splitscreen
+npm install
+npx tauri android init                            # once: generates src-tauri/gen/android
+npx tauri android build --target aarch64          # install on a real device or TV
+npx tauri android build --debug --target x86_64   # install on an x86_64 emulator
+```
+
+The APK lands in `src-tauri/gen/android/app/build/outputs/apk/<abi>/<profile>/`. Note the
+inversion of the desktop rule: the desktop bundles **strip** the WASM engine (the native
+app must not ship a second emulator), while the Android build **stages** it —
+`src-tauri/tauri.android.conf.json` swaps `npm run stage-web-engine` in for
+`strip-web-engine`. Because Android is treated as the web build, the `?players=` and
+`?rom=` deep links behave there exactly as they do in a browser, which is the practical way
+to start a game on a TV that has no keyboard.
+
+Release APKs must be signed by a key declared in `gen/android/keystore.properties`
+(gitignored, and intentionally not in this repo). `tauri android build` offers to generate
+one; decide on a real distribution key before shipping.
+
 ## Play in the browser (web version)
 
 Open **[https://spuds0588.github.io/mgba-splitscreen/](https://spuds0588.github.io/mgba-splitscreen/)**

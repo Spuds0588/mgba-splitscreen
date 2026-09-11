@@ -1,4 +1,21 @@
-const IS_TAURI = typeof window.__TAURI__ !== 'undefined';
+// Mobile builds (Android, and iOS if it ever happens) are Tauri apps that must
+// behave like the *web* build: they run the WebAssembly engine inside the system
+// WebView, and their Rust side deliberately exposes no commands at all (see the
+// `cfg(not(target_os = "android"))` gates in src-tauri/src/lib.rs). Folding that
+// into IS_TAURI is the whole mechanism — every `IS_TAURI ? desktopThing :
+// webThing` below then picks the web path on a tablet or TV, which is exactly
+// right for ROM picking, save-state export and the engine choice.
+//
+// The user-agent test is a heuristic, so `?engine=wasm|tauri` overrides it: a
+// misdetection would otherwise be unfixable without a rebuild, and on Android the
+// desktop path hangs retrying a WebSocket to 127.0.0.1:8088 that no process is
+// serving.
+const UA = typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+const ENGINE_OVERRIDE = urlParam('engine');
+const IS_MOBILE = ENGINE_OVERRIDE
+  ? ENGINE_OVERRIDE !== 'tauri'
+  : /Android|iPhone|iPad|iPod/i.test(UA);
+const IS_TAURI = typeof window.__TAURI__ !== 'undefined' && !IS_MOBILE;
 // Tauri v2 exposes commands as window.__TAURI__.core.invoke; grab it once so the
 // keyboard path doesn't rely on an undefined bare `invoke`.
 const invoke = IS_TAURI ? window.__TAURI__.core.invoke : null;

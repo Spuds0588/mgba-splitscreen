@@ -29,6 +29,50 @@ Reproduction (any session):
 
 ## Tried and verdicts (newest first)
 
+### 2026-09-11 — Android TV: shell built and verified, WASM engine on-device
+
+Added an Android target as a **Tauri v2 shell over the existing WASM engine** rather than
+cross-compiling libmgba through the NDK. Everything needed was already half-present, which
+is why this took a day rather than a week: `run()` already carried
+`#[cfg_attr(mobile, tauri::mobile_entry_point)]`, and `Cargo.toml` already had
+`crate-type = ["staticlib", "cdylib", "rlib"]`.
+
+The plumbing is two paired changes and one frontend switch: `build.rs` returns early for
+`CARGO_CFG_TARGET_OS=android` (still calling `tauri_build::build()`), `src/lib.rs`
+cfg-gates the native modules, commands and handler list behind
+`cfg(not(target_os = "android"))`, and `main.js` folds a mobile test into `IS_TAURI` so
+that every existing `IS_TAURI ? desktopThing : webThing` branch takes the web path on a
+tablet or TV. `IS_MOBILE` is a user-agent test with a `?engine=wasm|tauri` escape hatch,
+because on Android the desktop branch would hang retrying a WebSocket to 127.0.0.1:8088
+that nothing serves.
+
+Three things were checked instead of assumed, and all three would have been silent
+failures:
+
+- **`tauri.android.conf.json` really is auto-merged.** Proven out of band: the
+  `assets/tauri.conf.json` *inside the built APK* contains the 1280x720 window override
+  from that file, and the build log shows `npm run stage-web-engine` running instead of
+  the desktop `strip-web-engine`. Without the merge an Android APK would ship with no
+  engine — it installs and launches, then shows "could not start its engine".
+- **Android builds `--lib` only** (`cargo build --package ... --target
+  x86_64-linux-android --lib`), so the three desktop bins in `src/bin` never need Android
+  gating. That was the main thing I expected to have to fix and did not.
+- **`build.rs` is genuinely skipped.** The APK contains exactly one `.so`
+  (`libmgba_splitscreen_lib.so`, the Tauri glue) and no libmgba — and the asset names
+  (`mgba-splitscreen-web.wasm`, `index.html`) are embedded in it, so the engine is in and
+  the native core is out.
+
+Verified on the `android-36;android-tv;x86_64` image under KVM: installs, appears in the
+leanback launcher with its banner, boots the engine (logcat shows our own
+`Tauri/Console: .../main.js - Line 56 - GBA Serial I/O: FS assist: suppressed by host`,
+which only runs after `_mgs_init`), and runs Four Swords in two linked cores — reached by
+driving the WebView over CDP to `index.html?rom=http://10.0.2.2:8094/fs_rom.gba`, i.e. the
+new deep link plus a CORS-enabled host server. Both canvases 38400/38400 pixels non-black.
+
+Open items live in to-do.md: release signing, untested minified release variant, no touch
+controls, a TV remote only drives P2 today, unmeasured on-device performance, and the
+256 MB fixed WASM heap as the main low-RAM risk.
+
 ### 2026-09-11 — Web deep links (`?players`, `?rom`) landed
 
 Added `?players=1-4` (applied before `mgs_init`, so the coordinator is built at the

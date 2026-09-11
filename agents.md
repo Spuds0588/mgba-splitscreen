@@ -74,6 +74,47 @@ First libmgba build takes minutes + several GB RAM. cmake builds happen via the
 cargo build script; `mgba-splitscreen/tools/build.sh` re-derives the exact cmake `-D`
 defines so the harness struct layouts match `libmgba.a`.
 
+### Android (TV / tablet) — verified working 2026-09-11
+
+The Android app runs the **WASM engine in the system WebView**; no native core is built for
+that target. Set these up (user-local, no root) and export them before any `tauri android`
+command — the emulator/SDK live outside the repo:
+
+```bash
+export JAVA_HOME="$HOME/android-dev/jdk-17"                       # Temurin 17
+export ANDROID_HOME="$HOME/android-dev/sdk"                        # platform 36, build-tools 36
+export NDK_HOME="$HOME/android-dev/sdk/ndk/27.3.13750724"
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
+
+cd mgba-splitscreen
+npx tauri android init                            # once; then commit src-tauri/gen/android
+npx tauri android build --debug --target x86_64   # ~5 min cold; needs web/build.sh output
+```
+
+Emulator + on-device verification recipe (the emulator needs KVM; `-no-window` is fine):
+
+```bash
+export ANDROID_AVD_HOME="$HOME/.config/.android/avd"              # avdmanager writes here
+"$ANDROID_HOME/emulator/emulator" -avd tvtests -no-window -no-audio -no-boot-anim \
+    -gpu swiftshader_indirect -memory 2048 -port 5554 &
+"$ANDROID_HOME/platform-tools/adb" install -r -t <apk>
+# Launch through the TV (leanback) launcher, not just the activity:
+adb shell am start -a android.intent.action.MAIN \
+    -c android.intent.category.LEANBACK_LAUNCHER -n com.coreyb.mgbasplitscreen/.MainActivity
+# The app's JS console appears in logcat, tagged Tauri/Console:
+adb logcat -d | grep "Tauri/Console"
+# To drive the page, forward the debug WebView and use CDP (debug builds only):
+adb forward tcp:9222 localabstract:webview_devtools_remote_$(adb shell pidof com.coreyb.mgbasplitscreen)
+curl -s http://127.0.0.1:9222/json      # -> ws://127.0.0.1:9222/devtools/page/<id>
+```
+
+Ways to get a ROM into the Android app, in order of usefulness on a TV: the `?rom=<url>`
+deep link (works, and needs the host to send CORS headers — `10.0.2.2` reaches the host
+from an emulator), the Games Library / **File → Load ROM…** picker, and `adb push` plus a
+file manager. Verified end to end on the android-36 `android-tv` image: installs, appears
+in the TV launcher with its banner, boots the engine, and runs Four Swords in two linked
+cores (`?rom=` served from the host with CORS).
+
 ## Key gotchas
 
 - **ROM load order**: `core->init()` BEFORE `mCorePreloadFile()` (else

@@ -31,6 +31,22 @@ fn cmake_defines(dst: &Path) -> Vec<String> {
 }
 
 fn main() {
+    // Android builds never link the native core. The Android app is a thin shell
+    // around the same WebAssembly engine the web version ships (inside the system
+    // WebView), so running cmake for aarch64 would cross-compile the whole
+    // emulator through the NDK to produce a library nothing on that target calls.
+    // Skipping it keeps an Android build a couple of minutes instead of an
+    // hour-long toolchain fight. The `cfg(target_os = "android")` gates in
+    // src/lib.rs are the other half of this pair: they drop the modules that would
+    // otherwise expect bindings.rs and the linked core to exist.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+        println!("cargo:warning=native mGBA core skipped on Android; the WASM engine is used");
+        // tauri-build still has to run on every platform: it generates the
+        // context (icons, manifest fragments, capabilities) the app needs.
+        tauri_build::build();
+        return;
+    }
+
     // 1. Build libmgba using the cmake crate
     let mgba_path = "../..";
 

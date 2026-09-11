@@ -1,14 +1,31 @@
+// The native emulation core — and every piece of this crate that calls into it —
+// is desktop-only. Android runs the WebAssembly engine inside the system WebView,
+// exactly like the web version, so on that target this crate is a thin shell: no
+// bindgen module, no CMake-built core, no emulator thread, no WebSocket server.
+// build.rs skips the native build there; these gates are the other half of the
+// pair, and `run()` below assembles a builder with no invoke handler at all.
+#[cfg(not(target_os = "android"))]
 pub mod gba;
+#[cfg(not(target_os = "android"))]
 pub mod emulation;
+#[cfg(not(target_os = "android"))]
 pub mod audio;
+#[cfg(not(target_os = "android"))]
 mod bindings;
 
+#[cfg(not(target_os = "android"))]
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_os = "android"))]
 use base64::Engine as _;
+#[cfg(not(target_os = "android"))]
 use once_cell::sync::Lazy;
+#[cfg(not(target_os = "android"))]
 use tokio::net::TcpListener;
+#[cfg(not(target_os = "android"))]
 use tokio_tungstenite::tungstenite::Message;
+#[cfg(not(target_os = "android"))]
 use futures_util::{SinkExt, StreamExt};
+#[cfg(not(target_os = "android"))]
 use crate::emulation::EmulationManager;
 
 /// The running emulator, wrapped in a Mutex so `set_player_count` can swap in a new
@@ -16,6 +33,7 @@ use crate::emulation::EmulationManager;
 /// WebSocket clients: the frame/status broadcast channels are global (see
 /// `emulation.rs`), so existing subscriptions survive the swap. Defaults to 2
 /// players; override at launch with `--players N` (1-4).
+#[cfg(not(target_os = "android"))]
 static EMULATOR: Lazy<Mutex<Arc<EmulationManager>>> = Lazy::new(|| {
     let mut players = 2usize;
     let mut args = std::env::args().skip(1);
@@ -28,21 +46,25 @@ static EMULATOR: Lazy<Mutex<Arc<EmulationManager>>> = Lazy::new(|| {
 });
 
 /// Run a closure against the current emulator (brief lock; no awaits inside).
+#[cfg(not(target_os = "android"))]
 fn with_emulator<T>(f: impl FnOnce(&EmulationManager) -> T) -> Result<T, String> {
     let guard = EMULATOR.lock().map_err(|e| e.to_string())?;
     Ok(f(&guard))
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn load_rom(path: String) -> Result<(), String> {
     with_emulator(|em| em.load_rom(&path))?
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn set_keys(player: u8, keys: u32) -> Result<(), String> {
     with_emulator(|em| em.set_keys(player, keys))?
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn player_count() -> Result<usize, String> {
     with_emulator(|em| em.player_count())
@@ -50,6 +72,7 @@ async fn player_count() -> Result<usize, String> {
 
 /// Toggle turbo / fast-forward. When on, the emulation loop drops its 60 Hz pacing
 /// and runs as fast as the host allows (locked players stay in sync).
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn set_turbo(enabled: bool) -> Result<(), String> {
     with_emulator(|em| {
@@ -59,6 +82,7 @@ async fn set_turbo(enabled: bool) -> Result<(), String> {
 
 /// Pause/unpause emulation across all instances at once. While paused the frame
 /// loop holds the last frame and freezes game time for every player together.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn set_paused(paused: bool) -> Result<(), String> {
     with_emulator(|em| {
@@ -69,6 +93,7 @@ async fn set_paused(paused: bool) -> Result<(), String> {
 /// Route audio to a specific instance (1-4), mix all (5), or mute (0).
 /// The core cannot separate a game's music from its SFX — each instance's
 /// output is one mixed stereo stream — so this selects WHICH mix you hear.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn set_audio_source(source: u8) -> Result<(), String> {
     emulation::set_audio_source(source);
@@ -78,6 +103,7 @@ async fn set_audio_source(source: u8) -> Result<(), String> {
 /// Unload the current ROM and stop emulation without quitting the app.
 /// Swaps in a fresh manager (same player count, no ROM) so the next
 /// File->Load picks up clean cores.
+#[cfg(not(target_os = "android"))]
 fn quit_game_inner() -> Result<(), String> {
     let mut guard = EMULATOR.lock().map_err(|e| e.to_string())?;
     if guard.loaded_rom_path().is_none() {
@@ -92,11 +118,13 @@ fn quit_game_inner() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn quit_game() -> Result<(), String> {
     quit_game_inner()
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn turbo_enabled() -> Result<bool, String> {
     with_emulator(|em| em.turbo_enabled())
@@ -106,6 +134,7 @@ async fn turbo_enabled() -> Result<bool, String> {
 /// emulation loop, swaps in a fresh manager at the new count, restarts the loop, and
 /// auto-reloads the ROM that was loaded (so switching 2P<->4P mid-session restarts
 /// the same game with the new link topology).
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn set_player_count(n: u8) -> Result<(), String> {
     let n = (n as usize).clamp(1, 4);
@@ -127,24 +156,28 @@ async fn set_player_count(n: u8) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn export_save(player: u8, path: String) -> Result<(), String> {
     let data = with_emulator(|em| em.export_save(player))??;
     std::fs::write(&path, data).map_err(|e| e.to_string())
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn import_save(player: u8, path: String) -> Result<(), String> {
     let data = std::fs::read(&path).map_err(|e| e.to_string())?;
     with_emulator(|em| em.import_save(player, &data))?
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn export_save_set(path: String) -> Result<(), String> {
     let data = with_emulator(|em| em.export_save_set())??;
     std::fs::write(&path, data).map_err(|e| e.to_string())
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn import_save_set(path: String) -> Result<(), String> {
     let data = std::fs::read(&path).map_err(|e| e.to_string())?;
@@ -152,6 +185,7 @@ async fn import_save_set(path: String) -> Result<(), String> {
 }
 
 /// Export a full save-state set (all instances, one DUALSTATE blob) to a file.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn export_state_set(path: String) -> Result<(), String> {
     let data = with_emulator(|em| em.save_state_set())??;
@@ -160,6 +194,7 @@ async fn export_state_set(path: String) -> Result<(), String> {
 
 /// Import a full save-state set from a file (see `load_state_set` for the
 /// lockstep-driver reset it performs after restoring).
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn import_state_set(path: String) -> Result<(), String> {
     let data = std::fs::read(&path).map_err(|e| e.to_string())?;
@@ -167,12 +202,14 @@ async fn import_state_set(path: String) -> Result<(), String> {
 }
 
 /// Quick save state (all instances into one in-memory slot). F5 hotkey.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn save_state() -> Result<(), String> {
     with_emulator(|em| em.quick_save_state())?
 }
 
 /// Quick load state (all instances from the in-memory slot). F7 hotkey.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn load_state() -> Result<(), String> {
     with_emulator(|em| em.quick_load_state())?
@@ -181,6 +218,7 @@ async fn load_state() -> Result<(), String> {
 /// A GBA ROM found by `scan_games_dir`. `box_art` is the path of a sibling image
 /// (same stem, .png/.jpg/...) if one exists, for the game library's tiles.
 #[derive(serde::Serialize)]
+#[cfg(not(target_os = "android"))]
 struct GameEntry {
     name: String,
     path: String,
@@ -189,6 +227,7 @@ struct GameEntry {
 
 /// List the `.gba` files in a directory (non-recursive), sorted by name, with the
 /// path of any sibling box-art image. Powers the game library's "Add Folder".
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn scan_games_dir(path: String) -> Result<Vec<GameEntry>, String> {
     let mut out = Vec::new();
@@ -228,6 +267,7 @@ async fn scan_games_dir(path: String) -> Result<Vec<GameEntry>, String> {
 /// Read a box-art image from disk and return it as a `data:` URL for the library
 /// tile's <img>. The frontend calls this lazily per tile (scan_games_dir returns
 /// only the path, not the bytes).
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn read_box_art(path: String) -> Result<String, String> {
     let data = std::fs::read(&path).map_err(|e| e.to_string())?;
@@ -254,6 +294,7 @@ async fn read_box_art(path: String) -> Result<String, String> {
 
 #[derive(serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[cfg(not(target_os = "android"))]
 enum ClientCommand {
     Keys { player: u8, keys: u32 },
     LoadRom { path: String },
@@ -265,6 +306,7 @@ enum ClientCommand {
     LoadState,
 }
 
+#[cfg(not(target_os = "android"))]
 async fn start_websocket_server() {
     let listener = TcpListener::bind("127.0.0.1:8088").await.expect("Failed to bind WS");
     println!("WebSocket server listening on ws://127.0.0.1:8088");
@@ -353,41 +395,57 @@ async fn start_websocket_server() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    println!("Starting emulation manager...");
-    // Emulation at 60 FPS with every emulated frame broadcast (video 60). The
-    // frontend renders each one and drops only what its compositor can't keep up
-    // with (see EmulationManager::start).
-    EMULATOR.lock().unwrap().start(60);
-    println!("Emulation manager started.");
+    // Desktop only: start the emulator and the frame-streaming backend the frontend
+    // talks to over ws://127.0.0.1:8088. Android has none of that — it loads the
+    // WebAssembly engine into the WebView itself, so there is no emulator thread to
+    // start and no socket to serve (and no invoke handler to expose, below).
+    #[cfg(not(target_os = "android"))]
+    {
+        println!("Starting emulation manager...");
+        // Emulation at 60 FPS with every emulated frame broadcast (video 60). The
+        // frontend renders each one and drops only what its compositor can't keep up
+        // with (see EmulationManager::start).
+        EMULATOR.lock().unwrap().start(60);
+        println!("Emulation manager started.");
 
-    println!("Starting WebSocket server...");
-    // Start WebSocket server in background
-    tauri::async_runtime::spawn(start_websocket_server());
+        println!("Starting WebSocket server...");
+        // Start WebSocket server in background
+        tauri::async_runtime::spawn(start_websocket_server());
+    }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![
-            load_rom,
-            set_keys,
-            player_count,
-            set_player_count,
-            set_turbo,
-            turbo_enabled,
-            set_paused,
-            set_audio_source,
-            quit_game,
-            export_save,
-            import_save,
-            export_save_set,
-            import_save_set,
-            export_state_set,
-            import_state_set,
-            save_state,
-            load_state,
-            scan_games_dir,
-            read_box_art
-        ])
+        .plugin(tauri_plugin_dialog::init());
+
+    // Every command is a thin wrapper over the native core, so the handler list is
+    // desktop-only too. Android gets an empty handler set on purpose: the frontend
+    // treats mobile as "web with a bundled engine" (see IS_MOBILE in main.js) and
+    // never invokes anything, so exposing commands that could only return errors
+    // would just be a trap for the next reader.
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        load_rom,
+        set_keys,
+        player_count,
+        set_player_count,
+        set_turbo,
+        turbo_enabled,
+        set_paused,
+        set_audio_source,
+        quit_game,
+        export_save,
+        import_save,
+        export_save_set,
+        import_save_set,
+        export_state_set,
+        import_state_set,
+        save_state,
+        load_state,
+        scan_games_dir,
+        read_box_art
+    ]);
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
