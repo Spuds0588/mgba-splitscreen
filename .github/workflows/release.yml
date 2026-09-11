@@ -50,14 +50,14 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: DualBoy/src-tauri
+          workspaces: mgba-splitscreen/src-tauri
 
       - name: Install npm dependencies
-        working-directory: DualBoy
+        working-directory: mgba-splitscreen
         run: npm ci
 
       - name: Build desktop bundle (Tauri)
-        working-directory: DualBoy
+        working-directory: mgba-splitscreen
         run: npm run tauri build
 
       - name: Upload build artifacts
@@ -65,7 +65,7 @@ jobs:
         with:
           name: bundles-${{ matrix.os }}
           if-no-files-found: error
-          path: DualBoy/src-tauri/target/release/bundle/**
+          path: mgba-splitscreen/src-tauri/target/release/bundle/**
 
   release:
     needs: build
@@ -80,9 +80,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: "DualBoy ${{ github.ref_name }}"
+          name: "mgba-splitscreen ${{ github.ref_name }}"
           body: |
-            Prebuilt DualBoy binaries.
+            Prebuilt mgba-splitscreen binaries.
 
             - **Desktop app** (Linux: .deb/.rpm/.AppImage, macOS: .dmg, Windows: .msi installer)
             - **Web version**: fully in-browser, no install or backend needed —

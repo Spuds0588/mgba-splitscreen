@@ -1,4 +1,4 @@
-# DualBoy
+# mgba-splitscreen
 
 > ## 🕹️ [Try it in your browser — no install](https://spuds0588.github.io/mgba-splitscreen/)
 >
@@ -6,7 +6,7 @@
 > players, and play. (A ROM is required to play; use the **Games Library** or
 > **File → Load ROM**.)
 
-DualBoy is a **split-screen Game Boy Advance emulator**: run multiple GBA instances
+mgba-splitscreen is a **split-screen Game Boy Advance emulator**: run multiple GBA instances
 side by side, linked together over a virtual link cable, so two to four players can
 play multiplayer GBA games (trading, link battles, co-op, etc.) on a single machine —
 each player gets their own screen and their own controls.
@@ -20,9 +20,9 @@ the instances in perfect sync.
 
 - **`libmgba` (C)** — the mGBA core, compiled as a static library. Does all emulation,
   including the lockstep link-cable driver that keeps instances in lockstep.
-- **Rust backend** (`DualBoy/src-tauri`) — wraps `libmgba` (via `bindgen`), manages the
+- **Rust backend** (`mgba-splitscreen/src-tauri`) — wraps `libmgba` (via `bindgen`), manages the
   emulation instances, runs the frame loop, and serves frames + input over a WebSocket.
-- **Frontend** (`DualBoy/src`) — a lightweight HTML/JS canvas UI that renders each
+- **Frontend** (`mgba-splitscreen/src`) — a lightweight HTML/JS canvas UI that renders each
   instance's screen and maps keyboard/gamepad input to GBA buttons.
 
 The backend and frontend communicate over WebSocket, so the same frontend can be used
@@ -111,7 +111,7 @@ The desktop app is a [Tauri](https://tauri.app/) v2 project. Prerequisites:
 - Node.js (`npm`) for the Tauri CLI
 
 ```bash
-cd DualBoy
+cd mgba-splitscreen
 npm install
 npm run tauri dev        # development run
 npm run tauri build      # production build (bundles .deb/.AppImage on Linux, etc.)
@@ -124,10 +124,10 @@ several GB of RAM; subsequent builds are incremental.
 
 The web version is fully client-side — the mGBA core is compiled to WASM and runs in
 the page; no backend is involved, so GitHub Pages (or any static host) can serve it.
-Rebuild the engine with `DualBoy/web/build.sh` (requires the Emscripten SDK; produces
-`DualBoy/web/dualboy-web.{js,wasm}`, which are committed and staged alongside
-`DualBoy/src` by the Pages workflow). The desktop app never ships or loads the WASM
-engine — it embeds only `DualBoy/src` and runs the native Rust backend.
+Rebuild the engine with `mgba-splitscreen/web/build.sh` (requires the Emscripten SDK; produces
+`mgba-splitscreen/web/mgba-splitscreen-web.{js,wasm}`, which are committed and staged alongside
+`mgba-splitscreen/src` by the Pages workflow). The desktop app never ships or loads the WASM
+engine — it embeds only `mgba-splitscreen/src` and runs the native Rust backend.
 
 ## Play in the browser (web version)
 
@@ -140,8 +140,8 @@ and all players' screens, controls (keyboard + gamepad), save states, audio rout
 and view modes work identically.
 
 You can also self-host the same static site locally (`python3 -m http.server 8090 -d
-DualBoy/src` — copy `DualBoy/web/dualboy-web.{js,wasm}` into `DualBoy/src/` first, or
-run `DualBoy/web/build.sh`). (A future "hosted multiplayer" mode could relay a host's
+mgba-splitscreen/src` — copy `mgba-splitscreen/web/mgba-splitscreen-web.{js,wasm}` into `mgba-splitscreen/src/` first, or
+run `mgba-splitscreen/web/build.sh`). (A future "hosted multiplayer" mode could relay a host's
 frames to remote players over WebRTC — see the roadmap.)
 
 ## Beta releases
@@ -151,9 +151,9 @@ Beta builds are produced from version tags (`vX.Y.Z-beta.N`) by the
 
 | Platform | Artifact |
 |----------|----------|
-| Linux | `dualboy_*.deb` + `dualboy_*.AppImage` |
-| macOS | `dualboy_*.dmg` |
-| Windows | `dualboy_*.msi` (installer) |
+| Linux | `mgba-splitscreen_*.deb` + `mgba-splitscreen_*.AppImage` |
+| macOS | `mgba-splitscreen_*.dmg` |
+| Windows | `mgba-splitscreen_*.msi` (installer) |
 | Web | no artifact needed — the fully in-browser WebAssembly build is always live on GitHub Pages |
 
 The fully playable web version is always live on
@@ -163,7 +163,7 @@ The fully playable web version is always live on
 To cut a beta:
 
 ```bash
-# bump the version in DualBoy/src-tauri/tauri.conf.json and DualBoy/package.json,
+# bump the version in mgba-splitscreen/src-tauri/tauri.conf.json and mgba-splitscreen/package.json,
 # commit, then tag and push (the workflow uploads to a GitHub Release):
 git tag v0.1.0-beta.1
 git push origin v0.1.0-beta.1
@@ -180,7 +180,7 @@ pick up where the last one left off.
 
 ## License & attribution
 
-DualBoy's original code is distributed under the same terms as mGBA, the
+mgba-splitscreen's original code is distributed under the same terms as mGBA, the
 [Mozilla Public License version 2.0](https://www.mozilla.org/MPL/2.0/).
 
 The emulation core is **mGBA**, Copyright © 2013 – 2026 Jeffrey Pfau.

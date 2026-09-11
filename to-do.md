@@ -34,7 +34,7 @@ keep it for the diagnosis trail but treat the fix as landed.
 - [ ] `quit_game` → `load_rom` over the app's WebSocket **wedges the emulator**:
       after the pair, every instance reports 0.0 fps and the app emits no frames
       at all (the frame loop stops logging too). Workaround is to restart the
-      process. Reproduce with `DualBoy/scripts/raw_ws.py` (`{"type":"quit_game"}`,
+      process. Reproduce with `mgba-splitscreen/scripts/raw_ws.py` (`{"type":"quit_game"}`,
       then `load_rom`) before blaming the link for a frozen session.
 
 **Next feature — deep-link the web version:**
@@ -46,7 +46,7 @@ keep it for the diagnosis trail but treat the fix as landed.
       decision); player count is self-contained. Name the parameters in the same
       pass as the branding rename below so docs only get written once.
 
-**Branding:** the project is being renamed from "DualBoy" to match the repo
+**Branding:** the project is being renamed from "mgba-splitscreen" to match the repo
 name; see the housekeeping section for what still carries the old name.
 
 ### 2026-09-11 (later) — the H1 experiment was the regression; reverted
@@ -62,7 +62,7 @@ realignment that had just gotten FS 2P past the linking screen. **Restored the
 "did not receive data"), 4P wire IDs correct (master `200B` id0, children
 `609F/60AF/60BF` ids 1/2/3).
 
-**Do not trust `DualBoy/tools/threaded_link` screen verdicts.** Its A+B "confirm"
+**Do not trust `mgba-splitscreen/tools/threaded_link` screen verdicts.** Its A+B "confirm"
 presses B on the link screen, which *cancels* the link, and `dump_ppm(g_cur)`
 reads a lagging snapshot: the `fs_ab_before` dump is the intro cutscene, and what
 it then watches is the **title attract demo**, not gameplay. Judge progress on the
@@ -96,17 +96,17 @@ assist ON → 0 stalled transfers, 4 injections, still on the linking screen;
 assist OFF → 0 stalled transfers, still the same screen. Both are alive (the
 link screen's blink animates). The assist is unproven, large, and uncommitted.
 
-**Recommended posture while debugging:** run with `DUALBOY_FS_ASSIST=0`. The
+**Recommended posture while debugging:** run with `MGBA_SPLITSCREEN_FS_ASSIST=0`. The
 assist has never advanced the game; with the Round-6 ack barrier in place the
 unassisted path is already stall-free, so the assist only muddies the trace.
 Decide explicitly whether to rip it out before it grows further.
 
 **Immediate next step:** a *fresh-boot* baseline. Every A/B so far used the
-`dualboy.dualbystate` import, which restores into a mid-handshake freeze and so
+`mgba-splitscreen.dualbystate` import, which restores into a mid-handshake freeze and so
 cannot reach gameplay — that confound is why results keep contradicting each
 other. Drive FS from boot (file-select → name entry → CHOOSE A GAME → Four
 Swords) at 2P and 4P: if 2P reaches name entry and 4P does not, the bug is in
-FS's 4-unit expectations. `DualBoy/scripts/link_test.py` already drives that
+FS's 4-unit expectations. `mgba-splitscreen/scripts/link_test.py` already drives that
 menu path over the websocket.
 
 Goal: get *The Legend of Zelda: A Link to the Past / Four Swords* past the
@@ -135,8 +135,8 @@ same cycle for both games). Full detail: history.md 2026-09-08 entries.
      type 9) → "Save state expects different bootleg type" on EVERY state import
      → bootleg section skipped → P1 executed garbage (PC at 0x0D000000) and the
      kick's all-players gates could never pass. Fix: `memset(state, 0, ...)` at
-     the top of GBASerialize. Also patched the existing dualboy.dualbystate
-     (zeroed 2 bytes at 0x2C2 per blob; backup /tmp/dualboy_orig.dualbystate).
+     the top of GBASerialize. Also patched the existing mgba-splitscreen.dualbystate
+     (zeroed 2 bytes at 0x2C2 per blob; backup /tmp/mgba-splitscreen_orig.dualbystate).
   2. State-load freeze (fr=0): driver reset kept stale restored event queues →
      first HARD_SYNC re-slept the secondaries forever. Fix: drop queue + rebuild
      freelist + clear asleep in GBASIOLockstepDriverReset. (This edit was
@@ -146,10 +146,10 @@ same cycle for both games). Full detail: history.md 2026-09-08 entries.
   warnings, all 4 cores 60fps (old lib: sleep:[TTTT] freeze), identify OK,
   `FS kick: invoking` x32, `kicked deadlock (phase=2 recv=13 got12=1)` x3 —
   the kick now injects and games consume got12.**
-- Rebuilt: WASM (10:54, into DualBoy/web + src), native lib + server (10:43,
+- Rebuilt: WASM (10:54, into mgba-splitscreen/web + src), native lib + server (10:43,
   running as pid 91446), harness (10:44). build.sh dies silently when a
   concurrent build clobbers build-wasm/ — run make + emcc manually then.
-- App stability: dualboy-web runs indefinitely via `setsid nohup ... &` (earlier
+- App stability: mgba-splitscreen-web runs indefinitely via `setsid nohup ... &` (earlier
   "crashes" were shell process-group teardown, not the app). No segfault seen.
 - raw_ws.py audio-tag bug fixed (reader kept audio chunks as `latest` → spurious
   None frames) + auto-reconnect + cap_frames.py helper.
@@ -167,15 +167,15 @@ same cycle for both games). Full detail: history.md 2026-09-08 entries.
 1. [x] fs8c 3rd confirmation — gameplay reached after a real 60s 9:2 stall + 2 boundary kicks.
 2. [~] VERIFY IN THE REAL APP via the user's 4P pre-link save state — server side
      FULLY VERIFIED (round 4, app_run11.log: clean import, 60fps x4, kick
-     injecting x2+). Browser retest pending the db_reset_sio + decline-diagnostics
+     injecting x2+). Browser retest pending the mgs_reset_sio + decline-diagnostics
      fix (round 4, below).
 
 ### 2026-09-09 (round 4) — browser P1 divergence: WASM import missing driver reset
 - Root cause: `emulation.rs load_state_set` resets every driver after load;
-  `dualboy_web.c db_load_state_bytes` (browser) did NOT — stale restored
+  `mgba_splitscreen_web.c mgs_load_state_bytes` (browser) did NOT — stale restored
   queues/asleep flags diverged P1's handshake (polled 0x0D000000, kick gates
   blocked, zero injections; server same file: 0 OOB + 219 injections).
-- Fixes (rebuilt, server pid 119307): `db_reset_sio()` export + wired into both
+- Fixes (rebuilt, server pid 119307): `mgs_reset_sio()` export + wired into both
   wasm import paths; kick decline diagnostics (`FS kick declined (gate):
   P1(mode lstat ssub role ph recv got12)...` rate-limited); session-log flush
   timer bug (re-arm unconditionally + sendBeacon on unload — logs were dying in
@@ -192,7 +192,7 @@ same cycle for both games). Full detail: history.md 2026-09-08 entries.
          => evidence says (b). Echo/unstick stay host-armed (off unless armed).
 3. [x] Reverted TEMP traces in src/gba/io.c + src/gba/sio.c; rebuilt lib+harness.
 4. [ ] fs10 = fs6 on the CLEANED tree — confirm gameplay still reached.
-5. [ ] Verify in the real app (dualboy-web / nav_fs.py + manual key events) if
+5. [ ] Verify in the real app (mgba-splitscreen-web / nav_fs.py + manual key events) if
      feasible; then 4P.
 6. [ ] Commit sequence on `fs-link-loosen-timing`: (committed timing-loosen
      history stays) + the lockstep.c fix as one clean commit; decide the fate
@@ -230,9 +230,9 @@ Uncommitted work in the tree (branch `fs-link-loosen-timing`):
 - `src/gba/sio/lockstep.c` + `include/.../lockstep.h` — FS assist (lazy cart
   ID, host-armed echo, stalled-round echo, transferActive unstick),
   NORMAL8/32 master read-back fix.
-- `DualBoy/tools/rendezvous.{c,h}` — mirror assist + `_fsAssistNormalize`
+- `mgba-splitscreen/tools/rendezvous.{c,h}` — mirror assist + `_fsAssistNormalize`
   (0xFFF1/0xFFF3 checksum-drift correction) + `ReadMultiRegs` + `SetFSArmed`.
-- `DualBoy/tools/threaded_link.c` — `--fs3` (post-link flow, assist on),
+- `mgba-splitscreen/tools/threaded_link.c` — `--fs3` (post-link flow, assist on),
   `--fs4` (same, no assist), `--fs5` (no assist + full SIO DEBUG), button
   probes, richer `dump_fs_state`.
 - `src/gba/io.c` — TEMP instrumentation (SIOCNT/SIOMULTI read trace, RAW
@@ -252,10 +252,10 @@ Next experiments (see `history.md` "What to try next" for full reasoning):
    lockstep.c, document + commit the working state, write a PR-quality patch
    for upstream mGBA if it's genuinely driver-side.
 
-## 🟠 DualBoy app / web remaining work
+## 🟠 mgba-splitscreen app / web remaining work
 
 - [ ] Root-cause the one observed tokio-worker segfault (`segfault at 4a8` in
-      `dualboy-web`): suspected cross-thread `load_rom` (tokio) vs `run_frame`
+      `mgba-splitscreen-web`): suspected cross-thread `load_rom` (tokio) vs `run_frame`
       (emulation thread). Needs sustained-play re-testing now that logging and
       the release build are fixed.
 - [ ] Drive FS to *actual gameplay* at 4P and confirm the link-heavy title
@@ -282,7 +282,7 @@ Next experiments (see `history.md` "What to try next" for full reasoning):
 ### 2026-09-10 (round 6) — the link-screen assist was never armed; state import is a dead end
 - **Fixed:** `GBASIOLockstepCoordinatorSetFSArmed()` had exactly one caller in
   the tree — the test harness. Neither `emulation.rs` (desktop + web server)
-  nor `dualboy_web.c`/`main.js` ever armed it, so `_fsAssistTick`'s discovery
+  nor `mgba_splitscreen_web.c`/`main.js` ever armed it, so `_fsAssistTick`'s discovery
   echo returned at its guard and was dead code in the app and the browser.
   Now self-armed in `_fsAssistKick` when the FS cart is identified and every
   attached player is in link-screen mode (IWRAM 0x6D10 == 9). Watch for
@@ -290,7 +290,7 @@ Next experiments (see `history.md` "What to try next" for full reasoning):
   Caveat: 2P gameplay WAS reached in the harness with `armed=0`
   (2026-09-08 entry above), so the self-arm is a needed gap-fix, not proof by
   itself that the cooperative model completes the discovery.
-- **The user's `dualboy.dualbystate` cannot reach gameplay from any model.**
+- **The user's `mgba-splitscreen.dualbystate` cannot reach gameplay from any model.**
   It is captured mid-handshake (mode=9, lstat=0, ssub=3; P1 role=8 phase=2
   recv=13); after restore no transfers ever resume (native repro, threaded
   harness `--fs11`, browser) and every game parks on "Linking with other

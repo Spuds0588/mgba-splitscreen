@@ -5,43 +5,51 @@
 
 ## What this project is
 
-**DualBoy** is a split-screen GBA emulator: 2–4 GBA instances running side by
+**mgba-splitscreen** is a split-screen GBA emulator: 2–4 GBA instances running side by
 side, synchronized over a virtual link cable (mGBA's lockstep SIO support), so
 multiple players can trade/battle/co-op in GBA games on one machine. It is a
 fork of **mGBA** (`Spuds0588/mgba-splitscreen.git`, tracking `mgba-emu/mgba`
-upstream). The `DualBoy/` directory is a Tauri v2 desktop app (plus a web
-server build) on top of `libmgba`; everything outside `DualBoy/` is upstream
+upstream). The `mgba-splitscreen/` directory is a Tauri v2 desktop app (plus a web
+server build) on top of `libmgba`; everything outside `mgba-splitscreen/` is upstream
 mGBA source that `libmgba` compiles.
 
-The active development branch is `fs-link-loosen-timing` — the branch where we
-are chasing the **Legend of Zelda: Four Swords link-cable handshake bug**.
+The link-cable handshake bug that this branch was opened for is **fixed** (see
+`history.md`: the `_hardSync` experiment reverted), so `fs-link-loosen-timing`
+is now waiting to be merged. Treat it as the main line.
+
+**Naming:** the product, the app bundle, the binaries and every path are
+`mgba-splitscreen`. The GitHub repo is `Spuds0588/mgba-splitscreen` (it was never
+renamed, and does not need to be). Older notes and the on-disk save-state
+magics still say "DualBoy"/`DUALSTATE` — those are historical or binary-format
+compatibility, not live branding.
 
 ## Where things live
 
-- `DualBoy/src-tauri/src/gba.rs` — `GbaInstance`: wraps one `mCore` (init,
+- `mgba-splitscreen/src-tauri/src/gba.rs` — `GbaInstance`: wraps one `mCore` (init,
   ROM load, frame run, pixel read, keys, audio drain).
-- `DualBoy/src-tauri/src/emulation.rs` — `EmulationManager`: owns N
+- `mgba-splitscreen/src-tauri/src/emulation.rs` — `EmulationManager`: owns N
   `GbaInstance`s, the `GBASIOLockstepCoordinator` + `GBASIOLockstepDriver`s,
   frame loop, stats, turbo, audio routing. **The link handshake assist lives
-  in the C driver (below), armed from here.**
-- `DualBoy/src-tauri/src/lib.rs` — Tauri commands + WebSocket server
+  in the C driver (below), armed from here.** It is suppressed by default in
+  both frontends — the real fix is the driver's per-transfer hard sync.
+- `mgba-splitscreen/src-tauri/src/lib.rs` — Tauri commands + WebSocket server
   (`ws://127.0.0.1:8088`) that streams frames and accepts `load_rom`/`keys`
-  commands, so the app is drivable headlessly (`DualBoy/scripts/*.py`).
-- `DualBoy/src-tauri/src/web_server.rs` — standalone web build (`dualboy-web`).
-- `DualBoy/src/main.js` + `index.html` — frontend (video-call grid, input).
+  commands, so the app is drivable headlessly (`mgba-splitscreen/scripts/*.py`).
+- `mgba-splitscreen/src-tauri/src/bin/web_server.rs` — standalone web build (`mgba-splitscreen-web`).
+- `mgba-splitscreen/src/main.js` + `index.html` — frontend (video-call grid, input).
 - `src/gba/sio/lockstep.c` + `include/mgba/internal/gba/sio/lockstep.h` —
   **upstream mGBA lockstep SIO driver. The FS assist experiment patches here.**
-- `DualBoy/tools/threaded_link.c` — headless C harness: N cores on N real
+- `mgba-splitscreen/tools/threaded_link.c` — headless C harness: N cores on N real
   threads, canonical mGBA threaded lockstep + selectable in-process
   `GBASIORendezvousDriver` (rendezvous.c). **This is the primary FS
   reproduction/instrumentation tool.**
-- `DualBoy/tools/rendezvous.c`/`.h` — bespoke deterministic in-process SIO
+- `mgba-splitscreen/tools/rendezvous.c`/`.h` — bespoke deterministic in-process SIO
   driver (fork of lockstep.c; no per-transfer hard sync, cycle-locked
   transfers). Mirrors the lockstep.c FS assist.
-- `DualBoy/linktest/` — MULTI-mode link instrument ROM (shows roles, slots,
+- `mgba-splitscreen/linktest/` — MULTI-mode link instrument ROM (shows roles, slots,
   RTT, STALL, FRM parity). **Always rule out wrapper/lockstep problems with
   this ROM first.**
-- `DualBoy/scripts/` — Python drivers: `nav_fs.py` (drives FS to the link
+- `mgba-splitscreen/scripts/` — Python drivers: `nav_fs.py` (drives FS to the link
   screen), `ws_play.py`, `raw_ws.py`, `linktest_frm.py`, etc.
 - `Test Roms/` — owner's legal ROMs (gitignored). Four Swords is
   `Legend of Zelda, The - A Link To The Past Four Swords (U) [!].gba`.
@@ -52,18 +60,18 @@ are chasing the **Legend of Zelda: Four Swords link-cable handshake bug**.
 ## Build & run
 
 ```bash
-cd DualBoy/src-tauri
+cd mgba-splitscreen/src-tauri
 cargo build --release                      # ALWAYS release (~10x faster)
-./target/release/dualboy                   # desktop window (needs a display)
+./target/release/mgba-splitscreen                   # desktop window (needs a display)
 cargo test --release                       # 128 unit + 2 smoke tests
-cargo run --release --bin dualboy-web -- --players 4   # http://127.0.0.1:8080
+cargo run --release --bin mgba-splitscreen-web -- --players 4   # http://127.0.0.1:8080
 # C harness (for FS link experiments):
-DualBoy/tools/build.sh                     # rebuilds threaded_link against libmgba.a
-DualBoy/tools/threaded_link --fs3 "Test Roms/Legend of Zelda, The - A Link To The Past Four Swords (U) [!].gba"
+mgba-splitscreen/tools/build.sh                     # rebuilds threaded_link against libmgba.a
+mgba-splitscreen/tools/threaded_link --fs3 "Test Roms/Legend of Zelda, The - A Link To The Past Four Swords (U) [!].gba"
 ```
 
 First libmgba build takes minutes + several GB RAM. cmake builds happen via the
-cargo build script; `DualBoy/tools/build.sh` re-derives the exact cmake `-D`
+cargo build script; `mgba-splitscreen/tools/build.sh` re-derives the exact cmake `-D`
 defines so the harness struct layouts match `libmgba.a`.
 
 ## Key gotchas
@@ -82,7 +90,7 @@ defines so the harness struct layouts match `libmgba.a`.
   screen or a FRM divergence can be the ROM's own rendering (the linktest
   crawl was a per-frame full-screen clear). Always cross-check with the
   linktest ROM.
-- **The FS link bug is NOT a DualBoy wrapper bug.** It reproduces under
+- **The FS link bug is NOT a mgba-splitscreen wrapper bug.** It reproduces under
   threaded mGBA (canonical model) and under cycle-locked rendezvous. It is
   upstream issue mgba#3286 territory, but our assist work has gotten FS
   further than stock mGBA.

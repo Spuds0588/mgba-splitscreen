@@ -1,36 +1,36 @@
-# DualBoy Project Log
+# mgba-splitscreen Project Log
 
 ## What this is
 
-DualBoy is a **split-screen GBA emulator**: multiple GBA instances running side by side,
+mgba-splitscreen is a **split-screen GBA emulator**: multiple GBA instances running side by side,
 synchronized over a virtual link cable (mGBA's lockstep link support), so 2–4 players can
 trade/battle/co-op in GBA games on one machine.
 
 This repository is a fork of **mGBA** (`Spuds0588/mgba-splitscreen.git`, which tracks
-`mgba-emu/mgba` upstream). The `DualBoy/` directory is the Tauri v2 app built on top of
-`libmgba`. Everything outside `DualBoy/` is upstream mGBA source that `libmgba` compiles.
+`mgba-emu/mgba` upstream). The `mgba-splitscreen/` directory is the Tauri v2 app built on top of
+`libmgba`. Everything outside `mgba-splitscreen/` is upstream mGBA source that `libmgba` compiles.
 
 ## Architecture (read this first)
 
-- `DualBoy/src-tauri/src/gba.rs` — `GbaInstance`: wraps one `mCore`. Creates a GBA core,
+- `mgba-splitscreen/src-tauri/src/gba.rs` — `GbaInstance`: wraps one `mCore`. Creates a GBA core,
   loads a ROM, runs frames, reads pixels, sets keys, attaches the lockstep SIO driver.
-- `DualBoy/src-tauri/src/emulation.rs` — `EmulationManager`: owns two `GbaInstance`s,
+- `mgba-splitscreen/src-tauri/src/emulation.rs` — `EmulationManager`: owns two `GbaInstance`s,
   one `GBASIOLockstepCoordinator` + two `GBASIOLockstepDriver`s, and a broadcast channel
   that streams combined frame data (instance1 pixels ++ instance2 pixels) at ~60 FPS.
-- `DualBoy/src-tauri/src/lib.rs` — Tauri commands (`load_rom`, `set_keys`) + the
+- `mgba-splitscreen/src-tauri/src/lib.rs` — Tauri commands (`load_rom`, `set_keys`) + the
   WebSocket server (`ws://127.0.0.1:8088`) that pushes frames to the frontend **and**
   accepts the same input protocol as the web demo:
   `{"type":"load_rom","path":"..."}` / `{"type":"keys","player":N,"keys":bits}`.
   This makes the desktop app drivable headlessly (see `scripts/ws_play.py`).
-- `DualBoy/src-tauri/src/bindings.rs` — `include!(OUT_DIR/bindings.rs)` (bindgen output).
-- `DualBoy/src-tauri/build.rs` — cmake-builds `libmgba` + runs bindgen over
+- `mgba-splitscreen/src-tauri/src/bindings.rs` — `include!(OUT_DIR/bindings.rs)` (bindgen output).
+- `mgba-splitscreen/src-tauri/build.rs` — cmake-builds `libmgba` + runs bindgen over
   `mgba_bindings.h`. NOTE: `mgba_bindings.h` must include
   `<mgba/internal/gba/sio/lockstep.h>` for the `GBASIOLockstep*` API (upstream moved it
   out of the public `core/lockstep.h`).
-- `DualBoy/src/main.js` — frontend: top menu bar + video-call grid of canvases, RGBA
+- `mgba-splitscreen/src/main.js` — frontend: top menu bar + video-call grid of canvases, RGBA
   frames fed straight into `putImageData`, keyboard → `set_keys` via Tauri invoke or
   the WebSocket.
-- `DualBoy/src-tauri/target/` — build output (gitignored); `libmgba.a` + bindings are
+- `mgba-splitscreen/src-tauri/target/` — build output (gitignored); `libmgba.a` + bindings are
   cached here so incremental builds are fast.
 
 ## Key gotchas
@@ -46,7 +46,7 @@ This repository is a fork of **mGBA** (`Spuds0588/mgba-splitscreen.git`, which t
   format `putImageData` wants, so the frontend does zero per-pixel decode.
 - **Test ROMs**: `Test Roms/` (gitignored) holds the owner's legal ROMs for testing.
 - **Lockstep sleep = thread block**: mGBA's lockstep expects the primary's *thread* to
-  block inside `user->sleep` until the secondary catches up (the threaded model). DualBoy
+  block inside `user->sleep` until the secondary catches up (the threaded model). mgba-splitscreen
   runs all instances sequentially on one thread, so a no-op `sleep` let the primary run
   straight past its transfer-completion event → "MULTI did not receive data" → games
   showed the multi-pak "turn power OFF/ON" screen. Fix (2026-08-16):
@@ -89,7 +89,7 @@ Done:
 - [x] Fixed several crashes: ROM load init order, bindgen/layout mismatch,
       dangling coordinator pointer, NULL `mLockstepUser`, teardown order.
 - [x] Battery-save import/export (per instance + combined save set).
-- [x] Web demo: standalone server (`cargo run --bin dualboy-web -- --players N`)
+- [x] Web demo: standalone server (`cargo run --bin mgba-splitscreen-web -- --players N`)
       serving the same frontend in a browser over HTTP + WebSocket.
 - [x] Headless smoke tests against `Test Roms/` (load + render + save round-trip).
 - [x] ~~RGB565 frame streaming~~ — replaced by RGBA8888 (2026-08-16): the bandwidth
@@ -165,7 +165,7 @@ Done:
       - ROM load auto-starts emulation (`load_rom` sets `is_running`); no extra
         "start" action needed — confirmed from the log (`ROM loaded` → frames flow
         the same second).
-- [x] **GBA link-test ROM** (2026-08-17, `DualBoy/linktest/`): a MULTI-mode
+- [x] **GBA link-test ROM** (2026-08-17, `mgba-splitscreen/linktest/`): a MULTI-mode
       link instrument (v2.0 supports up to 4 linked units; v1.0 was 2-player) that
       shows, in near-real-time, the data each unit sends and receives
       (`SIOMLT_SEND`/`SIOMULTI0-3`, all four slots), the per-slave round-trip time
@@ -181,7 +181,7 @@ Done:
 - [x] **Lockstep desync + 128s crash fix** (2026-08-17): the linktest exposed that
       the primary ran at ~half the secondary's speed (`FRM 130` vs `234`), and the
       link died/spun at ~128 s. Root cause: mGBA's lockstep `user->sleep` is meant
-      to BLOCK a player's host thread, but DualBoy runs both players on one thread,
+      to BLOCK a player's host thread, but mgba-splitscreen runs both players on one thread,
       so the old `++video.frameCounter` early-exit hack split the primary's ROM frame
       across two 60 Hz ticks (half speed) while the secondary — whose sleep flag the
       frame loop ignored — ran ahead until its 32-bit cycle clock wrapped and
@@ -226,8 +226,8 @@ Done:
   changing it restarts the emulator with that many instances. Backend: `set_player_count`
   command on `lib.rs`; the emulation manager now stops/rebuilds its instance set at
   runtime instead of taking the count only from the `--players` CLI flag (still honored
-  as the initial default). Works in both the Tauri app and `dualboy-web`.
-- **P3/P4 keyboard maps** were added earlier for 4P (`DualBoy/src/main.js`), disjoint
+  as the initial default). Works in both the Tauri app and `mgba-splitscreen-web`.
+- **P3/P4 keyboard maps** were added earlier for 4P (`mgba-splitscreen/src/main.js`), disjoint
   from P1/P2.
 - **Real-game linked test (2P, Four Swords):** drove both players through the full
   flow — boot → name entry (AAAA) → save → file select → CHOOSE A GAME → Four Swords
@@ -264,7 +264,7 @@ MODE_SET/TRANSFER_START/READY/hard-sync event flow):
   `sio.c`/`io.c` byte-identical and `lockstep.c` differing only by the committed
   non-positive-delay clamp (for the 128s wrap) — so this is **upstream mGBA
   issue #3286** ("can't get past the Linking screen", still open, `blocked: needs
-  retest`), not a DualBoy wrapper regression. It reproduces in stock mGBA.
+  retest`), not a mgba-splitscreen wrapper regression. It reproduces in stock mGBA.
 - **Most promising lead:** upstream's `a0647ffac` "Loosen timing where possible"
   (UNLOCKED_INTERVAL 4096→8192; delay hard sync while `waiting`; reset
   `nextHardSync` in `AckPlayer`) was an attempt at exactly this kind of handshake
@@ -307,7 +307,7 @@ FS linking (the handshake completes instead of hanging forever), so keep it on t
 branch. It is not a complete fix; the remaining post-link stall needs the deeper
 handshake-timing work (or an upstream fix) — see the root-cause section above.
 `emulation.rs` currently has a TEMP `mLogFilterSet("gba.sio", DEBUG)` enable to
-make the handshake/transfer event flow visible in `/tmp/dualboy_app.log`; remove it
+make the handshake/transfer event flow visible in `/tmp/mgba-splitscreen_app.log`; remove it
 when done debugging.
 
 Next time: reproduce with the linktest ROM first (see handoff notes) to confirm
@@ -342,7 +342,7 @@ reverted three weeks later — so there is no upstream fix to cherry-pick yet.)
 
 - **H3 — Sequential wrapper timing ≠ threaded-model timing.** mGBA's lockstep is
   designed for the threaded model (each player's `user->sleep` BLOCKS its host
-  thread; a separate mCoreThread frame-sync paces frames). DualBoy runs all
+  thread; a separate mCoreThread frame-sync paces frames). mgba-splitscreen runs all
   players on one thread via cooperative `runLoop` stepping. FS is timing
   sensitive where the linktest ROM is not. *Try:* build a small threaded C
   harness against libmgba (2 cores, 2 mCoreThreads, real blocking lockstep
@@ -382,13 +382,13 @@ Status log (append as each is tested):
       desync — with clean lockstep sync the game still doesn't accept the link,
       pointing at a register-bit or transfer-timing mismatch (H4/H6) next.
 - [ ] H2
-- [x] H3 — **tested + resolved (2026-08-18)**: built `DualBoy/tools/threaded_link.c`
+- [x] H3 — **tested + resolved (2026-08-18)**: built `mgba-splitscreen/tools/threaded_link.c`
       (real threads, real blocking deferred sleep/wake, 60fps pacing, ported nav_fs
       screen detection) and drove FS into the link screen. 95,056 transfers, 0
       drops, but 7,341 FEFE probes at ~120/s for the whole 60s → the handshake never
       completes, identical to the sequential wrapper. **Threaded execution does NOT
       fix FS; the bug is in `lockstep.c` (upstream #3286).** Do NOT spend effort
-      porting DualBoy to threads as a link fix — it is ruled out.
+      porting mgba-splitscreen to threads as a link fix — it is ruled out.
 - [ ] H4
 - [ ] H5
 - [ ] H6
@@ -396,7 +396,7 @@ Status log (append as each is tested):
 
 ### Fresh reproduction + handshake data (2026-08-18)
 
-Reproduced reliably via `dualboy-web --players 2` + `nav_fs.py --port 8080
+Reproduced reliably via `mgba-splitscreen-web --players 2` + `nav_fs.py --port 8080
 --path /ws` (drives both to the FS title) + a simultaneous START press on both.
 Result: 52,811 transfers flow, 0 "did not receive", and the full MULTI handshake
 is visible in the `MULTI transfer finished` log. The handshake is a repeating
@@ -426,12 +426,12 @@ machines keep drifting apart and resyncing. This is the concrete manifestation
 of the off-by-one timing skew that the earlier session could only infer.
 
 Reproduction recipe (save this):
-1. `cd DualBoy/src-tauri && ./target/release/dualboy-web --players 2 > /tmp/dualboy_web.log 2>&1 &`
+1. `cd mgba-splitscreen/src-tauri && ./target/release/mgba-splitscreen-web --players 2 > /tmp/mgba_splitscreen_web.log 2>&1 &`
 2. `curl -X POST --data-binary @"Test Roms/...Four Swords....gba" http://127.0.0.1:8080/load_rom`
-3. `python3 DualBoy/scripts/nav_fs.py --port 8080 --path /ws --players 2 --rom "Test Roms/..." `
+3. `python3 mgba-splitscreen/scripts/nav_fs.py --port 8080 --path /ws --players 2 --rom "Test Roms/..." `
    (drives both to the FS title)
 4. Press START on both simultaneously (raw_ws keys START on players 1+2).
-5. Watch `/tmp/dualboy_web.log` for `MULTI transfer finished` values.
+5. Watch `/tmp/mgba_splitscreen_web.log` for `MULTI transfer finished` values.
 
 ## Future dev options (documented, not yet built)
 
@@ -446,11 +446,11 @@ Reproduction recipe (save this):
 
 In progress / next:
 - [ ] Root-cause the one observed tokio-worker segfault (`segfault at 4a8` in
-      `dualboy-web`): suspected cross-thread `load_rom` (tokio) vs `run_frame` (std
+      `mgba-splitscreen-web`): suspected cross-thread `load_rom` (tokio) vs `run_frame` (std
       emulation thread), possibly aggravated by the old debug build's log flood. Needs
       sustained-play re-testing now that logging and build profile are fixed. The new
       per-second stats + unbuffered stdout make a recurrence visible immediately in
-      `/tmp/dualboy_app.log` before any crash.
+      `/tmp/mgba-splitscreen_app.log` before any crash.
 - [ ] Drive Four Swords to *actual gameplay* (past the story intro) at 4P and confirm
       the link-heavy title select stays smooth there too.
 - [ ] Audio routing (both instances' audio to the output).
@@ -468,13 +468,13 @@ GTK3, librsvg and libsoup were already present. Tooling used (all in the gitigno
 
 - `pip install --target .freebuff/pylibs python-xlib` (pure-Python, no root) for
   XTEST synthetic input + XGetImage window grabs.
-- `DualBoy/scripts/gui_smoke.py` (committed copy of `.freebuff/drive.py`) — drives the
+- `mgba-splitscreen/scripts/gui_smoke.py` (committed copy of `.freebuff/drive.py`) — drives the
   app: focuses the window, scrolls the webview with the End key (wheel events don't
   reach it), clicks the teal `Load ROM` button (found by grabbing the window and
   locating teal pixels), then in the GTK `Open File` dialog: Ctrl+L → paste the
   directory path via an X11 CLIPBOARD selection owner + Ctrl+V → Enter, then Escape,
   End x2 (selects the last row — the oldest ROM), then Enter to open. Full usage in
-  `DualBoy/scripts/README.md`.
+  `mgba-splitscreen/scripts/README.md`.
 
 Gotchas discovered while writing it (useful if you redo this):
 - This XWayland's core keyboard map has ONE keysym per keycode, so typing punctuation
@@ -488,14 +488,14 @@ Gotchas discovered while writing it (useful if you redo this):
 
 ### Deterministic gameplay driving (preferred)
 
-Driving the GTK dialog with synthetic X11 events is flaky, so `DualBoy/scripts/ws_play.py`
+Driving the GTK dialog with synthetic X11 events is flaky, so `mgba-splitscreen/scripts/ws_play.py`
 drives the emulator directly over the app's WebSocket instead — load a ROM, inject GBA
 button inputs per player, read the real emulated frames back, and verify animation. This
-is deterministic and needs no display. Example (see `DualBoy/scripts/README.md`):
+is deterministic and needs no display. Example (see `mgba-splitscreen/scripts/README.md`):
 
 ```bash
-./target/debug/dualboy &   # starts ws://127.0.0.1:8088
-python3 DualBoy/scripts/ws_play.py "Test Roms/Legend of Zelda, The - A Link To The Past Four Swords (U) [!].gba" \
+./target/debug/mgba-splitscreen &   # starts ws://127.0.0.1:8088
+python3 mgba-splitscreen/scripts/ws_play.py "Test Roms/Legend of Zelda, The - A Link To The Past Four Swords (U) [!].gba" \
   --boot 12 --seq "A WAIT:2500 A A A A WAIT:600 START WAIT:600 A WAIT:2500 A WAIT:2500 A"
 ```
 
@@ -505,13 +505,13 @@ This is what proved the full boot→new-save→name-entry→game-select→play f
 ## Build & run
 
 ```bash
-cd DualBoy/src-tauri
+cd mgba-splitscreen/src-tauri
 cargo build --release        # ALWAYS release: the Rust frame pipeline is ~10x faster
-./target/release/dualboy     # desktop window (needs a display)
+./target/release/mgba-splitscreen     # desktop window (needs a display)
 
 cargo test --release         # 128 unit + 2 smoke tests (needs Test Roms/)
-cargo run --release --bin dualboy-web -- --players 4            # http://127.0.0.1:8080 (video 60)
-cargo run --release --bin dualboy-web -- --players 4 --fps 30   # headless: throttle video to 30
+cargo run --release --bin mgba-splitscreen-web -- --players 4            # http://127.0.0.1:8080 (video 60)
+cargo run --release --bin mgba-splitscreen-web -- --players 4 --fps 30   # headless: throttle video to 30
 cargo run --release --bin bench -- <rom.gba> [players]         # emulation speed only
 ```
 
@@ -522,20 +522,20 @@ never slows emulation. Always use `cargo build --release`.
 
 ## Handoff notes for future sessions
 
-- Read this file + `DualBoy/src-tauri/src/*.rs` and `DualBoy/src/main.js`; the rest of
+- Read this file + `mgba-splitscreen/src-tauri/src/*.rs` and `mgba-splitscreen/src/main.js`; the rest of
   the repo is upstream mGBA.
 - **Troubleshoot link/perf issues with the linktest ROM FIRST.** When anything smells
   like a lockstep/desync/performance bug — a game crawling on a link-heavy screen
   (e.g. Four Swords title select), "MULTI did not receive data", the multi-pak
   power-off/on screen, or FRM counters diverging — load
-  `DualBoy/linktest/linktest.gba` (rebuild with `./build.sh` if you touched it) and
+  `mgba-splitscreen/linktest/linktest.gba` (rebuild with `./build.sh` if you touched it) and
   watch the on-screen readout on every player before touching game-specific tuning:
   roles (MASTER/SLAVE), all four slots S0-S3, per-slave RTT, STALL, PEERS, and —
   most importantly — that all FRM counters advance at the same rate. Run with
   `--players 2|3|4` to reproduce at the same scale as the failing scenario. This ROM
   is a link-heavy MULTI-mode game by design, so any wrapper-level frame starvation
   shows up here as an FRM divergence or a rising STALL, and it is far easier to
-  reason about than a real game. (See `DualBoy/linktest/main.c` header for the full
+  reason about than a real game. (See `mgba-splitscreen/linktest/main.c` header for the full
   protocol + expected readouts.) Two linktest details that matter: keep SIOCNT baud
   at 3 (fastest) — the default baud 0 makes the master's loop run 2 frames and shows
   a false FRM desync — and don't re-add a per-frame full-screen clear (draw static
@@ -553,14 +553,14 @@ with `mLockstepThreadUser` wiring `sleep`/`wake` to `mCoreThreadWaitFromThread` 
 window" feature is built exactly this way (`src/platform/qt/MultiplayerController.cpp`
 + `src/core/thread.c` + `src/core/lockstep.c`).
 
-DualBoy instead steps every instance SEQUENTIALLY on one thread and fakes
+mgba-splitscreen instead steps every instance SEQUENTIALLY on one thread and fakes
 `sleep`/`wake` with per-player flags (`emulation.rs` `LockstepUserCtx`). That flag
 reimplementation is a re-do of a subtle synchronization protocol, and it is the
 prime suspect for the residual FS stall *on top of* the known upstream issue
 [mgba#3286](https://github.com/mgba-emu/mgba/issues/3286) (which even threaded
 mGBA 0.10.3 hit, so threading alone may not be sufficient).
 
-**Decisive experiment built:** `DualBoy/tools/threaded_link.c` + `build.sh` — a
+**Decisive experiment built:** `mgba-splitscreen/tools/threaded_link.c` + `build.sh` — a
 headless harness that runs N cores on N real threads through upstream's own
 `GBASIOLockstepCoordinator` + `GBASIOLockstepDriver`. The per-player thread loop
 replicates `mCoreThread`'s semantics exactly: lockstep `sleep`/`wake` are deferred
@@ -569,11 +569,11 @@ and MUST NOT block — and the loop blocks on a condvar after `runLoop` returns)
 each thread paces itself to ~60 FPS. `--fs <rom>` drives both players through the
 nav_fs screen-detection state machine (ported to C) into the link screen and dumps
 PPM frames to `/tmp/fs_*.ppm`.
-Build with `DualBoy/tools/build.sh` (it re-derives the cmake `-D` defines so struct
+Build with `mgba-splitscreen/tools/build.sh` (it re-derives the cmake `-D` defines so struct
 layouts match `libmgba.a`; must define `-DUSE_PTHREADS -DENABLE_VFS -DENABLE_DIRECTORIES`
 or structs/`mCoreLoadFile` are mis-sized/undeclared). Usage:
 
-    DualBoy/tools/threaded_link <rom.gba> <2-4> <seconds> [script.txt]
+    mgba-splitscreen/tools/threaded_link <rom.gba> <2-4> <seconds> [script.txt]
 
 `script.txt` lines are `time_ms player keymask` (A=0x1 B=0x2 Sel=0x4 Start=0x8
 R=0x10 L=0x20 U=0x40 D=0x80 R-trig=0x100 L-trig=0x200). Judge the link from stdout
@@ -597,8 +597,8 @@ pressed START on both simultaneously and watched the link for 60s:
 
 **Conclusion: threaded execution (mGBA's own canonical local-multiplayer model) does
 NOT fix Four Swords — it stalls at the same handshake the wrapper stalls at.** The
-bug is in `lockstep.c` (upstream #3286), not in DualBoy's single-threaded wrapper.
-This RETIRES the "port DualBoy to mCoreThread" idea as a fix (it's still useful
+bug is in `lockstep.c` (upstream #3286), not in mgba-splitscreen's single-threaded wrapper.
+This RETIRES the "port mgba-splitscreen to mCoreThread" idea as a fix (it's still useful
 later for the pop-out-windows feature, but it won't fix linking).
 
 **What to do instead (fix the DRIVER):**
@@ -619,8 +619,8 @@ later for the pop-out-windows feature, but it won't fix linking).
 
 ## Bespoke deterministic in-process driver (`GBASIORendezvousDriver`) — 2026-08-18
 
-Built the "rewrite the link logic" option as `DualBoy/tools/rendezvous.{c,h}` +
-wired it into `DualBoy/tools/threaded_link.c` as a selectable in-process driver.
+Built the "rewrite the link logic" option as `mgba-splitscreen/tools/rendezvous.{c,h}` +
+wired it into `mgba-splitscreen/tools/threaded_link.c` as a selectable in-process driver.
 It is a fork of `lockstep.c` with two changes: (1) no per-transfer `_hardSync`
 (H1) and (2) no post-ack secondary sleep in `AckPlayer` — the secondary runs on
 to `finishCycle` so both sides complete at the same shared cycle. The harness
@@ -680,12 +680,12 @@ then grep the stdout).
 
 ## Busy-bit boundary instrumentation — DONE, hypothesis REFUTED (2026-08-18)
 
-Instrumented the rendezvous driver (`DualBoy/tools/rendezvous.c`) + `src/gba/io.c`
+Instrumented the rendezvous driver (`mgba-splitscreen/tools/rendezvous.c`) + `src/gba/io.c`
 `GBAIORead` and re-ran `threaded_link --fs <rom>` (94,601 transfers, 0 drops):
 
 - `BUSYSET pid=1` logs the slave's busy-set cycle + `nextEvent`; `BUSYCLR pid=1`
   logs its clear cycle; `BUSYRD` logs the game's SIOCNT reads (value-change gated
-  on the busy bit). Rebuild: `cmake --build <cargo out>/build && DualBoy/tools/build.sh`.
+  on the busy bit). Rebuild: `cmake --build <cargo out>/build && mgba-splitscreen/tools/build.sh`.
 
 **Result — the slave's busy bit is NOT cleared early.**
 
@@ -717,7 +717,7 @@ cycles vs transfer completion on the slave, and whether the slave's BIOS
 **NOTE — temporary instrumentation currently IN the tree** (uncommitted):
 `src/gba/io.c` (`g_busyTraceLast/g_busyTraceInit` + the `BUSYRD` mLOG in
 `GBAIORead`), `src/gba/gba.c` (SIOIRQ/TRIG/HALT trace in `GBARaiseIRQ`,
-`_triggerIRQ`, `GBAHalt`), `DualBoy/tools/rendezvous.c` (`BUSYSET`/`BUSYCLR`
+`_triggerIRQ`, `GBAHalt`), `mgba-splitscreen/tools/rendezvous.c` (`BUSYSET`/`BUSYCLR`
 mLOGs). Revert `src/gba/io.c` and `src/gba/gba.c` before any merge; the
 `BUSYSET`/`BUSYCLR` driver logs are cheap and can stay in the dev tool.
 
@@ -830,7 +830,7 @@ animations are unbearable to watch at 1x). Added a turbo toggle:
   with the new binary.
 
 Next: use Tab to fast-forward FS character creation, then re-evaluate the link
-handshake in the fresh `/tmp/dualboy_app.log`.
+handshake in the fresh `/tmp/mgba-splitscreen_app.log`.
 
 ## Mario Kart Super Circuit 4P + quit-game + audio (2026-08-18, ~23:30)
 
@@ -868,7 +868,7 @@ handshake in the fresh `/tmp/dualboy_app.log`.
   asleep. Full coordinator-state capture is a follow-up (mStateExtdata path).
 - **Controller (Gamepad API) + control re-mapping**: per-player control scheme
   {keyboard, gamepadButtons, gamepadAxes} persisted to localStorage
-  (`dualboy_controls_v1`), defaults from the P1-P4 keyboard maps + a standard
+  (`mgba-splitscreen_controls_v1`), defaults from the P1-P4 keyboard maps + a standard
   gamepad layout (face/shoulders/Select/Start/D-pad + left-stick axes). Gamepads
   assigned by controller slot (#1->P1, ...). rAF poll loop sends the union
   `keyStates|padStates` per player via `set_keys` (change-driven only). Remap

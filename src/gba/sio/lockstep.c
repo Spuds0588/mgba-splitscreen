@@ -642,12 +642,12 @@ static void _fsAssistIdentify(struct GBASIOLockstepCoordinator* coordinator, str
 	}
 	coordinator->fsAssistChecked = true;
 	coordinator->fsAssistEnabled = false;
-	// Kill switch for A/B runs: DUALBOY_FS_ASSIST=0 loads the game but leaves the
+	// Kill switch for A/B runs: MGBA_SPLITSCREEN_FS_ASSIST=0 loads the game but leaves the
 	// assist and the deadlock kick fully off, so FS's native behaviour can be
 	// compared against the assisted path without a rebuild.
-	const char* env = getenv("DUALBOY_FS_ASSIST");
+	const char* env = getenv("MGBA_SPLITSCREEN_FS_ASSIST");
 	if (env && env[0] == '0') {
-		mLOG(GBA_SIO, WARN, "FS assist: disabled by DUALBOY_FS_ASSIST=0");
+		mLOG(GBA_SIO, WARN, "FS assist: disabled by MGBA_SPLITSCREEN_FS_ASSIST=0");
 		return;
 	}
 	if (gba->memory.rom && gba->memory.romSize > 0xA4) {
@@ -1921,7 +1921,7 @@ void GBASIOLockstepPlayerSleep(struct GBASIOLockstepPlayer* player) {
 	player->driver->d.p->p->cpu->nextEvent = 0;
 	GBAInterrupt(player->driver->d.p->p);
 
-	// DualBoy runs every player sequentially on one thread, so a sleeping player's
+	// mgba-splitscreen runs every player sequentially on one thread, so a sleeping player's
 	// host thread never actually blocks (the user->sleep callback returns
 	// immediately). The frame loop honours the sleep flag: it skips a sleeping
 	// player and instead steps the other player until it wakes this one back up.

@@ -1,5 +1,5 @@
-# Publish the DualBoy web UI to GitHub Pages. The page is fully playable in
-# the browser: it ships the WASM engine (web/dualboy-web.{js,wasm}) alongside
+# Publish the mgba-splitscreen web UI to GitHub Pages. The page is fully playable in
+# the browser: it ships the WASM engine (web/mgba-splitscreen-web.{js,wasm}) alongside
 # the frontend, so no backend is needed.
 name: Deploy web UI to GitHub Pages
 
@@ -34,8 +34,8 @@ jobs:
       - name: Stage frontend + WASM engine
         run: |
           mkdir -p staged
-          cp -r DualBoy/src/. staged/
-          cp DualBoy/web/dualboy-web.js DualBoy/web/dualboy-web.wasm staged/
+          cp -r mgba-splitscreen/src/. staged/
+          cp mgba-splitscreen/web/mgba-splitscreen-web.js mgba-splitscreen/web/mgba-splitscreen-web.wasm staged/
       - name: Upload frontend
         uses: actions/upload-pages-artifact@v3
         with:
