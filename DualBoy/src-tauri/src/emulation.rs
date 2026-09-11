@@ -428,6 +428,16 @@ impl EmulationManager {
                 Box::new(unsafe { std::mem::zeroed::<bindings::GBASIOLockstepCoordinator>() });
             unsafe {
                 bindings::GBASIOLockstepCoordinatorInit(&mut *coord);
+                // The Four Swords link assist (and its deadlock kick) pokes the
+                // game's private IWRAM/EWRAM link state every ~2 s. It never
+                // moved the games off the linking screen in any model, and the
+                // sessions that ran with it show the emulated game fetching
+                // from unmapped memory -- the signature of a corrupted state
+                // machine. What actually fixes the link handshake is the
+                // driver's per-transfer hard sync, so keep the assist off by
+                // default here, exactly as the browser build does (the web page
+                // re-enables it with ?fsassist=1 for A/B runs).
+                bindings::GBASIOLockstepCoordinatorSetFSSuppressed(&mut *coord, true);
             }
             let flags_buf = sleeping_flags.lock().unwrap().as_mut_ptr();
             for i in 0..count {

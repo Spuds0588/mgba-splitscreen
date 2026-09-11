@@ -5,6 +5,50 @@
 
 ## 🔴 Top priority: Four Swords multiplayer link fix
 
+### 2026-09-11 (final) — FIX CONFIRMED, and it is not FS-specific
+
+The `_hardSync` restore is confirmed working end to end, and the user reports it
+fixes **multiple link games, not just Four Swords**. Committed and pushed as
+`3a7060bb8`. Everything below this entry is the search history that led here;
+keep it for the diagnosis trail but treat the fix as landed.
+
+**Desktop (Tauri) app: links too, with one known wart.**
+
+- [ ] **Remove the "press B, then START again" dance.** In the desktop app the
+      host (P1) has to abort the session (B) and re-start linking before the
+      handshake completes. The first START alone is not enough. Prime suspect is
+      the discovery/retry machine's round counter: the first attempt appears to
+      leave it in the post-retry state that a fresh START clears. Fixing this is
+      optional polish — filed rather than chased, because the failure mode is
+      uncomfortable to reason about and the workaround is trivial for the user.
+- [ ] **Intermittent LOZ FS link failure.** Even with the fix, Four Swords
+      occasionally still fails to link although the same steps usually work.
+      Investigate after the wart above; a repro needs the games parked at the
+      link screen with SIO payload logging, **not** screen classification
+      (the native harness's screen heuristics are known-bad — see below).
+- [x] Desktop app defaults the FS assist/kick OFF (`SetFSSuppressed`), matching
+      the browser. Verified live: `[mGBA] FS assist: suppressed by host`.
+
+**Known desktop bug found while testing the fix (unrelated to SIO):**
+
+- [ ] `quit_game` → `load_rom` over the app's WebSocket **wedges the emulator**:
+      after the pair, every instance reports 0.0 fps and the app emits no frames
+      at all (the frame loop stops logging too). Workaround is to restart the
+      process. Reproduce with `DualBoy/scripts/raw_ws.py` (`{"type":"quit_game"}`,
+      then `load_rom`) before blaming the link for a frozen session.
+
+**Next feature — deep-link the web version:**
+
+- [ ] Let the web build accept URL query parameters to **load a game directly**
+      and to **set the player count**, so a link can launch straight into a
+      game. The static Pages build has no server of its own, so a "load a game"
+      parameter has to point at a fetchable URL (and the ROM/CORS story needs a
+      decision); player count is self-contained. Name the parameters in the same
+      pass as the branding rename below so docs only get written once.
+
+**Branding:** the project is being renamed from "DualBoy" to match the repo
+name; see the housekeeping section for what still carries the old name.
+
 ### 2026-09-11 (later) — the H1 experiment was the regression; reverted
 
 `git diff e191ddf9b..HEAD -- src/gba/sio/lockstep.c` is only three things:
