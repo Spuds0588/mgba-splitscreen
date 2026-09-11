@@ -1,4 +1,4 @@
-# DualBoy
+# mgba-splitscreen
 
 > ## 🕹️ [Try it in your browser — no install](https://spuds0588.github.io/mgba-splitscreen/)
 >
@@ -6,7 +6,7 @@
 > players, and play. (A ROM is required to play; use the **Games Library** or
 > **File → Load ROM**.)
 
-DualBoy is a **split-screen Game Boy Advance emulator**: run multiple GBA instances
+mgba-splitscreen is a **split-screen Game Boy Advance emulator**: run multiple GBA instances
 side by side, linked together over a virtual link cable, so two to four players can
 play multiplayer GBA games (trading, link battles, co-op, etc.) on a single machine —
 each player gets their own screen and their own controls.
