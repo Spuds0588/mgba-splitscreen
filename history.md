@@ -29,6 +29,26 @@ Reproduction (any session):
 
 ## Tried and verdicts (newest first)
 
+### 2026-09-11 — Web deep links (`?players`, `?rom`) landed
+
+Added `?players=1-4` (applied before `mgs_init`, so the coordinator is built at the
+right size) and `?rom=<url>` (fetched, loaded into every core, cached into IndexedDB
+and recorded in Recents so the launcher can relaunch it offline). `?players` was
+verified by canvas count and the status line; `?rom` by booting Four Swords straight
+to `CHOOSE A FILE` at both 2 and 4 players, all panels pixel-identical.
+
+Failure paths were exercised rather than assumed: `?players=9` logs
+`Ignoring ?players=9: expected a count from 1 to 4` and falls back to 2, and
+`?rom=missing.gba` reports `Could not fetch ROM: HTTP 404 File not found —
+check the ?rom= path`. Two distinct messages on purpose — an HTTP status means the
+URL is wrong, while a rejected `fetch()` means CORS/network — because a shared link
+fails for those two reasons about equally often and the old single message blamed
+CORS for 404s.
+
+`rom` is a plain `fetch`, so cross-origin URLs need permissive CORS on the host and
+the browser will refuse a bare file; that constraint is now in the README and the
+to-do rather than being discovered by a user.
+
 ### 2026-09-09 — ROOT CAUSE FOUND for the state-load freeze + browser corruption: GBASerialize garbage flags; FIXED
 
 **The browser 4P session (user console + `/tmp/mgba-splitscreen_session.log`) cracked it:**

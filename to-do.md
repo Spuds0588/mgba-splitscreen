@@ -37,17 +37,28 @@ keep it for the diagnosis trail but treat the fix as landed.
       process. Reproduce with `mgba-splitscreen/scripts/raw_ws.py` (`{"type":"quit_game"}`,
       then `load_rom`) before blaming the link for a frozen session.
 
-**Next feature — deep-link the web version:**
+**Web deep links — DONE** (`?players=N`, `?rom=<url>`):
 
-- [ ] Let the web build accept URL query parameters to **load a game directly**
-      and to **set the player count**, so a link can launch straight into a
-      game. The static Pages build has no server of its own, so a "load a game"
-      parameter has to point at a fetchable URL (and the ROM/CORS story needs a
-      decision); player count is self-contained. Name the parameters in the same
-      pass as the branding rename below so docs only get written once.
+- [x] The web build accepts `?players=1-4` (applied before the engine boots) and
+      `?rom=<url>` (fetched and started immediately). Verified live on a fresh
+      origin: `?players=4` -> 4 linked cores; `?players=4&rom=fs_rom.gba` -> all
+      four booted to Four Swords `CHOOSE A FILE` in sync; `?players=9` warns and
+      falls back to 2; `?rom=missing.gba` reports `HTTP 404 File not found` and
+      leaves the launcher usable. Documented in the README.
+- [ ] **Known limit:** `?rom=` is a plain `fetch`, so a cross-origin URL needs
+      permissive CORS on that host (and the browser refuses a bare file). Options
+      if we want arbitrary links to work: ship a tiny CORS-enabled hosting recipe,
+      or let the Pages site pull ROMs from a directory the user drops beside
+      `index.html`. Also unproven: extremely large ROMs (32 MiB) over a slow link
+      load with no progress indicator — the status line says `Fetching: <name>…`
+      but has no percentage.
 
-**Branding:** the project is being renamed from "mgba-splitscreen" to match the repo
-name; see the housekeeping section for what still carries the old name.
+**Branding: DONE.** The one-name rule landed as "mgba-splitscreen" (the GitHub repo
+name, kept so Pages URLs and existing clones survive). Directory, crate, npm package,
+bins, `productName`, identifier, WASM artifacts and the `_dbs_` bridge prefix all
+renamed; v0.3.0 published for Linux/macOS/Windows. The only intentional survivors are
+historical mentions in `history.md`/`PROJECT_LOG.md` and the `.mgbastate` extension's
+back-compat acceptance of the old `.dualbystate`.
 
 ### 2026-09-11 (later) — the H1 experiment was the regression; reverted
 

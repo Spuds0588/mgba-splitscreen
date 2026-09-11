@@ -144,6 +144,28 @@ mgba-splitscreen/src` — copy `mgba-splitscreen/web/mgba-splitscreen-web.{js,wa
 run `mgba-splitscreen/web/build.sh`). (A future "hosted multiplayer" mode could relay a host's
 frames to remote players over WebRTC — see the roadmap.)
 
+### Deep links (URL parameters)
+
+The web build reads two query parameters, so a shared link can boot straight into a
+game and can carry the player count with it:
+
+| Parameter | Meaning |
+|---|---|
+| `players=N` | Number of linked instances to start, **1-4** (default `2`). |
+| `rom=<url>` | Fetch this `.gba` and start it immediately. A relative path resolves against the page. |
+
+```
+https://spuds0588.github.io/mgba-splitscreen/?players=4
+https://spuds0588.github.io/mgba-splitscreen/?players=2&rom=roms/game.gba
+```
+
+The `rom` file is fetched with `fetch()`, so it must be **same-origin** (host it beside
+`index.html`) or served from a host that sends permissive CORS headers; a link that
+points at someone else's bare file will be refused by the browser. A ROM that cannot be
+loaded reports why in the status line and leaves the launcher fully usable. Unknown
+parameters are ignored, so `?fsassist=1` (the Four Swords link-assist experiment, off by
+default) still composes with these.
+
 ## Beta releases
 
 Beta builds are produced from version tags (`vX.Y.Z-beta.N`) by the

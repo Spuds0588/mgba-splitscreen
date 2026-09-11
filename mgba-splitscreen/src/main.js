@@ -105,6 +105,102 @@ function dbInit(count) {
   applyFsAssist();
 }
 
+// ---- Deep links (URL parameters) --------------------------------------------
+//
+// A static page can't go looking for ROMs, but a link can name one, so a shared
+// URL can drop everyone straight into the same session:
+//
+//   ?players=4                       linked players, 1-4 (applied before boot)
+//   ?rom=<url>                       fetch this .gba and start it immediately
+//   ?players=2&rom=roms/game.gba     combined; `rom` may be relative or absolute
+//
+// `rom` is fetched with fetch(), so a cross-origin URL only works when that host
+// sends permissive CORS headers; a relative path is same-origin and always works
+// (host the .gba beside index.html). Unknown parameters are ignored, so existing
+// links (?fsassist=1) keep working.
+function urlParam(name) {
+  try {
+    return new URLSearchParams(window.location.search).get(name);
+  } catch (_) {
+    return null;
+  }
+}
+
+function requestedPlayerCount() {
+  const raw = urlParam('players');
+  if (raw === null || raw === '') return null;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1 || n > 4) {
+    _origConsole.warn(`Ignoring ?players=${raw}: expected a count from 1 to 4`);
+    return null;
+  }
+  return n;
+}
+
+function requestedRomUrl() {
+  const raw = urlParam('rom');
+  if (!raw) return null;
+  try {
+    return new URL(raw, window.location.href).href;
+  } catch (_) {
+    _origConsole.warn(`Ignoring ?rom=${raw}: not a usable URL`);
+    return null;
+  }
+}
+
+// Fetch a ROM named by the URL and boot it into every linked core. Returns true
+// on success; failures are reported in the status line (and the launcher stays
+// usable, so a bad link degrades to "pick a ROM yourself").
+async function loadRomFromUrl(url) {
+  let stem = 'game';
+  try {
+    const base = decodeURIComponent(new URL(url).pathname.split('/').pop() || '');
+    if (base) stem = base.replace(/\.[^.]+$/, '') || base;
+  } catch (_) { /* keep the fallback name */ }
+
+  setStatus(`Fetching: ${stem}\u2026`);
+  let resp;
+  try {
+    resp = await fetch(url);
+  } catch (err) {
+    // fetch() only rejects on a network-level failure, which for a shared link
+    // is nearly always CORS rather than a missing file.
+    setStatus(`Could not fetch ROM: ${err.message} \u2014 the host must allow cross-origin reads (CORS)`);
+    return false;
+  }
+  if (!resp.ok) {
+    setStatus(`Could not fetch ROM: HTTP ${resp.status} ${resp.statusText || ''} \u2014 check the ?rom= path`.trim());
+    return false;
+  }
+  let bytes;
+  try {
+    bytes = new Uint8Array(await resp.arrayBuffer());
+  } catch (err) {
+    setStatus(`Could not read ROM: ${err.message}`);
+    return false;
+  }
+  if (bytes.length < 0xc0) {
+    setStatus(`Could not load ROM: ${stem} is too small to be a GBA image`);
+    return false;
+  }
+
+  setStatus(`Loading: ${stem}`);
+  const ok = wasmLoadRomBytes(bytes) === 0;
+  if (ok) {
+    resetRuntimeState();
+    // Cache it like a picked file so the launcher's Recent list can relaunch it
+    // without the network.
+    let key = null;
+    try {
+      key = `rom_${stem}`;
+      await cacheGameBytes(key, stem, bytes);
+    } catch (_) { key = null; }
+    recordRecent(stem, null, null, key);
+  }
+  setStatus(ok ? `Running: ${stem}` : 'Error: ROM load failed in browser engine');
+  return ok;
+}
+
 if (typeof window !== 'undefined') {
   window.addEventListener('load', () => { sessionLogTimer = setTimeout(sessionLogFlush, 2000); });
   window.addEventListener('beforeunload', () => {
@@ -2689,12 +2785,16 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Browser builds are always fully client-side: the WASM core is the only
     // engine. No backend is expected (GitHub Pages / static hosting), so we go
     // straight to it instead of probing for a server.
-    playerCount = 2;
+    // ?players=N chooses how many linked cores to create before the engine
+    // boots (the desktop app takes its count from the backend instead).
+    playerCount = requestedPlayerCount() || 2;
     wasmMode = true;
     try {
       await loadWasmModule();
       dbInit(playerCount);
-      setStatus('In-browser engine ready \u2014 2 linked GBAs (load a ROM)');
+      setStatus(playerCount === 1
+        ? 'In-browser engine ready \u2014 1 GBA (load a ROM)'
+        : `In-browser engine ready \u2014 ${playerCount} linked GBAs (load a ROM)`);
     } catch (err) {
       // Engine failed: only now show the hosted-shell notice.
       wasmMode = false;
@@ -2819,5 +2919,15 @@ window.addEventListener('DOMContentLoaded', async () => {
     connectWebSocket();
   } else {
     wasmStartLoop();
+  }
+
+  // Deep link: ?rom=<url> boots straight into the game once the engine is up.
+  // Done last so every screen, control and menu is already wired.
+  if (!IS_TAURI) {
+    const romUrl = requestedRomUrl();
+    if (romUrl) {
+      if (wasmMode) await loadRomFromUrl(romUrl);
+      else setStatus('Cannot load ?rom: the in-browser engine failed to start');
+    }
   }
 });
