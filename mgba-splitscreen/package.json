@@ -4,7 +4,8 @@
   "version": "0.3.0",
   "type": "module",
   "scripts": {
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "strip-web-engine": "node scripts/strip-web-engine.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

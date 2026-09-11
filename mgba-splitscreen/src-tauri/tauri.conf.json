@@ -5,7 +5,7 @@
   "identifier": "com.coreyb.mgbasplitscreen",
   "build": {
     "frontendDist": "../src",
-    "beforeBuildCommand": "node -e \"const fs=require('fs'),p=require('path');let d=process.cwd();for(;;){if(fs.existsSync(p.join(d,'src-tauri','tauri.conf.json'))){for(const f of ['mgba-splitscreen-web.js','mgba-splitscreen-web.wasm','mgba-splitscreen-web-dbg.js','mgba-splitscreen-web-dbg.wasm']){try{fs.unlinkSync(p.join(d,'src',f))}catch(e){}}break}const up=p.dirname(d);if(up===d)break;d=up}\""
+    "beforeBuildCommand": "npm run strip-web-engine"
   },
   "app": {
     "withGlobalTauri": true,
