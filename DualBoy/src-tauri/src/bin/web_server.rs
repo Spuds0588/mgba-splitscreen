@@ -86,6 +86,8 @@ async fn main() {
         .route("/set_player_count", post(set_player_count_handler))
         .route("/save/:player", get(get_save_handler).post(post_save_handler))
         .route("/save_set", get(get_save_set_handler).post(post_save_set_handler))
+        .route("/state", get(get_state_set_handler).post(post_state_set_handler))
+        .route("/session_log", post(session_log_handler))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .fallback(static_handler)
         .with_state(state);
@@ -289,6 +291,43 @@ async fn post_save_set_handler(State(state): State<AppState>, body: Bytes) -> im
     }
 }
 
+/// Download the full save-state set (all players, one DUALSTATE blob). Lets the
+/// web demo persist a linked game mid-session (e.g. sitting at the Four Swords
+/// pre-link screen) and restore it later.
+async fn get_state_set_handler(State(state): State<AppState>) -> impl IntoResponse {
+    match state.manager.lock().unwrap().save_state_set() {
+        Ok(data) => (
+            [(header::CONTENT_TYPE, "application/octet-stream")],
+            data,
+        )
+            .into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
+}
+
+/// Restore a save-state set uploaded as a DUALSTATE blob. The manager resets
+/// the lockstep drivers after loading so no player is left sleeping on a stale
+/// transfer (see `EmulationManager::load_state_set`).
+async fn post_state_set_handler(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
+    match state.manager.lock().unwrap().load_state_set(&body) {
+        Ok(()) => "ok".into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
+}
+
+/// Append browser console output (session log) to a file on disk. The
+/// in-browser WASM engine has no file access of its own, so the page forwards
+/// its console lines here; this lets a frozen/crashed browser session leave a
+/// trace for post-mortem (see main.js sessionLog).
+async fn session_log_handler(body: Bytes) -> impl IntoResponse {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/dualboy_session.log") {
+        let _ = f.write_all(&body);
+        let _ = f.flush();
+    }
+    "ok".into_response()
+}
+
 async fn static_handler(uri: Uri) -> impl IntoResponse {
     let mut path = uri.path().trim_start_matches('/').to_string();
     if path.is_empty() {
@@ -307,6 +346,10 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
                 Some("js") => "text/javascript",
                 Some("css") => "text/css",
                 Some("png") => "image/png",
+                // Without the correct type the browser refuses streaming
+                // compile and falls back to ArrayBuffer instantiation (works,
+                // but logs a scary error every load).
+                Some("wasm") => "application/wasm",
                 _ => "application/octet-stream",
             };
             ([(header::CONTENT_TYPE, ct)], bytes).into_response()

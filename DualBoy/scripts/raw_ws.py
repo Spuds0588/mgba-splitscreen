@@ -107,11 +107,21 @@ class Client:
     def __init__(self, host=DEFAULT_HOST, port=DEFAULT_PORT, path=DEFAULT_PATH,
                  players=2, timeout=10):
         self.players = players
+        self.host = host
+        self.port = port
+        self.path = path
         self.latest = None
         self.lock = threading.Lock()
-        self.sock = socket.create_connection((host, port), timeout=timeout)
-        _handshake(self.sock, host, port, path)
+        self._dead = False
         self._stop = False
+        self._connect(timeout)
+
+    def _connect(self, timeout=10):
+        self.sock = socket.create_connection((self.host, self.port), timeout=timeout)
+        _handshake(self.sock, self.host, self.port, self.path)
+        self._dead = False
+        with self.lock:
+            self.latest = None
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
 
@@ -120,14 +130,40 @@ class Client:
             try:
                 op, payload = recv_frame(self.sock)
             except Exception:
+                # The socket is gone (server restart, idle timeout, transient
+                # reset). Mark the client dead so frame()/send() can reconnect
+                # instead of silently starving the caller.
+                self._dead = True
                 break
             if op == 8:  # close
+                self._dead = True
                 break
-            if op == 2:  # binary frame = pixels
-                with self.lock:
-                    self.latest = payload
+            if op == 2:  # binary frame: tag 0 = video pixels, tag 1 = audio
+                # Only keep video. Audio chunks (tag 1) arrive interleaved at
+                # ~60/s and are far smaller than a video frame; keeping them as
+                # `latest` makes player_frame() reject them (too small) and the
+                # caller sees a spurious no-frame gap.
+                if len(payload) > 0 and payload[0] == 0:
+                    with self.lock:
+                        self.latest = payload
+
+    def _reconnect(self):
+        if self._stop:
+            return
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+        for _ in range(3):
+            try:
+                self._connect()
+                return
+            except Exception:
+                time.sleep(0.5)
 
     def send(self, obj):
+        if self._dead:
+            self._reconnect()
         send_text(self.sock, json.dumps(obj).encode())
 
     def load_rom(self, path):
@@ -146,6 +182,8 @@ class Client:
     def frame(self, timeout=5.0):
         deadline = time.time() + timeout
         while time.time() < deadline:
+            if self._dead:
+                self._reconnect()
             with self.lock:
                 if self.latest is not None:
                     return self.latest

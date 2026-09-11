@@ -19,6 +19,7 @@ CXX_GUARD_START
 
 #define MAX_LOCKSTEP_EVENTS 8
 
+#ifndef GBA_SIO_RENDEZVOUS_H
 enum GBASIOLockstepEventType {
 	SIO_EV_ATTACH,
 	SIO_EV_DETACH,
@@ -26,6 +27,7 @@ enum GBASIOLockstepEventType {
 	SIO_EV_MODE_SET,
 	SIO_EV_TRANSFER_START,
 };
+#endif
 
 struct GBASIOLockstepCoordinator {
 	struct Table players;
@@ -45,7 +47,42 @@ struct GBASIOLockstepCoordinator {
 
 	uint16_t multiData[4];
 	uint32_t normalData[4];
+
+	// Four Swords link-handshake assist (see lockstep.c): while the FS cart is
+	// stuck in its FEFE-probe / value-checksum discovery cycle, echo each
+	// recipient its own sent value in every slot so both games see agreement
+	// and advance; hand off to raw pass-through once real payload data flows.
+	// Gated on the ROM title plus the discovery data signature, so other
+	// games are never touched.
+	bool fsAssistChecked;   // cart title already probed (probe exactly once)
+	bool fsSuppressed;      // host switched the assist AND the kick off entirely
+	bool fsAssistEnabled;   // ROM identified as the Four Swords cart (lazy)
+	bool fsAssistArmed;     // host says the games are at the link screen (frozen)
+	bool fsAssistOn;        // currently echoing deliveries
+	uint16_t fsLastEcho;    // last echoed value (for log dedup)
+	uint32_t fsLogEvery;    // throttle: log every Nth armed transfer
+	uint8_t fsHandshakeRounds; // consecutive discovery rounds seen
+	uint8_t fsQuietRounds;  // consecutive real-data rounds since last discovery
+	// FS deadlock kick (2026-09-07): while the games are stuck in the post-name
+	// phase machine (neither acceptance scan can validate a block because the
+	// recv histories never fill), inject a crafted -15-summing block into BOTH
+	// recv buffers (state+40 AND state+44 -- the gate at EWRAM 0x02030950 swaps
+	// them every scan call), set got12 + recvIdx, and reset sendIdx so the
+	// games' own handlers re-send their tables. Self-gated on the FS cart +
+	// the freeze signature, so it never touches another game and needs no host
+	// arming; throttled by fsKickCountdown (lockstep events between attempts).
+	uint32_t fsKickCountdown;
+	uint32_t fsKicks;       // total kicks issued (log throttle)
+	uint32_t fsKickLastRecv[MAX_GBAS]; // per-player recvIdx at last kick attempt
+	// Isolation kill-switch: --fs7 (harness kick on lockstep) needs the
+	// DRIVER's inline kick OFF so the two kick sources don't confound. When
+	// false, the countdown block in the lockstep event loop is skipped.
+	bool fsKickEnabled;
 };
+
+void GBASIOLockstepCoordinatorSetFSArmed(struct GBASIOLockstepCoordinator*, bool armed);
+void GBASIOLockstepCoordinatorSetFSKickEnabled(struct GBASIOLockstepCoordinator*, bool enabled);
+void GBASIOLockstepCoordinatorSetFSSuppressed(struct GBASIOLockstepCoordinator*, bool suppressed);
 
 struct GBASIOLockstepEvent {
 	enum GBASIOLockstepEventType type;

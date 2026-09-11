@@ -3,6 +3,124 @@ const IS_TAURI = typeof window.__TAURI__ !== 'undefined';
 // keyboard path doesn't rely on an undefined bare `invoke`.
 const invoke = IS_TAURI ? window.__TAURI__.core.invoke : null;
 
+// ---- Session log ----
+// The in-browser WASM engine logs only to the devtools console; nothing ever
+// reaches disk, so a crashed/frozen session leaves no trace to inspect. Mirror
+// console output into a ring buffer and forward new lines to the server's
+// /session_log endpoint (appended to /tmp/dualboy_session.log server-side) so
+// sessions can be reviewed after the fact. Best-effort: failures are silent.
+const sessionLog = [];
+const SESSION_LOG_MAX = 4000;
+let sessionLogSent = 0;
+let sessionLogTimer = null;
+
+function _sessionLogLine(level, args) {
+  let text;
+  try {
+    text = args.map(a => {
+      if (typeof a === 'string') return a;
+      try { return JSON.stringify(a); } catch (_) { return String(a); }
+    }).join(' ');
+  } catch (_) {
+    text = String(args[0]);
+  }
+  const line = '[' + new Date().toISOString().slice(11, 23) + '] ' + level + ' ' + text;
+  sessionLog.push(line);
+  if (sessionLog.length > SESSION_LOG_MAX) sessionLog.shift();
+}
+
+// Originals kept so internal diagnostics can still reach the devtools console
+// without being appended to the session buffer (and without recursing).
+const _origConsole = {};
+['log', 'warn', 'error'].forEach(lv => {
+  const orig = console[lv];
+  _origConsole[lv] = orig;
+  console[lv] = function (...args) {
+    try { orig.apply(console, args); } catch (_) {}
+    _sessionLogLine(lv, args);
+  };
+});
+
+// Set once the log endpoint is known to be missing, so a failed flush stops
+// re-POSTing and stops filling the console with 501s.
+let sessionLogBroken = false;
+
+function sessionLogFlush() {
+  if (!sessionLogBroken && sessionLogSent < sessionLog.length) {
+    const batch = sessionLog.slice(sessionLogSent);
+    sessionLogSent = sessionLog.length;
+    fetch('/session_log', { method: 'POST', body: batch.join('\n') + '\n' })
+      .then(res => {
+        if (!res.ok) {
+          // The backend ships with a /session_log POST handler; a plain static
+          // server (the documented Preview route) answers 501 to POST. Give up
+          // after the first refusal instead of retrying every 2 seconds.
+          sessionLogBroken = true;
+          _origConsole.warn('session log endpoint unavailable (' + res.status +
+            '); console capture disabled (emulation is unaffected)');
+        }
+      })
+      .catch(() => { /* offline/static: the next flush retries once */ });
+  }
+  // Re-arm unconditionally: the old code only re-armed when there was new
+  // data, so the first no-op flush killed the chain and everything logged
+  // after the initial batch sat in the buffer until unload (when fetch gets
+  // canceled by the browser) — sessions appeared to write nothing.
+  sessionLogTimer = setTimeout(sessionLogFlush, 2000);
+}
+
+// ---- Four Swords link assist switch ----------------------------------------
+//
+// The assist pokes Four Swords' private link state (IWRAM 0x03000FC3/0x03000FC8,
+// the EWRAM recv histories, the phase byte) every ~2 s while the games sit in
+// link-screen mode, and ships with a deadlock "kick" that re-injects a crafted
+// table. It has never moved the games off the "Linking with other systems…"
+// screen in any model (browser, cooperative native repro, threaded harness),
+// and sessions running with it show the emulated game fetching from unmapped
+// memory — the signature of a corrupted state machine. So it stays OFF unless
+// the page explicitly asks for it, which keeps A/B runs possible:
+//
+//   http://127.0.0.1:8090/?fsassist=1    (assist + kick on)
+//   http://127.0.0.1:8090/              (default: off, game state untouched)
+function fsAssistRequested() {
+  try {
+    return new URLSearchParams(window.location.search).get('fsassist') === '1';
+  } catch (_) {
+    return false;
+  }
+}
+
+function applyFsAssist() {
+  try {
+    if (wasmModule && wasmModule._db_set_fs_assist) {
+      wasmModule._db_set_fs_assist(fsAssistRequested() ? 1 : 0);
+    }
+  } catch (_) { /* older builds without the export: nothing to switch */ }
+}
+
+// Every _db_init() re-creates the coordinator (and with it the assist flags), so
+// route the creations through here to keep the setting applied.
+function dbInit(count) {
+  wasmModule._db_init(count);
+  applyFsAssist();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('load', () => { sessionLogTimer = setTimeout(sessionLogFlush, 2000); });
+  window.addEventListener('beforeunload', () => {
+    if (sessionLogTimer) clearTimeout(sessionLogTimer);
+    if (!sessionLogBroken && sessionLogSent < sessionLog.length) {
+      const batch = sessionLog.slice(sessionLogSent);
+      // sendBeacon survives page teardown where fetch gets canceled.
+      try {
+        navigator.sendBeacon('/session_log', batch.join('\n') + '\n');
+      } catch (_) {
+        sessionLogFlush();
+      }
+    }
+  });
+}
+
 const GBA_WIDTH = 240;
 const GBA_HEIGHT = 160;
 // RGBA8888: the backend sends frames already in the format putImageData wants,
@@ -276,6 +394,61 @@ const OVERLAY_MAX = 6;
 let playerCount = 2;
 let screens = []; // { canvas, ctx, imgData }
 let keyStates = []; // keyboard-derived mask per player
+
+// ---- Solo keyboard mode (testing helper) ----
+// One keyboard drives the ACTIVE player using Player 1's control map; digits
+// 1-4 switch which player is active. Lets a single tester drive all players
+// without juggling four control schemes (default on; persisted).
+const SOLO_KEY = 'dualboy_solo_v1';
+let soloKeyboard = true;
+let soloPlayer = 0; // 0-based active player index
+
+function loadSolo() {
+  try {
+    const raw = localStorage.getItem(SOLO_KEY);
+    if (raw !== null) soloKeyboard = raw === '1';
+  } catch (e) {}
+  soloPlayer = Math.min(soloPlayer, Math.max(0, playerCount - 1));
+  updateSoloUI();
+}
+
+function saveSolo() {
+  try { localStorage.setItem(SOLO_KEY, soloKeyboard ? '1' : '0'); } catch (e) {}
+}
+
+function updateSoloUI() {
+  const btn = document.getElementById('toggle-solo');
+  if (btn) {
+    btn.textContent = soloKeyboard ? 'Solo Keyboard: On' : 'Solo Keyboard: Off';
+    btn.classList.toggle('active', soloKeyboard);
+  }
+  const badge = document.getElementById('solo-badge');
+  if (badge) badge.textContent = soloKeyboard ? `Active: P${soloPlayer + 1}` : '';
+}
+
+function releaseAllKeys() {
+  for (let i = 0; i < keyStates.length; i++) {
+    if (keyStates[i]) { keyStates[i] = 0; sendKeys(i); }
+  }
+}
+
+function setSoloPlayer(p) {
+  if (p < 0 || p >= playerCount || p === soloPlayer) return;
+  releaseAllKeys(); // don't let a held button stick on the old player
+  soloPlayer = p;
+  updateSoloUI();
+}
+
+function toggleSoloKeyboard() {
+  soloKeyboard = !soloKeyboard;
+  saveSolo();
+  releaseAllKeys();
+  soloPlayer = Math.min(soloPlayer, Math.max(0, playerCount - 1));
+  setStatus(soloKeyboard
+    ? `Solo keyboard on — digits 1-${playerCount} switch active player`
+    : 'Solo keyboard off');
+  updateSoloUI();
+}
 let padStates = []; // gamepad-derived mask per player
 let socket = null;
 let turboOn = false;
@@ -442,7 +615,7 @@ async function quitGame() {
     wasmStates = [];
     // Re-create empty cores so the loop keeps idling cheaply; the next ROM
     // load re-arms them (mirrors the backend's recreate-on-quit).
-    wasmModule._db_init(playerCount);
+    dbInit(playerCount);
   } else if (IS_TAURI) {
     await invoke('quit_game');
   } else if (socket && socket.readyState === WebSocket.OPEN) {
@@ -500,6 +673,10 @@ async function quickLoadState() {
       M._free(ptr);
       if (rc !== 0) { ok = false; break; }
     }
+    // Mirror the desktop wrapper: reset the link drivers after restoring
+    // states so stale mid-link queues/asleep flags can't corrupt the
+    // re-handshake (see db_reset_sio in dualboy_web.c).
+    if (ok) M._db_reset_sio();
     setStatus(ok ? 'Quick state loaded (F7)' : 'Load state failed');
     return;
   }
@@ -696,6 +873,8 @@ function loadOutlinesPref() {
 function initScreens(count) {
   playerCount = count;
   focusPlayer = Math.min(focusPlayer, Math.max(0, count - 1));
+  soloPlayer = Math.min(soloPlayer, Math.max(0, count - 1));
+  updateSoloUI();
   const container = document.getElementById('screens');
   container.innerHTML = '';
   screens = [];
@@ -899,6 +1078,28 @@ async function handleKey(e, isDown) {
     if (!code || e.code !== code) continue;
     e.preventDefault();
     if (isDown) triggerHotkey(action.id);
+    return;
+  }
+
+  // Solo keyboard mode: digits 1-4 pick the active player, and P1's control
+  // map drives ONLY that player. All other keys are ignored in this mode, so
+  // the same controls work regardless of which player is selected.
+  if (soloKeyboard) {
+    if (e.code >= 'Digit1' && e.code <= 'Digit4') {
+      const n = parseInt(e.code.slice(5), 10);
+      if (n >= 1 && n <= playerCount) {
+        e.preventDefault();
+        if (isDown) setSoloPlayer(n - 1);
+      }
+      return;
+    }
+    const bit = controls[0].keyboard[e.code];
+    if (bit === undefined) return;
+    const p = soloPlayer;
+    if (isDown) keyStates[p] |= bit;
+    else keyStates[p] &= ~bit;
+    sendKeys(p);
+    e.preventDefault();
     return;
   }
 
@@ -1888,14 +2089,17 @@ function resetRemapCurrent() {
 
 function highlightPlayersMenu(count) {
   document.querySelectorAll('#player-menu button').forEach((btn) => {
+    if (!btn.dataset.players) return; // e.g. the Solo Keyboard toggle
     btn.classList.toggle('active', parseInt(btn.dataset.players, 10) === count);
   });
 }
 
 async function setPlayerCount(n) {
-  if (n < 1 || n > 4) return;
+  // Strict integer guard: NaN slips past the n<1/n>4 comparisons and would
+  // corrupt playerCount (reached via a non-player button in #player-menu).
+  if (!Number.isInteger(n) || n < 1 || n > 4) return;
   if (wasmMode) {
-    wasmModule._db_init(n);
+    dbInit(n);
     playerCount = n;
   } else if (IS_TAURI) {
     await invoke('set_player_count', { n });
@@ -2077,6 +2281,145 @@ function importSetBrowser() {
   input.click();
 }
 
+// ---- Save-state set export/import ----
+// Format: b"DUALSTATE" | version:u32 LE (1) | count:u32 LE | (size:u32 LE, bytes)*
+// Same container as the backend's serialize_state_set, so a state captured in
+// the browser (wasm mode) can be restored by the web server (socket mode) and
+// vice versa. Each per-player blob is an mGBA core save state.
+const STATE_SET_MAGIC = 'DUALSTATE';
+
+function serializeStateSet(states) {
+  const enc = new TextEncoder();
+  let total = 9 + 8 + states.reduce((a, s) => a + 4 + s.length, 0);
+  const out = new Uint8Array(total);
+  out.set(enc.encode(STATE_SET_MAGIC), 0);
+  const dv = new DataView(out.buffer);
+  let off = 9;
+  dv.setUint32(off, 1, true); off += 4; // version
+  dv.setUint32(off, states.length, true); off += 4;
+  for (const s of states) {
+    dv.setUint32(off, s.length, true); off += 4;
+    out.set(s, off);
+    off += s.length;
+  }
+  return out;
+}
+
+function deserializeStateSet(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (new TextDecoder().decode(bytes.subarray(0, 9)) !== STATE_SET_MAGIC) {
+    throw new Error('Not a DualBoy state set');
+  }
+  if (dv.getUint32(9, true) !== 1) throw new Error('Unsupported state set version');
+  const count = dv.getUint32(13, true);
+  const states = [];
+  let off = 17;
+  for (let i = 0; i < count; i++) {
+    const size = dv.getUint32(off, true); off += 4;
+    if (off + size > bytes.length) throw new Error('Truncated state set');
+    states.push(bytes.slice(off, off + size));
+    off += size;
+  }
+  return states;
+}
+
+function downloadBlob(bytes, filename) {
+  const url = URL.createObjectURL(new Blob([bytes]));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function wasmCurrentStates() {
+  // wasm mode: wasmStates holds per-player blobs from the last Quick Save.
+  if (!wasmStates.length) return null;
+  return serializeStateSet(wasmStates);
+}
+
+async function exportStateTauri() {
+  closeMenus();
+  const { save } = window.__TAURI__.dialog;
+  const path = await save({
+    filters: [{ name: 'DualBoy State Set', extensions: ['dualbystate'] }],
+    defaultPath: 'dualboy.dualbystate',
+  });
+  if (path) {
+    await invoke('export_state_set', { path });
+    setStatus(`Saved state set to ${path}`);
+  }
+  closeMenus();
+}
+
+async function importStateTauri() {
+  closeMenus();
+  const { open } = window.__TAURI__.dialog;
+  const selected = await open({
+    multiple: false,
+    filters: [{ name: 'DualBoy State Set', extensions: ['dualbystate'] }],
+  });
+  if (selected) {
+    await invoke('import_state_set', { path: selected });
+    setStatus('Imported state set');
+  }
+  closeMenus();
+}
+
+async function exportStateBrowser() {
+  closeMenus();
+  if (wasmMode) {
+    const blob = wasmCurrentStates();
+    if (!blob) { setStatus('No quick state to export (F5 to save first)'); return; }
+    downloadBlob(blob, 'dualboy.dualbystate');
+    setStatus(`Downloaded state set (${wasmStates.length} players)`);
+    return;
+  }
+  const resp = await fetch('/state');
+  if (!resp.ok) { setStatus('Error: ' + (await resp.text())); return; }
+  downloadBlob(await resp.blob(), 'dualboy.dualbystate');
+  setStatus('Downloaded state set');
+}
+
+function importStateBrowser() {
+  closeMenus();
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.dualbystate';
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (wasmMode) {
+      try {
+        const states = deserializeStateSet(bytes);
+        if (!states.length) throw new Error('Empty state set');
+        const M = wasmModule;
+        let ok = true;
+        for (let i = 0; i < Math.min(playerCount, states.length); i++) {
+          const ptr = M._malloc(states[i].length);
+          if (!ptr) { ok = false; break; }
+          M.HEAPU8.set(states[i], ptr);
+          const rc = M._db_load_state_bytes(i, ptr, states[i].length);
+          M._free(ptr);
+          if (rc !== 0) { ok = false; break; }
+        }
+        // Mirror the desktop wrapper: reset the link drivers after restoring
+        // states so stale mid-link queues/asleep flags can't corrupt the
+        // re-handshake (see db_reset_sio in dualboy_web.c).
+        if (ok) M._db_reset_sio();
+        setStatus(ok ? `Imported state set (${states.length} players)` : 'Load state failed');
+      } catch (err) {
+        setStatus('Import failed: ' + err.message);
+      }
+      return;
+    }
+    const resp = await fetch('/state', { method: 'POST', body: bytes });
+    setStatus(resp.ok ? 'Imported state set' : 'Error: ' + (await resp.text()));
+  };
+  input.click();
+}
+
 // ---- Browser audio (WebAudio playback) ----
 // The web server streams the selected mix (Player 1 / mix all / etc.) as tagged
 // binary frames: u32 LE sample rate + interleaved stereo s16. The desktop app
@@ -2158,6 +2501,15 @@ function onAudioProcess(e) {
 }
 
 function onAudio(data) {
+  // Both call sites must agree on a TypedArray: the socket path passes a
+  // Uint8Array view (tag stripped), while the wasm path used to pass a raw
+  // ArrayBuffer -- which made `new DataView(data.buffer, ...)` throw "First
+  // argument to DataView constructor must be an ArrayBuffer" on EVERY frame
+  // (silent sound + a 60/s uncaught-exception console flood that can starve
+  // the frame loop). Normalize so either input works.
+  if (!(data instanceof Uint8Array)) {
+    data = new Uint8Array(data);
+  }
   if (data.byteLength < 4) return;
   const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const rate = dv.getUint32(0, true);
@@ -2252,7 +2604,7 @@ function wasmPumpAudio() {
   const tagged = new Uint8Array(4 + sampleBytes.length);
   new DataView(tagged.buffer).setUint32(0, 32768, true);
   tagged.set(sampleBytes, 4);
-  onAudio(tagged.buffer);
+  onAudio(tagged);
 }
 
 // Fixed-timestep 60 fps loop. At 60 Hz displays one frame runs per rAF; on
@@ -2339,7 +2691,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     wasmMode = true;
     try {
       await loadWasmModule();
-      wasmModule._db_init(playerCount);
+      dbInit(playerCount);
       setStatus('In-browser engine ready \u2014 2 linked GBAs (load a ROM)');
     } catch (err) {
       // Engine failed: only now show the hosted-shell notice.
@@ -2385,6 +2737,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.querySelectorAll('#player-menu button').forEach((btn) => {
+    if (!btn.dataset.players) return; // e.g. the Solo Keyboard toggle
     btn.addEventListener('click', () => {
       closeMenus();
       setPlayerCount(parseInt(btn.dataset.players, 10));
@@ -2439,6 +2792,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     IS_TAURI ? exportSetTauri() : exportSetBrowser());
   document.getElementById('import-set').addEventListener('click', () =>
     IS_TAURI ? importSetTauri() : importSetBrowser());
+  document.getElementById('export-state').addEventListener('click', () =>
+    IS_TAURI ? exportStateTauri() : exportStateBrowser());
+  document.getElementById('import-state').addEventListener('click', () =>
+    IS_TAURI ? importStateTauri() : importStateBrowser());
+  document.getElementById('toggle-solo').addEventListener('click', toggleSoloKeyboard);
+  loadSolo();
 
   window.addEventListener('keydown', (e) => handleKey(e, true));
   window.addEventListener('keyup', (e) => handleKey(e, false));

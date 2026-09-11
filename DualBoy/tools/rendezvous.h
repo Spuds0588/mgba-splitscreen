@@ -19,6 +19,7 @@ CXX_GUARD_START
 
 #define MAX_LOCKSTEP_EVENTS 8
 
+#ifndef GBA_SIO_LOCKSTEP_H
 enum GBASIORendezvousEventType {
 	SIO_EV_ATTACH,
 	SIO_EV_DETACH,
@@ -26,6 +27,10 @@ enum GBASIORendezvousEventType {
 	SIO_EV_MODE_SET,
 	SIO_EV_TRANSFER_START,
 };
+typedef enum GBASIORendezvousEventType GBASIORendezvousEventType;
+#else
+typedef enum GBASIOLockstepEventType GBASIORendezvousEventType;
+#endif
 
 struct GBASIORendezvousCoordinator {
 	struct Table players;
@@ -45,10 +50,28 @@ struct GBASIORendezvousCoordinator {
 
 	uint16_t multiData[4];
 	uint32_t normalData[4];
+
+	// Four Swords link-handshake assist (keep in sync with lockstep.c): while
+	// the FS cart is stuck in its FEFE/checksum discovery cycle, echo each
+	// recipient its own sent value in every slot so both games see agreement
+	// and advance; hand off to raw pass-through once real payload data flows.
+	bool fsAssistEnabled;
+	bool fsAssistArmed;
+	bool fsAssistOn;
+	uint16_t fsLastEcho;
+	uint16_t fsLastValue[4];  // per-slot last "value" half of an FS pair
+	uint32_t fsLogEvery;   // throttle: log every Nth armed transfer
+	uint32_t fsNormDebug;
+	uint8_t fsHandshakeRounds;
+	uint8_t fsQuietRounds;
+	bool fsKicked;   // TEMP: FS post-name deadlock kick active
+	int fsKickTimer; // TEMP: last kick time (watch-loop seconds)
 };
 
+void GBASIORendezvousCoordinatorSetFSArmed(struct GBASIORendezvousCoordinator*, bool armed);
+
 struct GBASIORendezvousEvent {
-	enum GBASIORendezvousEventType type;
+	GBASIORendezvousEventType type;
 	int32_t timestamp;
 	struct GBASIORendezvousEvent* next;
 	int playerId;
@@ -80,6 +103,10 @@ struct GBASIORendezvousDriver {
 
 	struct mLockstepUser* user;
 };
+
+/* Read the given driver's SIOMULTI0-3 + SIOMLT_SEND registers (IO region is
+ * not exposed via mCoreGetMemoryBlock). Returns false if the GBA isn't up. */
+bool GBASIORendezvousDriverReadMultiRegs(struct GBASIORendezvousDriver*, uint16_t out[5]);
 
 void GBASIORendezvousCoordinatorInit(struct GBASIORendezvousCoordinator*);
 void GBASIORendezvousCoordinatorDeinit(struct GBASIORendezvousCoordinator*);

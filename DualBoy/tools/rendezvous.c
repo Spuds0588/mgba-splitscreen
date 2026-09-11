@@ -478,7 +478,7 @@ static void GBASIORendezvousDriverSetMode(struct GBASIODriver* driver, enum GBAS
 	MutexLock(&coordinator->mutex);
 	struct GBASIORendezvousPlayer* player = TableLookup(&coordinator->players, lockstep->lockstepId);
 	if (mode != player->mode) {
-		mLOG(GBA_SIO, DEBUG, "Switching mode from %d to %d", player->mode, mode);
+		mLOG(GBA_SIO, WARN, "Switching mode from %d to %d", player->mode, mode);
 		player->mode = mode;
 		struct GBASIORendezvousEvent event = {
 			.type = SIO_EV_MODE_SET,
@@ -529,7 +529,9 @@ static int GBASIORendezvousDriverDeviceId(struct GBASIODriver* driver) {
 
 static uint16_t GBASIORendezvousDriverWriteSIOCNT(struct GBASIODriver* driver, uint16_t value) {
 	UNUSED(driver);
-	mLOG(GBA_SIO, DEBUG, "Lockstep: SIOCNT <- %04X", value);
+	mLOG(GBA_SIO, WARN, "SIOCNTW pid=%d val=%04X irq=%d busy=%d start=%d",
+	     GBASIOMultiplayerGetId(value) & 3, value, !!(value & 0x4000),
+	     !!(value & 0x80), !!(value & 0x100));
 	return value;
 }
 
@@ -545,19 +547,21 @@ static bool GBASIORendezvousDriverStart(struct GBASIODriver* driver) {
 	bool ret = false;
 	MutexLock(&coordinator->mutex);
 	if (coordinator->transferActive) {
-		mLOG(GBA_SIO, GAME_ERROR, "Transfer restarted unexpectedly");
+		mLOG(GBA_SIO, WARN, "Transfer restarted unexpectedly (transferActive stuck)");
 		goto out;
 	}
 	if (coordinator->nAttached < 2) {
-		mLOG(GBA_SIO, DEBUG, "Attempted to start transfer with no secondary players");
+		mLOG(GBA_SIO, WARN, "Attempted to start transfer with no secondary players");
 		goto out;
 	}
 	struct GBASIORendezvousPlayer* player = TableLookup(&coordinator->players, lockstep->lockstepId);
 	if (player->playerId != 0) {
-		mLOG(GBA_SIO, DEBUG, "Secondary player attempted to start transfer");
+		mLOG(GBA_SIO, WARN, "Secondary player attempted to start transfer");
 		goto out;
 	}
-	mLOG(GBA_SIO, DEBUG, "Transfer starting at %08X (clock %08X)", GBASIORendezvousTime(player), coordinator->cycle);
+	// TEMP FS-link trace: promote to WARN so the post-name freeze sequence is
+	// visible at the harness's WARN log level. Revert before merging.
+	mLOG(GBA_SIO, WARN, "Transfer starting at %08X (clock %08X)", GBASIORendezvousTime(player), coordinator->cycle);
 	memset(coordinator->multiData, 0xFF, sizeof(coordinator->multiData));
 	_setData(coordinator, 0, player->driver->d.p);
 
@@ -576,6 +580,202 @@ out:
 	return ret;
 }
 
+/* ---- Four Swords link-handshake assist ----
+ * Mirror of lockstep.c's assist (keep in sync). See that file for the full
+ * rationale; the short version: FS's discovery handshake (FEFE probes +
+ * value/0xFFF1-value checksum pairs) never completes because the two games'
+ * counters stay offset, so while the signature is detected we echo each
+ * recipient its own sent value in every slot, making each game see agreement
+ * and advance. Hand off to raw data when real payloads flow.
+ */
+static void _fsAssistIdentify(struct GBASIORendezvousCoordinator* coordinator, struct GBASIORendezvousDriver* lockstep) {
+	coordinator->fsAssistEnabled = false;
+	struct GBA* gba = lockstep->d.p ? lockstep->d.p->p : NULL;
+	if (gba && gba->memory.rom && gba->memory.romSize > 0xA4) {
+		const char* title = (const char*) &gba->memory.rom[0xA0 >> 2];
+		coordinator->fsAssistEnabled =
+		    title[0] == 'G' && title[1] == 'B' && title[2] == 'A' && title[3] == 'Z';
+	}
+	if (coordinator->fsAssistEnabled) {
+		mLOG(GBA_SIO, WARN, "FS assist: Four Swords cart identified");
+	}
+}
+
+static bool _fsAssistHandshakeRound(const uint16_t data[4], int n) {
+	int i, j;
+	bool anyNonzero = false;
+	for (i = 0; i < n; ++i) {
+		if (data[i] == 0xFEFE) {
+			return true;
+		}
+		if (data[i] != 0 && data[i] != 0xFFFF) {
+			anyNonzero = true;
+		}
+	}
+	if (!anyNonzero) {
+		return false;
+	}
+	// Probe / checksum-pair signature (link screen + name handshake): FEFE
+	// probes, or (value, 0xFFF1/0xFFF3-value) pairs. Pairs may be split across
+	// two rounds (value round then checksum round), so also treat a lone
+	// value-like (>= 0x8000) slot as a value round when a partner is nonzero.
+	int values = 0;
+	for (i = 0; i < n; ++i) {
+		if (data[i] != 0 && data[i] != 0xFFFF && data[i] != 0xFEFE &&
+		    data[i] >= 0x8000) {
+			++values;
+		}
+	}
+	if (values >= 1) {
+		return true;
+	}
+	for (i = 0; i < n; ++i) {
+		if (data[i] == 0 || data[i] == 0xFFFF) {
+			continue;
+		}
+		for (j = i + 1; j < n; ++j) {
+			if (data[j] != 0 && data[j] != 0xFFFF &&
+			    ((uint32_t) data[i] + (uint32_t) data[j] == 0xFFF1 ||
+			     (uint32_t) data[i] + (uint32_t) data[j] == 0xFFF3)) {
+				return true;
+			}
+		}
+	}
+	// Counter-sync signature (post-name device-recognition handshake): the two
+	// games exchange 16-bit counters that must match, but the slave's drifts by
+	// ~0x100 (observed 0121/0021, FE4F/FF50, 0084/0083). Any round where both
+	// players send small nonzero values within 0x200 of each other is a sync
+	// round -- echo the master's value so both games see agreement.
+	int nz = 0;
+	uint16_t first = 0;
+	bool sync = true;
+	for (i = 0; i < n; ++i) {
+		if (data[i] == 0 || data[i] == 0xFFFF || data[i] == 0xFEFE) {
+			continue;
+		}
+		if (nz == 0) {
+			first = data[i];
+		} else {
+			int32_t d = (int32_t) first - data[i];
+			if (d < 0) {
+				d = -d;
+			}
+			if (d > 0x200) {
+				sync = false;
+			}
+		}
+		++nz;
+	}
+	return sync && nz >= 2;
+}
+
+/* Correct FS checksum drift in-place on `data`. FS's second handshake
+ * (post-name) exchanges (value, checksum) pairs that must sum to 0xFFF3
+ * (the link screen uses 0xFFF1). The slave's checksum intermittently drifts
+ * by exactly 0x100 (e.g. value FCF2 arrives with 0201 instead of 0301), so
+ * the master's game rejects the pair, its recv never reaches 13, the
+ * acceptance (which only fires on the master) never runs, and the games
+ * deadlock at the name screen. Track each slot's last VALUE round; when a
+ * CHECKSUM round arrives (all slots small, < 0x8000), rewrite any slot whose
+ * pair misses 0xFFF1/0xFFF3 by a multiple of 0x100 so the pair validates.
+ */
+static void _fsAssistNormalize(struct GBASIORendezvousCoordinator* coordinator, uint16_t data[4]) {
+	int i;
+	if ((++coordinator->fsNormDebug % 100) == 1) {
+		mLOG(GBA_SIO, WARN, "FS assist: normalize sees %04X %04X %04X %04X last %04X %04X %04X %04X",
+		     data[0], data[1], data[2], data[3],
+		     coordinator->fsLastValue[0], coordinator->fsLastValue[1],
+		     coordinator->fsLastValue[2], coordinator->fsLastValue[3]);
+	}
+	bool checksumRound = true;
+	for (i = 0; i < coordinator->nAttached; ++i) {
+		uint16_t v = data[i];
+		if (v == 0 || v == 0xFFFF || v == 0xFEFE) {
+			continue;
+		}
+		if (v >= 0x8000) {
+			checksumRound = false;
+			break;
+		}
+	}
+	if (checksumRound) {
+		// NO-OP since 2026-09-06: the "checksum drift" this used to "fix" is
+		// NOT drift -- disassembly of FS's SIO handler (0x800C658 checksum
+		// builder, 0x800C6A8 acceptance scan) plus live traces show the games'
+		// post-name tables are self-consistent: every (value, checksum) pair
+		// the games exchange sums to EXACTLY 0xFFF2, and each game builds a
+		// 12-halfword block whose own checksum entry makes the block sum to
+		// 0xFFF1. The acceptance scan requires the block sum == -15 (0xFFF1),
+		// so REWRITING any table entry (as this code did: 03C4->03C3, and even
+		// 03FF->01FE with d=513) destroys the block checksum and the master's
+		// game rejects every received block. Keep the diagnostics, never
+		// rewrite. See history.md 2026-09-06.
+		for (i = 0; i < coordinator->nAttached; ++i) {
+			uint16_t v = data[i];
+			uint16_t last = coordinator->fsLastValue[i];
+			if (v == 0 || v == 0xFFFF || v == 0xFEFE || last == 0) {
+				continue;
+			}
+			uint32_t sum = (uint32_t) v + last;
+			if (sum == 0xFFF1 || sum == 0xFFF2 || sum == 0xFFF3) {
+				continue;  // already valid
+			}
+			mLOG(GBA_SIO, WARN, "FS assist: norm observe slot %d pair %04X+%04X=%04X (no rewrite)",
+			     i, last, v, (unsigned) (sum & 0xFFFF));
+		}
+	} else {
+		// Value round: remember each slot's value for the next checksum round.
+		for (i = 0; i < coordinator->nAttached; ++i) {
+			uint16_t v = data[i];
+			if (v != 0 && v != 0xFFFF && v != 0xFEFE && v >= 0x8000) {
+				coordinator->fsLastValue[i] = v;
+			}
+		}
+	}
+}
+
+static void _fsAssistTick(struct GBASIORendezvousCoordinator* coordinator, struct GBASIORendezvousDriver* lockstep, uint16_t data[4]) {
+	// LATCHED echo (see lockstep.c): after 3 consecutive discovery-signature
+	// rounds the games are at the frozen link screen and the echo engages on
+	// EVERY round (both games see agreement and their 13-cycle receive
+	// counters advance together); 120 consecutive non-discovery rounds means
+	// real payload is flowing and the echo hands off.
+	if (!coordinator->fsAssistEnabled && !coordinator->fsAssistOn) {
+		_fsAssistIdentify(coordinator, lockstep);
+	}
+	if (!coordinator->fsAssistEnabled) {
+		return;
+	}
+	if (!coordinator->fsAssistArmed) {
+		coordinator->fsAssistOn = false;
+		coordinator->fsHandshakeRounds = 0;
+		coordinator->fsQuietRounds = 0;
+		return;
+	}
+	// Normalize checksum drift BEFORE the echo decision so the master sees
+	// valid pairs; then the echo (probe rounds) still works as before.
+	_fsAssistNormalize(coordinator, data);
+	if (_fsAssistHandshakeRound(data, coordinator->nAttached)) {
+		coordinator->fsHandshakeRounds++;
+		coordinator->fsQuietRounds = 0;
+		if (coordinator->fsHandshakeRounds >= 3 && !coordinator->fsAssistOn) {
+			mLOG(GBA_SIO, WARN, "FS assist: engaging echo at the link screen");
+		}
+		coordinator->fsAssistOn = coordinator->fsHandshakeRounds >= 3;
+	} else if (coordinator->fsAssistOn) {
+		coordinator->fsHandshakeRounds = 0;
+		coordinator->fsQuietRounds++;
+		if (coordinator->fsQuietRounds >= 120) {
+			coordinator->fsAssistOn = false;
+			coordinator->fsQuietRounds = 0;
+			mLOG(GBA_SIO, WARN, "FS assist: handed off to raw data");
+		}
+	} else {
+		coordinator->fsHandshakeRounds = 0;
+	}
+	coordinator->fsLastEcho = coordinator->fsAssistOn ? data[0] : 0;
+}
+
 static void GBASIORendezvousDriverFinishMultiplayer(struct GBASIODriver* driver, uint16_t data[4]) {
 	struct GBASIORendezvousDriver* lockstep = (struct GBASIORendezvousDriver*) driver;
 	struct GBASIORendezvousCoordinator* coordinator = lockstep->coordinator;
@@ -584,16 +784,78 @@ static void GBASIORendezvousDriverFinishMultiplayer(struct GBASIODriver* driver,
 		struct GBASIORendezvousPlayer* player = TableLookup(&coordinator->players, lockstep->lockstepId);
 		if (!player->dataReceived) {
 			mLOG(GBA_SIO, WARN, "MULTI did not receive data. Are we running behind?");
-			memset(data, 0xFF, sizeof(uint16_t) * 4);
+			// FS stall assist: mirror of lockstep.c -- while the assist is armed,
+			// echo the primary's own sent value in every slot instead of FFFF so
+			// the master's game sees consistent partner data on stalled rounds.
+			if (coordinator->fsAssistArmed) {
+				uint16_t master = coordinator->multiData[0];
+				int k;
+				for (k = 0; k < 4; ++k) {
+					data[k] = master;
+				}
+				if (player->playerId == 0) {
+					coordinator->fsAssistOn = true;
+				}
+				if (coordinator->fsLastEcho != master) {
+					mLOG(GBA_SIO, WARN, "FS assist: stalled round, echoing %04X to P%d", master, player->playerId);
+				}
+				coordinator->fsLastEcho = master;
+			} else {
+				memset(data, 0xFF, sizeof(uint16_t) * 4);
+			}
+			// A stalled completion means the secondary never acked, so
+			// transferActive is stuck true: every later Start is rejected and
+			// (with secondaries asleep) nobody is ever woken again -- the
+			// games freeze. Real hardware always completes the transfer at the
+			// master's clock, so clear the latch and wake the secondaries so
+			// the next transfer can proceed (mirror of lockstep.c).
+			if (player->playerId == 0 && coordinator->transferActive) {
+				mLOG(GBA_SIO, WARN, "FS stall: clearing stuck transferActive");
+				coordinator->transferActive = false;
+				GBASIORendezvousCoordinatorWakePlayers(coordinator);
+			}
 		} else {
-			mLOG(GBA_SIO, DEBUG, "MULTI transfer finished: %04X %04X %04X %04X",
-			     coordinator->multiData[0],
-			     coordinator->multiData[1],
-			     coordinator->multiData[2],
-			     coordinator->multiData[3]);
+			if (coordinator->fsAssistArmed && (++coordinator->fsLogEvery % 50) == 0) {
+				mLOG(GBA_SIO, WARN, "MULTI armed data: %04X %04X %04X %04X (send %04X %04X %04X %04X)",
+				     coordinator->multiData[0], coordinator->multiData[1],
+				     coordinator->multiData[2], coordinator->multiData[3],
+				     (unsigned) lockstep->d.p->p->memory.io[GBA_REG(SIOMLT_SEND)],
+				     (unsigned) lockstep->d.p->p->memory.io[GBA_REG(SIOMULTI0)],
+				     (unsigned) lockstep->d.p->p->memory.io[GBA_REG(SIOMULTI1)],
+				     (unsigned) lockstep->d.p->p->memory.io[GBA_REG(SIOMULTI2)]);
+			}
 			memcpy(data, coordinator->multiData, sizeof(uint16_t) * 4);
+
+			// --- Four Swords handshake assist (mirror of lockstep.c) ---
+			if (player->playerId == 0) {
+				_fsAssistTick(coordinator, lockstep, data);
+			}
+			// Latch is set by the primary's tick, so both players' completions
+			// for the same transfer make the same echo decision.
+			// Echo only FEFE probe rounds (2026-09-06): echoing every round
+			// overwrote the slave's real table entries with the master's value
+			// (observed data=0000 0000 0000 0000 with slave's 00BE replaced),
+			// so the master's game never saw the slave's post-name table. The
+			// probe exchange is what resets both games' sendIdx so they re-send
+			// their tables; real table rounds must pass through untouched.
+			if (coordinator->fsAssistOn && data[0] == 0xFEFE) {
+				// Echo the primary's sent probe in every slot (see lockstep.c).
+				uint16_t master = data[0];
+				int k;
+				for (k = 0; k < 4; ++k) {
+					data[k] = master;
+				}
+				mLOG(GBA_SIO, DEBUG, "FS assist: echo %04X to P%d", master, player->playerId);
+			}
 		}
-		mLOG(GBA_SIO, DEBUG, "BUSYCLR pid=%d local=%u",
+		if (coordinator->fsAssistArmed && (++coordinator->fsLogEvery % 25) == 0) {
+			uint16_t sio_siocnt = lockstep->d.p->siocnt;
+			mLOG(GBA_SIO, WARN, "MULTI fin pid=%d siocnt=%04X irq=%d data=%04X %04X %04X %04X send=%04X",
+			     player->playerId, (unsigned) sio_siocnt, !!(sio_siocnt & 0x4000),
+			     data[0], data[1], data[2], data[3],
+			     (unsigned) lockstep->d.p->p->memory.io[GBA_REG(SIOMLT_SEND)]);
+		}
+		mLOG(GBA_SIO, WARN, "BUSYCLR pid=%d local=%u",
 		     player->playerId, (unsigned) mTimingCurrentTime(&lockstep->d.p->p->timing));
 		player->dataReceived = false;
 		if (player->playerId == 0) {
@@ -623,6 +885,19 @@ static uint8_t GBASIORendezvousDriverFinishNormal8(struct GBASIODriver* driver) 
 				data = coordinator->normalData[player->playerId - 1];
 				mLOG(GBA_SIO, DEBUG, "NORMAL8 transfer finished: %02X", data);
 			}
+		} else {
+			// The master reads back the first secondary's data on the same
+			// clock (real hardware shifts the slave's SIODATA into the master's
+			// SIODATA register). Without this the master can never see anything
+			// the slave sends, and games that exchange data in NORMAL mode
+			// (e.g. Four Swords' post-name handshake) deadlock with the master
+			// permanently stuck at recv=0 while the slave advances to recv=13.
+			if (!player->dataReceived) {
+				mLOG(GBA_SIO, WARN, "NORMAL did not receive data. Are we running behind?");
+			} else {
+				data = coordinator->normalData[1];
+				mLOG(GBA_SIO, DEBUG, "NORMAL8 master received: %02X", data);
+			}
 		}
 		player->dataReceived = false;
 		if (player->playerId == 0) {
@@ -647,6 +922,14 @@ static uint32_t GBASIORendezvousDriverFinishNormal32(struct GBASIODriver* driver
 				data = coordinator->normalData[player->playerId - 1];
 				mLOG(GBA_SIO, DEBUG, "NORMAL32 transfer finished: %08X", data);
 			}
+		} else {
+			// See FinishNormal8: the master must read back the slave's data.
+			if (!player->dataReceived) {
+				mLOG(GBA_SIO, WARN, "Did not receive data. Are we running behind?");
+			} else {
+				data = coordinator->normalData[1];
+				mLOG(GBA_SIO, DEBUG, "NORMAL32 master received: %08X", data);
+			}
 		}
 		player->dataReceived = false;
 		if (player->playerId == 0) {
@@ -655,6 +938,30 @@ static uint32_t GBASIORendezvousDriverFinishNormal32(struct GBASIODriver* driver
 	}
 	MutexUnlock(&coordinator->mutex);
 	return data;
+}
+
+bool GBASIORendezvousDriverReadMultiRegs(struct GBASIORendezvousDriver* driver, uint16_t out[5]) {
+	if (!driver || !driver->d.p || !driver->d.p->p) {
+		return false;
+	}
+	uint16_t* io = driver->d.p->p->memory.io;
+	out[0] = io[GBA_REG(SIOMULTI0) >> 1];
+	out[1] = io[GBA_REG(SIOMULTI1) >> 1];
+	out[2] = io[GBA_REG(SIOMULTI2) >> 1];
+	out[3] = io[GBA_REG(SIOMULTI3) >> 1];
+	out[4] = io[GBA_REG(SIOMLT_SEND) >> 1];
+	return true;
+}
+
+void GBASIORendezvousCoordinatorSetFSArmed(struct GBASIORendezvousCoordinator* coordinator, bool armed) {
+	MutexLock(&coordinator->mutex);
+	coordinator->fsAssistArmed = armed;
+	if (!armed) {
+		coordinator->fsAssistOn = false;
+		coordinator->fsHandshakeRounds = 0;
+		coordinator->fsQuietRounds = 0;
+	}
+	MutexUnlock(&coordinator->mutex);
 }
 
 void GBASIORendezvousCoordinatorInit(struct GBASIORendezvousCoordinator* coordinator) {
@@ -975,7 +1282,7 @@ void _rendezvousEvent(struct mTiming* timing, void* context, uint32_t cyclesLate
 			     player->playerId, GBASIORendezvousTime(player), event->finishCycle,
 			     GBASIORendezvousTime(player) - event->finishCycle);
 			player->driver->d.p->siocnt |= 0x80;
-			mLOG(GBA_SIO, DEBUG, "BUSYSET pid=%d local=%u shared=%08X finish=%08X nextEvent=%d late=%u",
+			mLOG(GBA_SIO, WARN, "BUSYSET pid=%d local=%u shared=%08X finish=%08X nextEvent=%d late=%u",
 			     player->playerId, (unsigned) mTimingCurrentTime(&sio->p->timing),
 			     GBASIORendezvousTime(player), event->finishCycle, nextEvent, cyclesLate);
 			mTimingDeschedule(&sio->p->timing, &sio->completeEvent);

@@ -25,6 +25,14 @@ struct GBABundledState {
 };
 
 void GBASerialize(struct GBA* gba, struct GBASerializedState* state) {
+	// Zero first so fields that no serializer writes (e.g. hw.unlCartFlags for
+	// carts with no bootleg chip) carry a well-defined value instead of stale
+	// caller buffer contents. GBAUnlCartDeserialize compares the recorded
+	// bootleg type against the live cart and warns+skips on mismatch, so a
+	// garbage type made every imported state of a normal cart lose its bootleg
+	// section (observed as "Save state expects different bootleg type" on the
+	// Four Swords link screen, with the game then executing garbage).
+	memset(state, 0, sizeof(*state));
 	STORE_32(GBASavestateMagic + GBASavestateVersion, 0, &state->versionMagic);
 	STORE_32(gba->biosChecksum, 0, &state->biosChecksum);
 	STORE_32(gba->romCrc32, 0, &state->romCrc32);

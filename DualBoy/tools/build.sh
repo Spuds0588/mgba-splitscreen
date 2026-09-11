@@ -5,7 +5,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."   # repo root
 
-OUT_DIR=$(ls -d DualBoy/src-tauri/target/release/build/dualboy-*/out | head -1)
+# Pick the most recently built OUT_DIR (alphabetical order is not build order).
+OUT_DIR=$(ls -dt DualBoy/src-tauri/target/release/build/dualboy-*/out | head -1)
 # cmake outputs libmgba.a directly under build/; the lib/ copy is the install
 # destination and can be stale after a `cmake --build`. Prefer the fresh one.
 LIB="$OUT_DIR/build/libmgba.a"
@@ -21,7 +22,7 @@ fi
 # the compiled libmgba (USE_PTHREADS vs no-op Mutex, ENABLE_VFS gates, etc.).
 DEFINES=$(grep -rh "C_DEFINES = " "$OUT_DIR/build/CMakeFiles"/*/flags.make | head -1 | sed 's/^C_DEFINES = //')
 # shellcheck disable=SC2086
-gcc -O2 -std=c11 -pthread $DEFINES \
+gcc -O2 -g -std=c11 -pthread $DEFINES \
   -I include -I src -I "$OUT_DIR/include" -I DualBoy/tools \
   DualBoy/tools/threaded_link.c \
   DualBoy/tools/rendezvous.c \

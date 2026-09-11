@@ -120,6 +120,14 @@ body {
   max-width: 40%;
 }
 
+.solo-badge {
+  margin-left: 10px;
+  font-size: 0.8rem;
+  color: #4fc3f7;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* ---- Screen grid (video-call layout) ---- */
 .screen-container {
   flex: 1 1 auto;

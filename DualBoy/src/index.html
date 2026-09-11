@@ -30,6 +30,8 @@
           <button id="quick-load-state">Quick Load State</button>
           <button id="export-set">Export All Saves&#8230;</button>
           <button id="import-set">Import All Saves&#8230;</button>
+          <button id="export-state">Export State Set&#8230;</button>
+          <button id="import-state">Import State Set&#8230;</button>
         </div>
       </details>
 
@@ -47,6 +49,8 @@
           <button data-players="2">2 Players</button>
           <button data-players="3">3 Players</button>
           <button data-players="4">4 Players</button>
+          <button id="toggle-solo" class="active">Solo Keyboard: On</button>
+          <div class="menu-note">Solo Keyboard drives only the active player with Player 1's controls; digits 1-4 switch which player is active (testing helper).</div>
         </div>
       </details>
 
@@ -114,6 +118,7 @@
       </details>
 
       <span id="status" class="status">Waiting for ROM&#8230;</span>
+      <span id="solo-badge" class="solo-badge"></span>
     </header>
 
     <!-- Screens fill the rest of the window; grid cells are laid out like a

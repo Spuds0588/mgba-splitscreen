@@ -875,3 +875,67 @@ handshake in the fresh `/tmp/dualboy_app.log`.
   overlay (Controls menu -> Player N Controls) rebinds keyboard keys and gamepad
   buttons with replace semantics (a key/button drives one action); Reset to
   defaults per player. Works in both Tauri webview and browser.
+
+## FS link: H1 reverted — per-transfer hard sync restored (2026-09-11)
+
+**The H1 experiment was the regression.** `a9ca9b441` (the "H1 — Per-transfer
+hard sync is too aggressive" entry above) commented out the `_hardSync()` call
+at the end of `GBASIOLockstepDriverFinishMultiplayer`. The commit that *introduced*
+the FS progress (see "Branch `fs-link-loosen-timing`" above, 2026-08-17: FS 2P
+passes the linking screen into character-select) had that call **active**, on top
+of the loosened `UNLOCKED_INTERVAL`/`nextHardSync` timing. H1's own result line is
+"the handshake still cycles" — i.e. the experiment measured the *loss* of the
+end-of-round realignment, not a fix. This is the only structural delta to that
+file between the documented-working state and today (`git diff e191ddf9b..HEAD --
+src/gba/sio/lockstep.c` is exactly: `UNLOCKED_INTERVAL 4096->8192`, the
+`nextHardSync` restructure, and the commented-out `_hardSync`).
+
+Restored: `_hardSync(coordinator, player);` in `FinishMultiplayer`, with a comment
+recording why. Kept: the loosened timing, the non-positive-delay clamp, the
+ack-barrier work — all of which are separate and independently motivated.
+
+Smoke checks after the restore (native harness, real lockstep driver, current
+source): 2P `--fs10` completes the full watch with **0** `MULTI did not receive
+data`; 4P `--fs10` shows correct per-unit IDs on the wire (P1 `200B`/id0 master,
+P2/P3/P4 `609F`/`60AF`/`60BF` = ids 1/2/3, SD ready bit set on all four) and no
+stall flood. So the barrier does not deadlock the cooperative model at 4P.
+
+**Caveat — do not trust this harness's screen verdicts.** `run_fs_postlink`
+presses START at the title, waits 8 s (which lands mid-*intro cutscene*), then
+presses **A+B**, which on the FS link screen is a *cancel*: the `fs_ab_before`
+dump for this very run is the Zelda/"Let's check the seal" cutscene and
+`fs_postlink` is the linking screen, so the "post-link screens: P1=name" line is
+the known light-pixel false positive, and the frames the harness then watches
+(`fs_post20`/`fs_postfinal`) are the **title-screen attract demo**, not gameplay.
+Its `dump_ppm(g_cur[...])` also reads a snapshot buffer that lags the live
+screen. Any pass/fail that keys on `cur_screen()` screenshots from this harness
+is meaningless. Judge FS progress from the *live* screen in the browser
+(`preview_screenshot`) — that is the environment the user is reporting on.
+
+**Correct linking recipe** (the one the 2026-08-17 entry used): both players
+press START *at the FS title* (and again at the link screen), then wait. Do **not**
+press B — B aborts the link back to the title.
+
+### VERIFIED 2P in the browser (2026-09-11, same day)
+
+With the restore built into the WASM and served on a fresh origin, FS 2P links:
+
+1. Import a pre-link state set (`fs_state.dualbystate`, captured at the FS title),
+   so both games are at the title.
+2. Press START on both (near-simultaneously) → both reach
+   "Linking with other systems… Please wait a moment.", P1 prompting A.
+3. Tap A on both → both advance to **"CHOOSE A STAGE" / Chambers of Insight**.
+4. Tap A again → both drop into the **dungeon** with BOTH Links on screen (green
+   P1 + red P2), hearts, rupee HUD — real linked play, both views in sync.
+
+Console during the whole run: `nAtt=2`, live `SIOMLT_SEND` exchange
+(`0150`, `FCE5`, `02C4`…), **zero** `MULTI did not receive data`. So the barrier is
+both necessary (H1's removal alone put FS back on the linking screen forever) and
+sufficient for 2P in the cooperative browser model.
+
+Still open: **4P**. Driving four games through FS's menus with the solo-keyboard
+helper desyncs them (the imported 4P state set is itself inconsistent — one core
+restores on the linking screen while the others restore at the title), so 4P was
+not conclusively re-tested here. The transport is fine at 4P (`tests/linktest_4p.rs`
+and the 4P `--fs10` run: 0 stalls, ids 1/2/3 on the wire), and the fix is in the
+shared path, so the next step is simply four games at the link screen together.

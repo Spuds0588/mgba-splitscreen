@@ -36,6 +36,13 @@ version.c
 
 # Local test ROMs (legally obtained from the owner's personal collection; never commit)
 /Test Roms/
+# Same rule anywhere else a local ROM or linked save-state set is dropped for
+# testing (DualBoy/src is the web server's document root, so test ROMs land there).
+DualBoy/src/*.gba
+DualBoy/src/*.dualbystate
+DualBoy/src/tmp-test/
+# Scratch screenshot galleries from link-debugging sessions.
+DualBoy/tmp_repro/
 
 # Local session metadata
 /.freebuff/

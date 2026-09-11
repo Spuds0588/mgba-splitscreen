@@ -151,6 +151,21 @@ async fn import_save_set(path: String) -> Result<(), String> {
     with_emulator(|em| em.import_save_set(&data))?
 }
 
+/// Export a full save-state set (all instances, one DUALSTATE blob) to a file.
+#[tauri::command]
+async fn export_state_set(path: String) -> Result<(), String> {
+    let data = with_emulator(|em| em.save_state_set())??;
+    std::fs::write(&path, data).map_err(|e| e.to_string())
+}
+
+/// Import a full save-state set from a file (see `load_state_set` for the
+/// lockstep-driver reset it performs after restoring).
+#[tauri::command]
+async fn import_state_set(path: String) -> Result<(), String> {
+    let data = std::fs::read(&path).map_err(|e| e.to_string())?;
+    with_emulator(|em| em.load_state_set(&data))?
+}
+
 /// Quick save state (all instances into one in-memory slot). F5 hotkey.
 #[tauri::command]
 async fn save_state() -> Result<(), String> {
@@ -366,6 +381,8 @@ pub fn run() {
             import_save,
             export_save_set,
             import_save_set,
+            export_state_set,
+            import_state_set,
             save_state,
             load_state,
             scan_games_dir,

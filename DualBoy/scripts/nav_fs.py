@@ -82,7 +82,16 @@ def detect(frame):
     # Multipak warning: mostly dark screen with a small centered box.
     if dark_mid > 0.5:
         return "multipak"
-    # Saving dialog: purple-ish dark screen.
+    # Name keyboard: the ENTER A NAME dialog is purple, and the letter grid
+    # spans many rows with enough total light (a dialog box's 2 lines give ~9
+    # rows but only ~85 total; the keyboard ~137+). Checked BEFORE "saving"
+    # because the name dialog satisfies the purple test too (observed on the
+    # web-server rendering: purple_mid=0.586 at the name keyboard vs 0.000 at
+    # the title). The title logo's light pixels (~157 on the server) are also
+    # excluded because they sit on a non-purple screen.
+    if purple_mid > 0.20 and light_rows >= 8 and light_total > 100:
+        return "name"
+    # Saving dialog: purple-ish dark screen (no letter grid).
     if purple_mid > 0.25:
         return "saving"
     # FS cart title: gold/red logo in the upper half.
@@ -91,10 +100,6 @@ def detect(frame):
     # ALttP title: bright sky/landscape (light across the whole mid region).
     if green_mid > 0.25 or light_total > 400:
         return "alttp"
-    # Name keyboard: a letter grid spanning many rows with enough total light
-    # (a dialog box's 2 lines give ~9 rows but only ~85 total; the keyboard ~137).
-    if light_rows >= 8 and light_total > 100:
-        return "name"
     # CHOOSE A GAME: green landscape with the two panels.
     if green_mid > 0.10:
         return "choose"
@@ -152,8 +157,16 @@ class Nav:
         return last
 
     def to_name_entry(self, p):
-        """Boot -> ENTER A NAME, whatever the boot screen was."""
-        for _ in range(12):
+        """Boot -> ENTER A NAME, whatever the boot screen was.
+
+        Returns True if the name keyboard was positively detected; False if the
+        classifier couldn't confirm it (some FS screens share the menu palette,
+        so the name keyboard can classify as "saving"). Callers must CONTINUE
+        the fixed tap flow either way: the A-taps advance boot -> file select ->
+        name entry, and typing at the name screen works even when it is
+        misclassified (mirrors the harness nav).
+        """
+        for _ in range(20):
             f = self.c.player_frame(p, timeout=2.0)
             if f is None:
                 time.sleep(1.0)
@@ -165,8 +178,8 @@ class Nav:
                 self.tap(p, "A", "title_a", wait=1.0)
             elif s == "file":
                 self.tap(p, "A", "file_a", wait=1.0)
-            elif s in ("choose", "unknown"):
-                # Unknown/choose: A is usually safe at boot.
+            elif s in ("choose", "unknown", "alttp"):
+                # Unknown/choose/alttp: A is usually safe at boot.
                 self.tap(p, "A", "unknown_a", wait=1.0)
             time.sleep(0.4)
         return False
@@ -175,7 +188,11 @@ class Nav:
         """Walk the keyboard cursor up/left to the top-left (A) using pixel
         detection, so the END walk below is deterministic."""
         for _ in range(8):
-            pos = cursor_pos(self.c.player_frame(p))
+            f = self.c.player_frame(p)
+            if f is None:
+                time.sleep(0.3)
+                continue
+            pos = cursor_pos(f)
             if pos is None:
                 time.sleep(0.3)
                 continue
@@ -190,9 +207,13 @@ class Nav:
 
     def player(self, p):
         print(f"--- P{p}: to name entry ---")
-        if not self.to_name_entry(p):
-            print(f"  P{p}: never reached name entry")
-            return
+        saw_name = self.to_name_entry(p)
+        # Never give up here: the fixed tap flow below works even if the name
+        # screen was misclassified (mirrors the harness nav, which WARNs and
+        # continues). Give the menu a moment to settle before typing.
+        if not saw_name:
+            print(f"  P{p}: name entry not confirmed (continuing anyway)")
+        time.sleep(1.0)
         self.snap(p, "name_entry")
         self.reset_cursor_to_a(p)
         self.snap(p, "cursor_a")

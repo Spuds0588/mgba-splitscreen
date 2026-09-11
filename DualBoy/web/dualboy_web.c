@@ -463,6 +463,41 @@ int db_load_state_bytes(int player, const uint8_t* data, size_t size) {
 	return g_players[player].core->loadState(g_players[player].core, data) ? 0 : -3;
 }
 
+/* After a state-set import, the lockstep coordinator's per-player event
+ * queues and asleep flags come back with the restored cores (mid-link saves
+ * carry them in the driver state), and if they're left in place the games
+ * freeze or corrupt their first handshake rounds. The desktop wrapper resets
+ * every driver after loading states (EmulationManager::load_state_set);
+ * mirror that here so browser imports behave identically. Call AFTER all
+ * players' states are loaded. */
+EMSCRIPTEN_KEEPALIVE
+void db_reset_sio(void) {
+	if (!g_has_coord) {
+		return;
+	}
+	for (int i = 0; i < g_count; ++i) {
+		if (g_drivers[i].d.p && g_drivers[i].d.reset) {
+			g_drivers[i].d.reset(&g_drivers[i].d);
+		}
+	}
+}
+
+/* Turn the Four Swords link assist (and its deadlock kick) on or off.
+ *
+ * The assist pokes the game's private link state every ~2 s while the games sit
+ * in the link-screen mode. It has never moved them off the linking screen in any
+ * model, and sessions that run with it show the emulated game fetching from
+ * unmapped memory (Out of bounds ROM 0x0D000000, Bad BIOS 0x00000000, Bad memory
+ * 0xffffeXXX), so the frontend leaves it OFF unless explicitly asked for it with
+ * `?fsassist=1`. See GBASIOLockstepCoordinatorSetFSSuppressed. */
+EMSCRIPTEN_KEEPALIVE
+void db_set_fs_assist(int enabled) {
+	if (!g_has_coord) {
+		return;
+	}
+	GBASIOLockstepCoordinatorSetFSSuppressed(&g_coord, !enabled);
+}
+
 /* Stepping stats for the most recent db_run_frame: loop iterations, lockstep
  * sleep/wake counts (transfer rendezvous activity), and emulated cycles. */
 EMSCRIPTEN_KEEPALIVE
