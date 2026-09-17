@@ -306,6 +306,38 @@ fetched from the host over CORS. Build/emulator recipe is in `agents.md`.
 - [ ] `tauri android init` regenerates `gen/android`; the manifest edits (and banner) are
       committed, but re-running init can overwrite them — diff after any re-init.
 
+## 🟣 v0.4-v0.6 expansion roadmap
+
+The next versions are intentionally staged: stabilize local multi-system support before adding online transport.
+
+### v0.4 — local multi-system foundation
+
+- [ ] Make ROM loading platform-aware for GBA, GB, GBC, and supported GBX files.
+- [ ] Enable the native GB core and introduce a platform-neutral emulator-instance model.
+- [ ] Support one ROM per local player, including Pokémon Red on P1 and Blue on P2, with separate save identities.
+- [ ] Validate link topology before launch: GBA supports 2–4 players; the existing GB lockstep path supports two devices.
+- [ ] Refactor video dimensions, aspect handling, audio rates, and audio buffers per instance.
+- [ ] Replace browser ScriptProcessor audio with AudioWorklet where supported, retaining a compatibility fallback.
+- [ ] Add browser output-device selection with capability detection and Android system-route fallback.
+- [ ] Add tests for ROM detection, GB/GBC loading, independent saves, and topology validation.
+
+### v0.5 — host-star online play and external sidebar
+
+- [~] v0.5 foundation: add the optional PeerJS host-star transport; host owns emulation and guests send input while receiving the latest host frame.
+- [ ] Harden the transport with bounded queues, sequence numbers, timestamps, reconnect handling, rate limits, host validation, and adaptive video/audio encoding.
+- [x] Prototype magic-link invitations with Web Crypto tokens, fragment-contained bearer secrets, 10-minute expiry, and first-join single-use invalidation.
+- [ ] Add explicit host approval/revocation, reconnect/resume policy, and a private signaling/auth service before treating online play as production-safe.
+- [ ] Add an opt-in URL-controlled iframe sidebar with origin labeling, sandboxing, focus isolation, and HTTP/mixed-content warnings.
+- [x] Add the installable PWA shell: manifest, install metadata, service-worker registration, shell cache, and deployer-compatible response headers.
+- [ ] Handle blocked embeds and camera/microphone/clipboard/fullscreen permissions explicitly.
+
+### v0.6 — handheld and phone packaging
+
+- [ ] Add touch controls and explicit TV/handheld input modes.
+- [ ] Normalize Android key/gamepad handling, including safe BACK behavior.
+- [ ] Build signed arm64 and armv7 APKs and verify phones, tablets, handhelds, external displays, and TV.
+- [ ] Revisit the fixed WASM heap and low-memory WebView behavior.
+
 ## 🟠 mgba-splitscreen app / web remaining work
 
 - [ ] Root-cause the one observed tokio-worker segfault (`segfault at 4a8` in
@@ -322,6 +354,8 @@ fetched from the host over CORS. Build/emulator recipe is in `agents.md`.
       (non-webview) renderer for the desktop app.
 - [ ] Web version on GitHub Pages is live; keep it in sync with the desktop
       feature set (turbo, save states, audio source menu…).
+- [x] v0.4 first slice: widen ROM discovery/pickers/folder scans/URL validation to GB/GBC/GBX and enable the native GB core as groundwork. WASM detection and dynamic video metadata are implemented; the browser WASM path now wires mGBA's two-device GB/GBC lockstep coordinator. Native Tauri GB runtime/link support and independent save identities remain follow-up work.
+- [ ] Separate ROMs per linked player (for example Pokémon Red/Blue) is deferred: Oracle of Ages/Seasons do not use a link cable, and Pokémon trading is outside the current audience/use case.
 
 ## 🟡 Future dev options (documented, not built)
 
@@ -379,6 +413,15 @@ fetched from the host over CORS. Build/emulator recipe is in `agents.md`.
 - [ ] If 4P still diverges from a fresh boot, diff per-player MULTI delivery
       in `_setData`/`AckPlayer` against the 2P-proven run (4P logs
       `mlt=FFFF,FFFF,FFFF,FFFF`).
+
+## GB/GBC v0.4 scope (2026-09-16)
+
+- [x] Ignore the personal `Test Roms/` collection and generated save/state artifacts.
+- [x] Verify GB and GBC ROM detection, two-instance creation, 160x144 rendering, and cooperative stepping in the rebuilt WASM bridge.
+- [x] Add a two-endpoint serial probe for diagnostics; retain it as smoke coverage only, not as a substitute for an in-game transfer.
+- [x] Defer separate-ROM linked sessions. Oracle of Ages/Seasons exchange passwords rather than using the cable; Pokémon trading is outside the target audience for now.
+- [ ] Verify a game-specific GB/GBC cable transaction if a suitable supported test flow becomes available.
+- [ ] Wire the native Tauri GB/GBC instance/link model before advertising desktop GB/GBC linking.
 
 ## Housekeeping
 

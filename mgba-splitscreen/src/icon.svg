@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">mgba-splitscreen</title>
+  <desc id="desc">A cyan multiplayer screen grid on a dark background</desc>
+  <rect width="512" height="512" rx="96" fill="#0d0d0d"/>
+  <rect x="54" y="92" width="404" height="300" rx="30" fill="#1c1c1f" stroke="#24c8db" stroke-width="18"/>
+  <path d="M256 94v296M55 242h402" stroke="#24c8db" stroke-width="12" opacity=".8"/>
+  <circle cx="138" cy="168" r="22" fill="#f05b68"/>
+  <circle cx="374" cy="168" r="22" fill="#6da9ff"/>
+  <circle cx="138" cy="316" r="22" fill="#65d18b"/>
+  <circle cx="374" cy="316" r="22" fill="#f0ad55"/>
+</svg>

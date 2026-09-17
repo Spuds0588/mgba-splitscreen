@@ -215,7 +215,7 @@ async fn load_state() -> Result<(), String> {
     with_emulator(|em| em.quick_load_state())?
 }
 
-/// A GBA ROM found by `scan_games_dir`. `box_art` is the path of a sibling image
+/// A Game Boy or Game Boy Advance ROM found by `scan_games_dir`. `box_art` is the path of a sibling image
 /// (same stem, .png/.jpg/...) if one exists, for the game library's tiles.
 #[derive(serde::Serialize)]
 #[cfg(not(target_os = "android"))]
@@ -225,7 +225,7 @@ struct GameEntry {
     box_art: Option<String>,
 }
 
-/// List the `.gba` files in a directory (non-recursive), sorted by name, with the
+/// List supported Game Boy / Game Boy Advance files in a directory (non-recursive), sorted by name, with the
 /// path of any sibling box-art image. Powers the game library's "Add Folder".
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
@@ -241,7 +241,7 @@ async fn scan_games_dir(path: String) -> Result<Vec<GameEntry>, String> {
         else {
             continue;
         };
-        if ext != "gba" {
+        if !matches!(ext.as_str(), "gba" | "gb" | "gbc" | "gbx") {
             continue;
         }
         let name = p

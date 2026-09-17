@@ -60,7 +60,7 @@ fn main() {
         .define("DISABLE_DEPS", "ON")
         .define("ENABLE_VFS", "ON")
         .define("M_CORE_GBA", "ON")
-        .define("M_CORE_GB", "OFF")
+        .define("M_CORE_GB", "ON")
         .build();
 
     // 2. Inform cargo about the link path

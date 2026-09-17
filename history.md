@@ -8,6 +8,53 @@
 
 ---
 
+## 2026-09-17 — v0.5 magic-link hardening and PWA shell
+
+Hardened the PeerJS invite flow using OWASP's URL-token guidance: tokens are generated with the Web Crypto API, are high-entropy, expire after 10 minutes, are single-use, and are invalidated before the first guest is welcomed. The bearer token/session now live in the URL fragment rather than the query string, so browsers do not send them in HTTP Referer headers. The host can issue a fresh invite after consumption or expiration; an invite can never be reused to add a second guest. The host still validates the token because PeerJS's public broker is signaling, not an authorization service.
+
+Added the first PWA install shell: `manifest.json`, maskable SVG icon, service-worker registration, conservative shell caching, `theme-color`/mobile metadata, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and a deployer-compatible `_headers` file. The service worker deliberately does not cache ROMs, save files, or PeerJS traffic. PWA installability still requires HTTPS or localhost and browser/platform support; this follows MDN's installability requirements.
+
+References checked: OWASP Forgot Password Cheat Sheet (cryptographically random, sufficiently long, securely stored, single-use, expiring URL tokens; HTTPS and referrer-leak protection) and MDN Making PWAs Installable (manifest, 192/512 icons, start URL, display mode, HTTPS/localhost). These controls reduce accidental invite leakage but do not identify the intended human: whoever uses the link first wins. Account-level identity, a host approval prompt, or a private signaling service would be needed for stronger assurance.
+
+### 2026-09-17 — v0.5 PeerJS host-star foundation started
+
+Added the first opt-in online-play slice. The web UI now exposes an **Online** menu with `Host Online Session` and `Copy Guest Invite`. A host creates a random session/token, opens a PeerJS peer, and generates a URL containing only the role, session, token, host peer ID, player count, and any existing `rom` URL. Guests arriving through that link skip local WASM emulation, connect to the host, forward controller masks, and render the host's latest composited frame.
+
+The host remains authoritative in this prototype: it owns ROM loading, emulation, saves, timing, and input application. Frame forwarding is latest-frame-only so a slow guest cannot build an unbounded queue. PeerJS is loaded as an optional CDN dependency; if it is unavailable, local browser/Tauri play remains unchanged and the Online menu reports the failure.
+
+This is deliberately a transport foundation, not release-ready online multiplayer. The next work is protocol versioning, authenticated expiring/revocable invites, reconnect/resume, player-slot reservation, input sequencing/latency metrics, host discovery hardening, and replacing full RGBA frame copies with a bandwidth-aware video/audio stream.
+
+### 2026-09-12 — v0.4-v0.6 expansion roadmap recorded
+
+The next feature work is staged rather than bundled into one risky rewrite.
+
+**v0.4 local foundation:** make ROM loading platform-aware for GBA, GB, GBC, and supported GBX files; enable the native GB core; introduce platform-neutral emulator instances; support one ROM per local player with separate saves; use mGBA's existing two-device GB/GBC serial link while preserving the proven 2–4-player GBA topology; make video/audio metadata per instance; upgrade browser audio toward AudioWorklet plus output-device selection; and add tests for detection, saves, and topology validation.
+
+**v0.5 online/sidebar:** use a versioned PeerJS host-authoritative protocol. The host keeps ROMs, emulation, saves, and timing; guests send inputs and receive assigned video/audio streams. Magic links contain expiring session metadata rather than ROM bytes or permanent credentials. Add an explicit opt-in iframe sidebar with origin labeling, sandboxing, input isolation, and clear HTTP/mixed-content and embed-blocking behavior.
+
+**v0.6 handhelds/phones:** add touch and TV/handheld modes, normalize Android key/gamepad behavior including BACK, produce signed arm64/armv7 APKs, test external displays/Bluetooth controllers, and revisit the fixed WASM heap for low-memory devices.
+
+**First implementation slice:** widen ROM discovery and pickers, folder scanning, and URL validation to GB/GBC/GBX, then enable the native GB core as groundwork. This does not yet advertise native GB/GBC gameplay: the platform-neutral instance refactor and GB-specific runtime tests are still required.
+
+### 2026-09-12 — v0.4 first slice: platform-aware ROM discovery started
+
+- Browser and desktop pickers/folder scans now accept `.gba`, `.gb`, `.gbc`, and `.gbx`.
+- The native Tauri build now enables `M_CORE_GB`; directory scanning returns all four supported extensions.
+- The WASM bridge now identifies the core with `mCoreIsCompatible`, creates GBA or GB cores accordingly, reports dynamic video dimensions, uses core-specific frame-cycle budgets, and translates the shared GBA-style input mask for GB.
+- GB cores intentionally do not join the GBA lockstep cable yet. The existing GB two-device serial path still needs a platform-neutral session model before Pokémon trade/battle can be advertised.
+- Native frame buffers were widened to a 256x224 maximum and snapshots now use each core's frame dimensions; GBA behavior remains the default 240x160 path.
+
+Checks: `node --check src/main.js` passed; `cargo check --manifest-path src-tauri/Cargo.toml` passed with existing generated-bindings warnings; after sourcing `~/emsdk/emsdk_env.sh`, `bash web/build.sh` passed and rebuilt the tracked WASM artifacts. No GB game ROM was available in the test-ROM set, so runtime GB rendering/link tests remain next.
+
+### 2026-09-13 — GB/GBC browser link smoke verification
+
+The newly supplied local test ROMs are already covered by the root `/Test Roms/` ignore rule, so no ROM bytes or generated save/state files were added to Git. The rebuilt browser bridge was tested with the available `Mario Tennis (USA).gbc`: two cores loaded successfully (`rc=0`), were detected as `mPLATFORM_GB` (`platform=1`), reported the native 160x144 dimensions, rendered both screens, and continued stepping in lockstep without a browser exception. The interactive smoke page also showed both instances progressing through the same intro/menu animation and accepting independent P1/P2 button input.
+
+The test confirms GB/GBC core creation, dynamic video metadata, and the cooperative two-device driver are live in the browser build. It does not yet prove a game-specific trade/battle session: Mario Tennis was used as a rendering/input/driver smoke ROM, and the available Oracle pair uses password exchange rather than cable linking. Separate-ROM linked sessions are therefore intentionally deferred; Pokémon trading is not a current audience use case. Native Tauri GB runtime/link coverage remains a follow-up to the platform-neutral instance refactor.
+
+
+---
+
 ## The Four Swords link bug — one-paragraph summary
 
 The FS linking screen never completes under stock mGBA. The two games exchange
@@ -1497,3 +1544,11 @@ from before the move, so `cargo build` dies with
 `failed to read plugin permissions: …/DualBoy/src-tauri/…`. Delete
 `target/release/build/tauri-*` (keeping the expensive `mgba-splitscreen-*`
 cmake output) and rebuild. CI is unaffected — it always starts clean.
+
+### 2026-09-16 — GB/GBC test-ROM scope and link verification
+
+The newly added personal ROMs under `Test Roms/` are ignored by `/Test Roms/`; generated save/state files are also ignored (`*.sav`, `*.sa[0-9]`, `*.mgsstate`, `*.mgbstate`, `*.dualbystate`). No ROM bytes are staged.
+
+The rebuilt WASM bridge successfully loads both `Double Dragon II (USA, Europe).gb` and `Mario Tennis (USA).gbc` into two GB cores, reports platform `mPLATFORM_GB`, and renders both 160x144 instances. The browser smoke path can step both cores and route input through the shared control mask.
+
+The deterministic serial probe initially only enabled one GB endpoint, which cannot start a real transfer. The probe now enables both ends and was rebuilt, but a game-agnostic register poke is not considered proof of game-level link play because the running ROM can immediately overwrite the registers. We therefore record GB/GBC link support as bridge/coordinator smoke coverage, not a verified Pokémon battle/trade flow. Separate-ROM linked sessions are explicitly deferred; the Oracle of Ages/Seasons use password exchange rather than cable link and provide no useful audience case.

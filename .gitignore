@@ -30,6 +30,10 @@ version.c
 
 # Runtime generated cruft
 *.sav
+*.sa[0-9]
+*.mgsstate
+*.mgbstate
+*.dualbystate
 *.ss0
 .clj-kondo/.cache/
 .lsp/.cache/db.transit.json

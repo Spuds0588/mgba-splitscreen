@@ -829,7 +829,7 @@ impl EmulationManager {
                         // player pause mid-frame and resume exactly where it left off,
                         // so neither player's ROM frame gets split across ticks and
                         // both hold a steady ~60 fps.
-                        const FRAME_CYCLES: i32 = 280_896; // GBA VIDEO_TOTAL_LENGTH
+                        const FRAME_CYCLES: i32 = 280_896; // fallback for an unrecognized core
                         let frames_before: Vec<u32> =
                             guards.iter().map(|g| g.frame_counter()).collect();
                         let mut budgets = vec![FRAME_CYCLES; n];

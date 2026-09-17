@@ -3,8 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="styles.css" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#121212" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="mgba-splitscreen" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <title>mgba-splitscreen</title>
+    <!-- PeerJS is optional: local play and the WASM engine work if this CDN is unavailable. -->
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" defer></script>
+    <script src="online.js" defer></script>
     <script type="module" src="main.js" defer></script>
   </head>
 
@@ -42,6 +53,15 @@
 
       <!-- Choose how many linked GBA instances to run (1-4). Changing this
            restarts emulation and reloads the current ROM at the new count. -->
+      <details class="menu">
+        <summary>Online</summary>
+        <div class="menu-items" id="online-menu">
+          <button id="online-host">Host Online Session</button>
+          <button id="online-copy-invite" disabled>Copy Guest Invite</button>
+          <div id="online-status" class="menu-note">Local play is unchanged. Hosting keeps emulation on this device.</div>
+        </div>
+      </details>
+
       <details class="menu">
         <summary>Players</summary>
         <div class="menu-items" id="player-menu">

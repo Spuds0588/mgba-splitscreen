@@ -128,7 +128,7 @@ function dbInit(count) {
 // URL can drop everyone straight into the same session:
 //
 //   ?players=4                       linked players, 1-4 (applied before boot)
-//   ?rom=<url>                       fetch this .gba and start it immediately
+//   ?rom=<url>                       fetch this .gba/.gb/.gbc/.gbx and start it immediately
 //   ?players=2&rom=roms/game.gba     combined; `rom` may be relative or absolute
 //
 // `rom` is fetched with fetch(), so a cross-origin URL only works when that host
@@ -236,10 +236,14 @@ if (typeof window !== 'undefined') {
 
 const GBA_WIDTH = 240;
 const GBA_HEIGHT = 160;
-// RGBA8888: the backend sends frames already in the format putImageData wants,
-// so the frontend copies each frame straight into a preallocated ImageData with
-// no per-pixel decode work.
+// The socket backend still uses the proven fixed GBA wire format. The WASM
+// backend reports each core's actual dimensions (GB/GBC is normally 160x144),
+// so its renderer uses the per-screen metadata below. Desktop GB rendering will
+// follow the native instance refactor in the next v0.4 slice.
 const FRAME_SIZE = GBA_WIDTH * GBA_HEIGHT * 4;
+const ROM_EXTENSIONS = ['gba', 'gb', 'gbc', 'gbx'];
+function romAccept() { return '.' + ROM_EXTENSIONS.join(',.'); }
+function isRomName(name) { return /\.(gba|gb|gbc|gbx)$/i.test(name || ''); }
 
 const GBA_BUTTONS = {
   A: 1 << 0,
@@ -588,6 +592,47 @@ const FRAME_MS = 1000 / 60;
 
 function setStatus(text) {
   document.getElementById('status').textContent = text;
+}
+
+function setOnlineStatus(text) {
+  const el = document.getElementById('online-status');
+  if (el) el.textContent = text;
+}
+
+function onlineJoinRequested() {
+  // The bearer token lives in the URL fragment so it is not sent in referrers.
+  return urlParam('online') === 'join' && !!urlParam('peer');
+}
+
+async function startOnlineHost() {
+  if (!window.mgbaOnline) {
+    setOnlineStatus('PeerJS is unavailable; check the network or Content-Security-Policy.');
+    return;
+  }
+  const invite = await window.mgbaOnline.startHost();
+  if (!invite) return;
+  const button = document.getElementById('online-copy-invite');
+  if (button) {
+    button.disabled = false;
+    button.dataset.invite = invite;
+  }
+  try {
+    await navigator.clipboard.writeText(invite);
+    setOnlineStatus('Host ready — invite copied to the clipboard.');
+  } catch (_) {
+    setOnlineStatus('Host ready — use Copy Guest Invite to share the link.');
+  }
+}
+
+async function copyOnlineInvite() {
+  const invite = document.getElementById('online-copy-invite')?.dataset.invite;
+  if (!invite) return;
+  try {
+    await navigator.clipboard.writeText(invite);
+    setOnlineStatus('Guest invite copied.');
+  } catch (_) {
+    window.prompt('Copy this guest invite:', invite);
+  }
 }
 
 // ---- Menu bar ----
@@ -1020,7 +1065,8 @@ function initScreens(count) {
     container.appendChild(cell);
 
     const ctx = canvas.getContext('2d');
-    screens.push({ canvas, ctx, imgData: ctx.createImageData(GBA_WIDTH, GBA_HEIGHT) });
+    screens.push({ canvas, ctx, width: GBA_WIDTH, height: GBA_HEIGHT,
+      imgData: ctx.createImageData(GBA_WIDTH, GBA_HEIGHT) });
 
     const exportBtn = document.createElement('button');
     exportBtn.textContent = `Export Save P${i + 1}\u2026`;
@@ -1051,6 +1097,7 @@ let pendingFrame = null;
 let renderScheduled = false;
 
 function onFrame(data) {
+  if (window.mgbaOnline?.isHost()) window.mgbaOnline.broadcastFrame(data);
   pendingFrame = data;
   if (renderScheduled) return;
   renderScheduled = true;
@@ -1126,6 +1173,10 @@ function loadDebugToggle() {
 }
 
 async function setKeys(player, keys) {
+  if (window.mgbaOnline?.isGuest()) {
+    window.mgbaOnline.sendInput(player - 1, keys);
+    return;
+  }
   if (wasmMode) {
     // Frontend keys are 1-indexed; the bridge expects 0-indexed players.
     wasmModule._mgs_set_keys(player - 1, keys);
@@ -1561,7 +1612,7 @@ function addFolderWeb() {
   const input = document.createElement('input');
   input.type = 'file';
   input.webkitdirectory = true;
-  input.accept = '.gba';
+  input.accept = romAccept();
   input.onchange = () => {
     const files = [...input.files];
     const images = new Map();
@@ -1572,7 +1623,7 @@ function addFolderWeb() {
       }
     }
     libraryGames = files
-      .filter((f) => f.name.toLowerCase().endsWith('.gba'))
+      .filter((f) => isRomName(f.name))
       .map((f) => ({
         name: f.name.replace(/\.[^.]+$/, ''),
         file: f,
@@ -2231,7 +2282,7 @@ async function pickRomTauri() {
   const { open } = window.__TAURI__.dialog;
   const selected = await open({
     multiple: false,
-    filters: [{ name: 'GBA ROM', extensions: ['gba'] }],
+    filters: [{ name: 'Game Boy / Game Boy Advance ROM', extensions: ROM_EXTENSIONS }],
   });
   if (selected) {
     setStatus('Loading: ' + selected);
@@ -2247,7 +2298,7 @@ function pickRomBrowser() {
   closeMenus();
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.gba';
+  input.accept = romAccept();
   input.onchange = async () => {
     const file = input.files[0];
     if (!file) return;
@@ -2700,10 +2751,21 @@ function wasmRenderVideo() {
   const M = wasmModule;
   const heap = M.HEAPU8;
   for (let i = 0; i < playerCount; i++) {
-    const ptr = M._mgs_get_video(i);
+      const ptr = M._mgs_get_video(i);
     if (!ptr) continue;
-    screens[i].imgData.data.set(heap.subarray(ptr, ptr + FRAME_SIZE));
-    screens[i].ctx.putImageData(screens[i].imgData, 0, 0);
+    const width = M._mgs_get_video_width ? M._mgs_get_video_width(i) : GBA_WIDTH;
+    const height = M._mgs_get_video_height ? M._mgs_get_video_height(i) : GBA_HEIGHT;
+    const screen = screens[i];
+    if (width > 0 && height > 0 && (screen.width !== width || screen.height !== height)) {
+      screen.width = width;
+      screen.height = height;
+      screen.canvas.width = width;
+      screen.canvas.height = height;
+      screen.imgData = screen.ctx.createImageData(width, height);
+    }
+    const size = screen.width * screen.height * 4;
+    screen.imgData.data.set(heap.subarray(ptr, ptr + size));
+    screen.ctx.putImageData(screen.imgData, 0, 0);
   }
 }
 
@@ -2717,7 +2779,8 @@ function wasmPumpAudio() {
   const ptr = M._mgs_get_audio();
   const sampleBytes = M.HEAPU8.subarray(ptr, ptr + frames * 4);
   const tagged = new Uint8Array(4 + sampleBytes.length);
-  new DataView(tagged.buffer).setUint32(0, 32768, true);
+  const rate = M._mgs_get_audio_rate ? M._mgs_get_audio_rate() : 32768;
+  new DataView(tagged.buffer).setUint32(0, rate, true);
   tagged.set(sampleBytes, 4);
   onAudio(tagged);
 }
@@ -2773,7 +2836,8 @@ function wasmStopLoop() {
 }
 
 // ---- WebSocket (desktop only: streams video/audio frames from the Rust
-// backend on 127.0.0.1:8088). ----
+// backend on 127.0.0.1:8088). Online browser sessions use the optional
+// PeerJS host-star layer in online.js instead. ----
 
 function connectWebSocket() {
   // Desktop-only: the Tauri backend streams frames over this WebSocket.
@@ -2792,12 +2856,22 @@ function connectWebSocket() {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
+  if (!IS_TAURI && 'serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+  const joiningOnline = onlineJoinRequested();
   if (IS_TAURI) {
     try {
       playerCount = await invoke('player_count');
     } catch {
       playerCount = 2;
     }
+  } else if (joiningOnline) {
+    // Guests render the host's authoritative frames and do not create a local
+    // emulator. Their controls are forwarded over the PeerJS data channel.
+    wasmMode = false;
+    playerCount = requestedPlayerCount() || 2;
+    setStatus('Joining online session…');
   } else {
     // Browser builds are always fully client-side: the WASM core is the only
     // engine. No backend is expected (GitHub Pages / static hosting), so we go
@@ -2916,7 +2990,41 @@ window.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('import-state').addEventListener('click', () =>
     IS_TAURI ? importStateTauri() : importStateBrowser());
   document.getElementById('toggle-solo').addEventListener('click', toggleSoloKeyboard);
+  document.getElementById('online-host').addEventListener('click', () => {
+    closeMenus();
+    startOnlineHost();
+  });
+  document.getElementById('online-copy-invite').addEventListener('click', () => {
+    closeMenus();
+    copyOnlineInvite();
+  });
   loadSolo();
+
+  if (window.mgbaOnline) {
+    window.mgbaOnline.init({
+      status: (text) => { setOnlineStatus(text); setStatus(text); },
+      frame: onFrame,
+      input: (player, keys) => setKeys(player + 1, keys),
+      inviteUsed: () => {
+        const button = document.getElementById('online-copy-invite');
+        if (button) {
+          button.disabled = true;
+          button.dataset.invite = '';
+        }
+        const hostButton = document.getElementById('online-host');
+        if (hostButton) hostButton.textContent = 'Create New Guest Invite';
+        setOnlineStatus('Invite used — create a new single-use invite for another guest.');
+      },
+      playerCount: (count) => {
+        if (Number.isInteger(count) && count >= 1 && count <= 4 && count !== playerCount) {
+          playerCount = count;
+          initScreens(count);
+          highlightPlayersMenu(count);
+        }
+        return playerCount;
+      },
+    });
+  }
 
   window.addEventListener('keydown', (e) => handleKey(e, true));
   window.addEventListener('keyup', (e) => handleKey(e, false));
@@ -2934,7 +3042,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // build is always the in-browser WASM engine.
   if (IS_TAURI) {
     connectWebSocket();
-  } else {
+  } else if (wasmMode) {
     wasmStartLoop();
   }
 

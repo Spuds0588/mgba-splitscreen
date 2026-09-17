@@ -171,7 +171,6 @@ impl GbaInstance {
             if let Some(reset_fn) = (*self.core).reset {
                 reset_fn(self.core);
             }
-
             self.is_running = true;
             println!("[GBA {}] GBA instance is now RUNNING.", self.id);
             

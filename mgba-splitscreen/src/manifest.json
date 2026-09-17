@@ -1,0 +1,22 @@
+{
+  "name": "mgba-splitscreen",
+  "short_name": "mgba-splitscreen",
+  "description": "Local and online linked mGBA multiplayer",
+  "lang": "en-US",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "theme_color": "#121212",
+  "background_color": "#0d0d0d",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512",
+      "purpose": "any maskable"
+    }
+  ]
+}
