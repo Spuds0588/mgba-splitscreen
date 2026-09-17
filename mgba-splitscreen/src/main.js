@@ -595,6 +595,8 @@ function setStatus(text) {
 }
 
 let currentOnlineInvite = null;
+let currentOnlineSlot = 1;
+let currentOnlineInvites = {};
 
 function setOnlineStatus(text) {
   const el = document.getElementById('online-status');
@@ -602,9 +604,53 @@ function setOnlineStatus(text) {
 }
 
 function setOnlineInviteControls(enabled) {
-  for (const id of ['online-copy-invite', 'online-show-qr', 'online-share']) {
+  for (const id of ['online-copy-invite', 'online-copy-all', 'online-show-qr', 'online-share']) {
     const button = document.getElementById(id);
     if (button) button.disabled = !enabled;
+  }
+  const slot = document.getElementById('online-slot');
+  if (slot) slot.disabled = !enabled;
+}
+
+function updateOnlineInvites(descriptors) {
+  currentOnlineInvites = {};
+  for (const invite of descriptors || []) {
+    if (invite.url && !invite.consumed) currentOnlineInvites[invite.player] = invite.url;
+  }
+  const slots = Object.keys(currentOnlineInvites).map(Number).sort((a, b) => a - b);
+  const select = document.getElementById('online-slot');
+  if (select) {
+    select.innerHTML = '';
+    for (const player of slots) {
+      const option = document.createElement('option');
+      option.value = String(player);
+      option.textContent = `Player ${player + 1}`;
+      select.appendChild(option);
+    }
+    if (slots.includes(currentOnlineSlot)) select.value = String(currentOnlineSlot);
+    else currentOnlineSlot = slots[0] || 1;
+  }
+  currentOnlineInvite = currentOnlineInvites[currentOnlineSlot] || null;
+  setOnlineInviteControls(slots.length > 0);
+  if (currentOnlineInvite) renderOnlineQr(currentOnlineInvite);
+}
+
+function selectOnlineSlot(player) {
+  currentOnlineSlot = Number(player);
+  currentOnlineInvite = currentOnlineInvites[currentOnlineSlot] || null;
+  if (currentOnlineInvite) renderOnlineQr(currentOnlineInvite);
+}
+
+async function copyAllOnlineInvites() {
+  const text = Object.keys(currentOnlineInvites).sort((a, b) => Number(a) - Number(b))
+    .map((player) => `Player ${Number(player) + 1}: ${currentOnlineInvites[player]}`)
+    .join('\\n');
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    setOnlineStatus('All remaining guest invite URLs copied.');
+  } catch (_) {
+    window.prompt('Copy the guest invite URLs:', text);
   }
 }
 
@@ -683,11 +729,14 @@ async function startOnlineHost() {
   }
   const invite = await window.mgbaOnline.startHost();
   if (!invite) return;
+  // The online layer publishes the complete per-slot set through its callback;
+  // this fallback keeps P2 usable if an older online.js is cached.
+  if (!currentOnlineInvites[1]) currentOnlineInvites[1] = invite;
+  currentOnlineInvite = currentOnlineInvites[currentOnlineSlot] || invite;
+  setOnlineInviteControls(Object.keys(currentOnlineInvites).length > 0);
   const button = document.getElementById('online-copy-invite');
-  currentOnlineInvite = invite;
-  setOnlineInviteControls(true);
-  if (button) button.dataset.invite = invite;
-  renderOnlineQr(invite);
+  if (button) button.dataset.invite = currentOnlineInvite;
+  renderOnlineQr(currentOnlineInvite);
   try {
     await navigator.clipboard.writeText(invite);
     setOnlineStatus('Host ready — invite copied to the clipboard.');
@@ -3067,9 +3116,16 @@ window.addEventListener('DOMContentLoaded', async () => {
     closeMenus();
     startOnlineHost();
   });
+  document.getElementById('online-slot').addEventListener('change', (event) => {
+    selectOnlineSlot(event.target.value);
+  });
   document.getElementById('online-copy-invite').addEventListener('click', () => {
     closeMenus();
     copyOnlineInvite();
+  });
+  document.getElementById('online-copy-all').addEventListener('click', () => {
+    closeMenus();
+    copyAllOnlineInvites();
   });
   document.getElementById('online-show-qr').addEventListener('click', () => {
     closeMenus();
@@ -3093,15 +3149,20 @@ window.addEventListener('DOMContentLoaded', async () => {
       status: (text) => { setOnlineStatus(text); setStatus(text); },
       frame: onFrame,
       input: (player, keys) => setKeys(player + 1, keys),
-      inviteUsed: () => {
-        currentOnlineInvite = null;
-        setOnlineInviteControls(false);
+      invites: (descriptors) => {
+        updateOnlineInvites(descriptors);
         const button = document.getElementById('online-copy-invite');
-        if (button) button.dataset.invite = '';
-        closeOnlineQr();
-        const hostButton = document.getElementById('online-host');
-        if (hostButton) hostButton.textContent = 'Create New Guest Invite';
-        setOnlineStatus('Invite used — create a new single-use invite for another guest.');
+        if (button) button.dataset.invite = currentOnlineInvite || '';
+      },
+      inviteUsed: (player) => {
+        delete currentOnlineInvites[player];
+        const remaining = Object.keys(currentOnlineInvites).map(Number).sort((a, b) => a - b);
+        if (!remaining.includes(currentOnlineSlot)) currentOnlineSlot = remaining[0] || 1;
+        updateOnlineInvites(remaining.map((slot) => ({ player: slot, url: currentOnlineInvites[slot], consumed: false })));
+        const button = document.getElementById('online-copy-invite');
+        if (button) button.dataset.invite = currentOnlineInvite || '';
+        if (!remaining.length) closeOnlineQr();
+        setOnlineStatus(`Player ${player + 1} joined; ${remaining.length} guest invite${remaining.length === 1 ? '' : 's'} remaining.`);
       },
       playerCount: (count) => {
         if (Number.isInteger(count) && count >= 1 && count <= 4 && count !== playerCount) {

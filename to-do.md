@@ -330,6 +330,7 @@ The next versions are intentionally staged: stabilize local multi-system support
 - [ ] Add an opt-in URL-controlled iframe sidebar with origin labeling, sandboxing, focus isolation, and HTTP/mixed-content warnings.
 - [x] Add the installable PWA shell: manifest, install metadata, service-worker registration, shell cache, and deployer-compatible response headers.
 - [x] Add QR-code invite sharing with URL copy, PNG download, and native Web Share fallback.
+- [x] Issue independent single-use invite capabilities per guest slot so unfilled seats remain joinable.
 - [ ] Handle blocked embeds and camera/microphone/clipboard/fullscreen permissions explicitly.
 
 ### v0.6 — handheld and phone packaging

@@ -110,6 +110,21 @@ body {
   white-space: nowrap;
 }
 
+.online-slot-label {
+  padding: 5px 10px 2px;
+  color: #aaa;
+  font-size: 0.78rem;
+}
+#online-slot {
+  margin: 0 6px 4px;
+  padding: 6px 8px;
+  border: 1px solid #444;
+  border-radius: 5px;
+  background: #17171b;
+  color: #e0e0e0;
+  font-size: 0.88rem;
+}
+
 .status {
   margin-left: auto;
   font-size: 0.8rem;

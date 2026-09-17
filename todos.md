@@ -24,6 +24,7 @@
 - [ ] Handle blocked embeds and camera/microphone/clipboard/fullscreen permissions explicitly.
 - [x] Add the installable PWA shell with manifest, icon, service worker, mobile metadata, and deployer-compatible headers.
 - [x] Add QR-code invite sharing with URL copy, PNG download, and native Web Share fallback.
+- [x] Issue independent single-use invite capabilities per guest slot so unfilled seats remain joinable.
 
 ## v0.6 — handheld and phone packaging
 

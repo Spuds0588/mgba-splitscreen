@@ -8,7 +8,11 @@
 
 ---
 
-## 2026-09-17 — v0.5 QR invite sharing
+## 2026-09-17 — v0.5 per-player invite capabilities
+
+Corrected the invite model: a four-player host now issues three independent guest links, one for P2, P3, and P4. Each link carries its own slot, token, and expiry; using P2's link consumes only P2's capability, leaving P3/P4 valid until they join or expire. The host UI selects the guest slot, can show/copy/download/share that slot's QR, or copy all remaining URLs together. This preserves the security of single-use links without preventing a host from filling the remaining seats.
+
+### 2026-09-17 — v0.5 QR invite sharing
 
 Added a host-friendly invite surface: a generated QR code, copyable URL field, direct URL copy button, QR PNG download, and Web Share API support with clipboard fallback. Hosting now opens the QR dialog automatically, making it practical to put a join link on a screen for friends or a community call. The QR library is loaded from jsDelivr as an optional enhancement; PeerJS/local emulation continue to work if third-party CDN loading is blocked.
 
