@@ -329,6 +329,7 @@ The next versions are intentionally staged: stabilize local multi-system support
 - [ ] Add explicit host approval/revocation, reconnect/resume policy, and a private signaling/auth service before treating online play as production-safe.
 - [ ] Add an opt-in URL-controlled iframe sidebar with origin labeling, sandboxing, focus isolation, and HTTP/mixed-content warnings.
 - [x] Add the installable PWA shell: manifest, install metadata, service-worker registration, shell cache, and deployer-compatible response headers.
+- [x] Add QR-code invite sharing with URL copy, PNG download, and native Web Share fallback.
 - [ ] Handle blocked embeds and camera/microphone/clipboard/fullscreen permissions explicitly.
 
 ### v0.6 — handheld and phone packaging

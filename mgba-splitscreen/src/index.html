@@ -15,6 +15,7 @@
     <title>mgba-splitscreen</title>
     <!-- PeerJS is optional: local play and the WASM engine work if this CDN is unavailable. -->
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js" defer></script>
     <script src="online.js" defer></script>
     <script type="module" src="main.js" defer></script>
   </head>
@@ -57,7 +58,9 @@
         <summary>Online</summary>
         <div class="menu-items" id="online-menu">
           <button id="online-host">Host Online Session</button>
-          <button id="online-copy-invite" disabled>Copy Guest Invite</button>
+          <button id="online-copy-invite" disabled>Copy Invite URL</button>
+          <button id="online-show-qr" disabled>Show QR Code</button>
+          <button id="online-share" disabled>Share Invite&#8230;</button>
           <div id="online-status" class="menu-note">Local play is unchanged. Hosting keeps emulation on this device.</div>
         </div>
       </details>
@@ -182,6 +185,24 @@
           <button id="library-add-folder">Add Folder&#8230;</button>
           <button id="library-load-rom">Load ROM&#8230;</button>
           <button id="library-close">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- One-time online invite sharing surface. The QR contains the same
+         expiring invite URL as the copy/share actions. -->
+    <div id="online-qr-overlay" class="online-qr-overlay" hidden>
+      <div class="online-qr-panel">
+        <h2>Invite a player</h2>
+        <p class="online-qr-help">Scan this code or copy the invite URL. The invite expires after 10 minutes and works once.</p>
+        <canvas id="online-qr-canvas" width="320" height="320" aria-label="Online player invite QR code"></canvas>
+        <label class="online-url-label" for="online-invite-url">Invite URL</label>
+        <input id="online-invite-url" class="online-invite-url" type="text" readonly />
+        <div class="online-qr-actions">
+          <button id="online-qr-copy">Copy URL</button>
+          <button id="online-qr-download">Download QR</button>
+          <button id="online-qr-share">Share&#8230;</button>
+          <button id="online-qr-close">Close</button>
         </div>
       </div>
     </div>

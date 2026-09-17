@@ -594,9 +594,81 @@ function setStatus(text) {
   document.getElementById('status').textContent = text;
 }
 
+let currentOnlineInvite = null;
+
 function setOnlineStatus(text) {
   const el = document.getElementById('online-status');
   if (el) el.textContent = text;
+}
+
+function setOnlineInviteControls(enabled) {
+  for (const id of ['online-copy-invite', 'online-show-qr', 'online-share']) {
+    const button = document.getElementById(id);
+    if (button) button.disabled = !enabled;
+  }
+}
+
+function renderOnlineQr(invite) {
+  const canvas = document.getElementById('online-qr-canvas');
+  const input = document.getElementById('online-invite-url');
+  if (input) input.value = invite || '';
+  if (!canvas || !invite) return false;
+  if (!window.QRCode?.toCanvas) {
+    setOnlineStatus('QR generator unavailable; copy the invite URL instead.');
+    return false;
+  }
+  window.QRCode.toCanvas(canvas, invite, {
+    width: 320,
+    margin: 2,
+    errorCorrectionLevel: 'M',
+    color: { dark: '#111111', light: '#ffffff' },
+  }, (error) => {
+    if (error) setOnlineStatus('Could not generate QR code; copy the invite URL instead.');
+  });
+  return true;
+}
+
+function openOnlineQr(invite = currentOnlineInvite) {
+  if (!invite) return;
+  currentOnlineInvite = invite;
+  renderOnlineQr(invite);
+  document.getElementById('online-qr-overlay').hidden = false;
+}
+
+function closeOnlineQr() {
+  document.getElementById('online-qr-overlay').hidden = true;
+}
+
+async function shareOnlineInvite() {
+  if (!currentOnlineInvite) return;
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: 'Join my mgba-splitscreen game',
+        text: 'Join my multiplayer game with this invite:',
+        url: currentOnlineInvite,
+      });
+      setOnlineStatus('Invite shared.');
+      return;
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+    }
+  }
+  await copyOnlineInvite();
+  setOnlineStatus('Invite sharing is unavailable; the URL was copied instead.');
+}
+
+async function downloadOnlineQr() {
+  const canvas = document.getElementById('online-qr-canvas');
+  if (!canvas || !currentOnlineInvite) return;
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) return;
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'mgba-splitscreen-invite.png';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  setOnlineStatus('QR code downloaded.');
 }
 
 function onlineJoinRequested() {
@@ -612,20 +684,21 @@ async function startOnlineHost() {
   const invite = await window.mgbaOnline.startHost();
   if (!invite) return;
   const button = document.getElementById('online-copy-invite');
-  if (button) {
-    button.disabled = false;
-    button.dataset.invite = invite;
-  }
+  currentOnlineInvite = invite;
+  setOnlineInviteControls(true);
+  if (button) button.dataset.invite = invite;
+  renderOnlineQr(invite);
   try {
     await navigator.clipboard.writeText(invite);
     setOnlineStatus('Host ready — invite copied to the clipboard.');
   } catch (_) {
-    setOnlineStatus('Host ready — use Copy Guest Invite to share the link.');
+    setOnlineStatus('Host ready — use Copy Invite URL or Show QR Code.');
   }
+  openOnlineQr(invite);
 }
 
 async function copyOnlineInvite() {
-  const invite = document.getElementById('online-copy-invite')?.dataset.invite;
+  const invite = currentOnlineInvite || document.getElementById('online-copy-invite')?.dataset.invite;
   if (!invite) return;
   try {
     await navigator.clipboard.writeText(invite);
@@ -2998,6 +3071,21 @@ window.addEventListener('DOMContentLoaded', async () => {
     closeMenus();
     copyOnlineInvite();
   });
+  document.getElementById('online-show-qr').addEventListener('click', () => {
+    closeMenus();
+    openOnlineQr();
+  });
+  document.getElementById('online-share').addEventListener('click', () => {
+    closeMenus();
+    shareOnlineInvite();
+  });
+  document.getElementById('online-qr-copy').addEventListener('click', copyOnlineInvite);
+  document.getElementById('online-qr-download').addEventListener('click', downloadOnlineQr);
+  document.getElementById('online-qr-share').addEventListener('click', shareOnlineInvite);
+  document.getElementById('online-qr-close').addEventListener('click', closeOnlineQr);
+  document.getElementById('online-qr-overlay').addEventListener('click', (event) => {
+    if (event.target.id === 'online-qr-overlay') closeOnlineQr();
+  });
   loadSolo();
 
   if (window.mgbaOnline) {
@@ -3006,11 +3094,11 @@ window.addEventListener('DOMContentLoaded', async () => {
       frame: onFrame,
       input: (player, keys) => setKeys(player + 1, keys),
       inviteUsed: () => {
+        currentOnlineInvite = null;
+        setOnlineInviteControls(false);
         const button = document.getElementById('online-copy-invite');
-        if (button) {
-          button.disabled = true;
-          button.dataset.invite = '';
-        }
+        if (button) button.dataset.invite = '';
+        closeOnlineQr();
         const hostButton = document.getElementById('online-host');
         if (hostButton) hostButton.textContent = 'Create New Guest Invite';
         setOnlineStatus('Invite used — create a new single-use invite for another guest.');

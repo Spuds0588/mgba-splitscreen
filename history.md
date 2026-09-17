@@ -8,7 +8,11 @@
 
 ---
 
-## 2026-09-17 — v0.5 magic-link hardening and PWA shell
+## 2026-09-17 — v0.5 QR invite sharing
+
+Added a host-friendly invite surface: a generated QR code, copyable URL field, direct URL copy button, QR PNG download, and Web Share API support with clipboard fallback. Hosting now opens the QR dialog automatically, making it practical to put a join link on a screen for friends or a community call. The QR library is loaded from jsDelivr as an optional enhancement; PeerJS/local emulation continue to work if third-party CDN loading is blocked.
+
+### 2026-09-17 — v0.5 magic-link hardening and PWA shell
 
 Hardened the PeerJS invite flow using OWASP's URL-token guidance: tokens are generated with the Web Crypto API, are high-entropy, expire after 10 minutes, are single-use, and are invalidated before the first guest is welcomed. The bearer token/session now live in the URL fragment rather than the query string, so browsers do not send them in HTTP Referer headers. The host can issue a fresh invite after consumption or expiration; an invite can never be reused to add a second guest. The host still validates the token because PeerJS's public broker is signaling, not an authorization service.
 

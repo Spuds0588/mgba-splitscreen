@@ -23,6 +23,7 @@
 - [ ] Add an opt-in URL-controlled iframe sidebar with origin labeling, sandboxing, focus isolation, and HTTP warnings.
 - [ ] Handle blocked embeds and camera/microphone/clipboard/fullscreen permissions explicitly.
 - [x] Add the installable PWA shell with manifest, icon, service worker, mobile metadata, and deployer-compatible headers.
+- [x] Add QR-code invite sharing with URL copy, PNG download, and native Web Share fallback.
 
 ## v0.6 — handheld and phone packaging
 
