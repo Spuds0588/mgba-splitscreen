@@ -548,6 +548,8 @@ function releaseAllKeys() {
   for (let i = 0; i < keyStates.length; i++) {
     if (keyStates[i]) { keyStates[i] = 0; sendKeys(i); }
   }
+  // The touch overlay holds its own masks; clear them too so nothing sticks.
+  if (window.mgbaTouch) window.mgbaTouch.releaseAll();
 }
 
 function setSoloPlayer(p) {
@@ -568,6 +570,11 @@ function toggleSoloKeyboard() {
   updateSoloUI();
 }
 let padStates = []; // gamepad-derived mask per player
+// Touchscreen overlay (touch-controls.js) mask per player. Merged in sendKeys
+// like the other input layers; a magic-link guest on a phone plays through it.
+function touchStateFor(p) {
+  return (window.mgbaTouch && window.mgbaTouch.maskFor(p)) || 0;
+}
 let socket = null;
 let turboOn = false;
 let paused = false;
@@ -1168,6 +1175,7 @@ function initScreens(count) {
   focusPlayer = Math.min(focusPlayer, Math.max(0, count - 1));
   soloPlayer = Math.min(soloPlayer, Math.max(0, count - 1));
   updateSoloUI();
+  if (window.mgbaTouch) window.mgbaTouch.setPlayerCount(count);
   const container = document.getElementById('screens');
   container.innerHTML = '';
   screens = [];
@@ -1322,9 +1330,9 @@ async function setKeys(player, keys) {
   }
 }
 
-// The backend gets the union of keyboard + gamepad input for a player.
+// The backend gets the union of keyboard + gamepad + touch input for a player.
 function sendKeys(p) {
-  setKeys(p + 1, keyStates[p] | padStates[p]);
+  setKeys(p + 1, keyStates[p] | padStates[p] | touchStateFor(p));
 }
 
 async function handleKey(e, isDown) {
@@ -3189,6 +3197,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     closeMenus();
     toggleOutlines();
   });
+  document.getElementById('toggle-touch').addEventListener('click', () => {
+    closeMenus();
+    if (window.mgbaTouch) window.mgbaTouch.cycleMode();
+  });
   document.querySelectorAll('#audio-menu button').forEach((btn) => {
     btn.addEventListener('click', () => {
       closeMenus();
@@ -3237,12 +3249,21 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
   loadSolo();
 
+  if (window.mgbaTouch) {
+    window.mgbaTouch.init({
+      onInput: (p) => sendKeys(p),
+      onPause: () => { closeMenus(); togglePause(); },
+      onStatus: (text) => setStatus(text),
+    });
+  }
+
   if (window.mgbaOnline) {
     window.mgbaOnline.init({
       status: (text) => { setOnlineStatus(text); setStatus(text); },
       frame: onFrame,
       audio: onAudio, // guests play the host's streamed mix (tagged rate + s16)
       input: (player, keys) => setKeys(player + 1, keys),
+      guestSeat: (seat) => { if (window.mgbaTouch) window.mgbaTouch.setGuest(seat); },
       invites: (descriptors) => {
         updateOnlineInvites(descriptors);
         const button = document.getElementById('online-copy-invite');

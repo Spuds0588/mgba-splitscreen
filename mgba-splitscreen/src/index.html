@@ -22,6 +22,7 @@
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js" defer></script>
     <!-- Crash reporter first: it must be listening before online.js/main.js run. -->
     <script src="crash-report.js" defer></script>
+    <script src="touch-controls.js" defer></script>
     <script src="online.js" defer></script>
     <script type="module" src="main.js" defer></script>
   </head>
@@ -109,6 +110,7 @@
           <button id="bg-image">Background Image&#8230;</button>
           <button id="bg-clear">Clear Background</button>
           <button id="toggle-outlines" class="active">Player Outlines: On</button>
+          <button id="toggle-touch">Touch Controls: Auto</button>
           <button id="toggle-debug">Debug Log: Off</button>
           <div class="menu-note">Arrange the linked screens like a video call. Cycle View (F8) and Cycle Focus (F9) flip through them; both are remappable. Background shows behind the tiles; Player Outlines toggles the colored borders; Debug Log toggles the stats ticker.</div>
         </div>
@@ -215,6 +217,38 @@
           <button id="online-qr-share">Share&#8230;</button>
           <button id="online-qr-close">Close</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Touchscreen controls (phones/tablets, esp. magic-link guests):
+         GBA-style pad feeding the same key-mask pipeline as keyboard/gamepad.
+         Hidden by default; touch-controls.js decides visibility (auto/on/off). -->
+    <div id="touch-controls" class="touch-controls" hidden>
+      <div class="touch-top">
+        <button type="button" class="touch-btn touch-shoulder" data-btn="L" aria-label="L shoulder">L</button>
+        <div class="touch-top-center">
+          <button type="button" class="touch-btn touch-pause" data-action="pause" aria-label="Pause menu">&#8942;</button>
+          <div id="touch-note" class="touch-note"></div>
+          <div id="touch-player-picker" class="touch-player-picker"></div>
+        </div>
+        <button type="button" class="touch-btn touch-shoulder" data-btn="R" aria-label="R shoulder">R</button>
+      </div>
+      <div class="touch-main">
+        <div class="touch-dpad">
+          <button type="button" class="touch-btn dp-up" data-btn="UP" aria-label="Up">&#9650;</button>
+          <button type="button" class="touch-btn dp-left" data-btn="LEFT" aria-label="Left">&#9664;</button>
+          <div class="dp-center" aria-hidden="true"></div>
+          <button type="button" class="touch-btn dp-right" data-btn="RIGHT" aria-label="Right">&#9654;</button>
+          <button type="button" class="touch-btn dp-down" data-btn="DOWN" aria-label="Down">&#9660;</button>
+        </div>
+        <div class="touch-actions">
+          <button type="button" class="touch-btn face-b" data-btn="B" aria-label="B button">B</button>
+          <button type="button" class="touch-btn face-a" data-btn="A" aria-label="A button">A</button>
+        </div>
+      </div>
+      <div class="touch-center-row">
+        <button type="button" class="touch-btn touch-meta" data-btn="SELECT" aria-label="Select">SELECT</button>
+        <button type="button" class="touch-btn touch-meta" data-btn="START" aria-label="Start">START</button>
       </div>
     </div>
 

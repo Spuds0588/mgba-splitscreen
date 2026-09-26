@@ -335,7 +335,11 @@ The next versions are intentionally staged: stabilize local multi-system support
 
 ### v0.6 — handheld and phone packaging
 
-- [ ] Add touch controls and explicit TV/handheld input modes.
+- [ ] Add touch controls and explicit TV/handheld input modes. 2026-09-26:
+      first slice DONE — GBA-style touch overlay (`touch-controls.js`),
+      auto-on for touch devices and magic-link guests, verified end to end.
+      Remaining: remappable touch layout, haptics strength, Android TV D-pad
+      focus mode.
 - [ ] Normalize Android key/gamepad handling, including safe BACK behavior.
 - [ ] Build signed arm64 and armv7 APKs and verify phones, tablets, handhelds, external displays, and TV.
 - [ ] Revisit the fixed WASM heap and low-memory WebView behavior.

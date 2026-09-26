@@ -8,6 +8,32 @@
 
 ---
 
+## 2026-09-26 (newest) — touchscreen controls for phone guests
+
+**A magic-link guest on a phone had no way to press anything** — the overlay
+layer closes that gap. `touch-controls.js` + a fixed GBA-style pad (D-pad,
+A/B, L/R shoulders, START/SELECT, small pause button) feeds the SAME pipeline
+as keyboard/gamepads: `mgbaTouch.maskFor(p)` is unioned into `sendKeys` along
+`keyStates | padStates | touch`, so host/local play and the guest PeerJS
+forward both work unchanged, and remapping/visibility need zero new paths.
+
+Behavior: multi-touch pointer tracking per finger; D-pad slide (roll UP→RIGHT
+without lifting — pointer capture + elementFromPoint hit-testing); press
+visuals + 8 ms vibration; players menu button and a View → "Touch Controls:
+Auto/On/Off" toggle persisted per browser. AUTO shows on the first real touch
+(pointerType touch/pen — desktop mice never trigger it) and when a guest's
+welcome arrives (`setGuest(seat)` from online.js, which pins the active seat
+to the assigned player and hides the P1–P4 picker; input before a seat is
+assigned is dropped so a joiner can't inject into seat 0).
+
+Verified live 2-tab (desktop host + 375x812 phone-size guest, Kirby):
+guest auto-shows with "You are Player 2", video renders, and a host-side spy
+on `_mgs_set_keys` logged `{player:1, keys:9}` (A+START) while the guest held
+both, then `{keys:1}` after release — touch → overlay → PeerJS → host → core
+end to end. Desktop auto stays hidden; auto/on/off cycle + persistence pass.
+SW shell bumped to v4 (new file). Landscape phones get a compact layout
+(max-height media query).
+
 ## 2026-09-26 (latest) — real PWA icon set (the last missing installability piece)
 
 The web build already had the PWA skeleton (manifest, SW, standalone display),

@@ -130,6 +130,8 @@
     if (message.type === 'welcome') {
       state.assignedPlayer = message.player;
       state.callbacks.playerCount?.(message.players || 2);
+      // Touch overlay: this guest now drives exactly this seat (0-based).
+      state.callbacks.guestSeat?.(message.player);
       report(`Online guest: connected as Player ${message.player + 1}`);
     } else if (message.type === 'frame' && message.data) {
       const bytes = message.data instanceof ArrayBuffer

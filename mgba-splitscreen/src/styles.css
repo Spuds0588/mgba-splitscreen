@@ -606,6 +606,156 @@ body {
   box-shadow: 0 0 0 2px rgba(255, 210, 74, 0.55);
 }
 
+/* ---- Touchscreen controls overlay ----
+   Fixed layer above the game; pointer-events only on the buttons themselves
+   so the game view stays clickable/scrollable between them. Sized for thumbs
+   (GBA-like ergonomics): D-pad bottom-left, A/B bottom-right, shoulders top. */
+.touch-controls {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 250; /* above screens and menus, below modals (350+) */
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+  pointer-events: none; /* the layer itself is transparent to touches */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+}
+.touch-controls[hidden] { display: none; }
+
+.touch-btn {
+  pointer-events: auto;
+  border: none;
+  border-radius: 50%;
+  background: rgba(36, 40, 46, 0.55);
+  color: #cfd6dd;
+  font: 700 0.9rem/1 system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.touch-btn.pressed {
+  background: rgba(36, 200, 219, 0.55);
+  color: #06262a;
+  transform: scale(0.94);
+}
+
+.touch-top {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+.touch-shoulder {
+  width: 74px;
+  height: 38px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+}
+.touch-top-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.touch-pause {
+  width: 34px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+.touch-note {
+  color: #9fd8e2;
+  font: 600 0.72rem/1.2 system-ui, sans-serif;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+.touch-player-picker {
+  display: flex;
+  gap: 4px;
+}
+.touch-player-picker button {
+  pointer-events: auto;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 999px;
+  background: rgba(30, 30, 34, 0.55);
+  color: #cfd6dd;
+  font: 700 0.68rem/1 system-ui, sans-serif;
+  padding: 4px 9px;
+  touch-action: manipulation;
+}
+.touch-player-picker button.active {
+  background: #24c8db;
+  border-color: #24c8db;
+  color: #06262a;
+}
+
+.touch-main {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+/* D-pad: 3x3 grid, cross-shaped. The empty corners pass touches through. */
+.touch-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 56px);
+  grid-template-rows: repeat(3, 56px);
+  gap: 3px;
+}
+.touch-dpad .touch-btn { border-radius: 12px; font-size: 0.8rem; }
+.dp-up    { grid-area: 1 / 2; }
+.dp-left  { grid-area: 2 / 1; }
+.dp-center {
+  grid-area: 2 / 2;
+  border-radius: 10px;
+  background: rgba(36, 40, 46, 0.35);
+}
+.dp-right { grid-area: 2 / 3; }
+.dp-down  { grid-area: 3 / 2; }
+
+/* A/B cluster: B lower-left of A, GBA-style diagonal. */
+.touch-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 64px);
+  grid-template-rows: repeat(2, 64px);
+  gap: 6px;
+}
+.face-b { grid-area: 2 / 1; font-size: 1.15rem; }
+.face-a { grid-area: 1 / 2; font-size: 1.15rem; }
+
+.touch-center-row {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+}
+.touch-meta {
+  width: 76px;
+  height: 30px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+}
+
+/* Short screens (landscape phones): slim everything so the game stays visible. */
+@media (max-height: 460px) {
+  .touch-dpad {
+    grid-template-columns: repeat(3, 46px);
+    grid-template-rows: repeat(3, 46px);
+  }
+  .touch-actions {
+    grid-template-columns: repeat(2, 52px);
+    grid-template-rows: repeat(2, 52px);
+  }
+  .touch-shoulder { width: 62px; height: 32px; }
+  .touch-meta { width: 66px; height: 26px; }
+}
+
 /* ---- Online invite QR/share dialog ---- */
 .online-qr-overlay {
   position: fixed;

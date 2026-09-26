@@ -1,13 +1,14 @@
 // v2: ships the online-beta menu label, the crash reporter, and its rescue page.
 // Bump whenever the shell file list or their cached contents change, or
 // installed PWAs keep serving the stale shell forever.
-const CACHE = 'mgba-splitscreen-shell-v3';
+const CACHE = 'mgba-splitscreen-shell-v4';
 const SHELL = [
   './',
   './index.html',
   './styles.css',
   './main.js',
   './online.js',
+  './touch-controls.js',
   './crash-report.js',
   './manifest.json',
   './icon.svg',
