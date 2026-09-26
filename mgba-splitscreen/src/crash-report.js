@@ -123,6 +123,12 @@
       'Engine stats': stats ? String(stats).replace(/\s+/g, ' ').trim() || 'unavailable' : 'unavailable',
       'FS assist': window.fsAssistActiveRef ? 'on' : 'off',
       'Online session': onlineState(),
+      'Audio state': (() => {
+        try {
+          const a = window.audioStateRef;
+          return a ? `ctx=${a.ctxState || 'unlocked?'}, resampler=${a.node ? 'ready' : 'missing'}, buffered=${a.buffered} frames @${a.srcRate}Hz` : 'unknown';
+        } catch (_) { return 'unknown'; }
+      })(),
       'Engine failure banner shown': (() => {
         try { const el = document.getElementById('hosted-note'); return el && !el.hidden ? 'YES' : 'no'; } catch (_) { return 'unknown'; }
       })(),

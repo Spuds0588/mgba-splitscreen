@@ -8,6 +8,45 @@
 
 ---
 
+## 2026-09-26 (later) — browser audio was silent: pump bug + guests had no A/V at all
+
+**User report after the beta deploy: no audio on the Pages build no matter which
+Audio source was picked.** Three distinct causes, all fixed and verified live
+against a CI-identical staging dir (engine stats via `mgs_get_stats`, then a
+Kirby title-screen run showing `peak 0.451`, then a real 2-tab online session):
+
+1. **`wasmPumpAudio` checked the drain count BEFORE draining** — and the count
+   is only ever set *inside* `_mgs_get_audio` (`g_mix_frames` in
+   `mgba_splitscreen_web.c`), so `_mgs_audio_frames()` reported the previous
+   drain's 0 and the pump returned early on every frame of every session. The
+   engine was producing audio all along (2048 frames were sitting in the mix
+   buffer). Fix: drain first, then read the count. The same wrong order made
+   `wasmFlushAudio` a no-op (mute/turbo-exit kept playing ~2 s of backlog);
+   it now performs a real drain.
+2. **Online guests received no audio, ever** — the PeerJS protocol only had a
+   `frame` message. Added an `audio` message (same tagged u32-rate + s16
+   payload the desktop WebSocket streams), `broadcastAudio` throttled like
+   video (one chunk in flight, drop-not-queue), and the guest plays it through
+   the existing `onAudio` resampler. Guests picking a source in the Audio menu
+   now get an honest "the online host chooses the mix for guests".
+3. **Online hosts broadcast no video either** — `broadcastFrame` was only
+   called from `onFrame()`, which only the desktop WebSocket path invokes; the
+   browser WASM engine renders via `wasmRenderVideo` and never broadcast, so
+   guests stared at a black screen. The wasm frame loop now reassembles the
+   per-player canvases into the concatenated RGBA payload guests expect.
+   (Guests DID render before this fix only in the sense that they had nothing
+   to render; today's 2-tab session shows real pixels on the guest.)
+
+Supporting changes: `window.audioStateRef` now reports `{ctxState, node,
+buffered, srcRate, pumped, peak}` (decaying peak) — pumped==0 vs peak==0
+splits pump/unlock failures from silent-content failures without devtools,
+and the crash reporter includes it. `unlockAudio` drops >1 s of stale backlog
+on first unlock so a guest who clicks late doesn't replay old audio. Local
+SW-cache note: during testing the v2 shell served stale `main.js` from the
+earlier deploy of the same cache name — testers on prod will get the new
+content because the file list changed; a rename-to-v3 on every JS-shape
+change is cheap insurance if this bites again.
+
 ## 2026-09-26 — online beta shipped to Pages + automatic crash reports
 
 The PeerJS multiplayer work (secure per-slot invites, QR sharing, PWA shell)

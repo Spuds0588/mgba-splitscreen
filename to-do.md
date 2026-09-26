@@ -349,7 +349,11 @@ The next versions are intentionally staged: stabilize local multi-system support
 - [ ] Drive FS to *actual gameplay* at 4P and confirm the link-heavy title
       select stays smooth there.
 - [ ] Audio routing — DONE for desktop ALSA; verify web audio parity and the
-      per-player source menu end-to-end.
+      per-player source menu end-to-end. 2026-09-26: in-browser silence fixed
+      (pump drained after reading the count, so it never delivered a sample);
+      online guests now receive host video AND audio over PeerJS. GB/GBC rate
+      reporting in mixed mode still assumes 32768 — verify a GB game's audio
+      pitch on the web build when convenient.
 - [ ] Gamepad support for players 3–4 in the browser (Gamepad API — desktop
       webview works; check browser build).
 - [ ] If WebView can't composite 30 FPS on low-end hardware: native

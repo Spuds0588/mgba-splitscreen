@@ -17,6 +17,7 @@
     callbacks: {},
     lastFrame: null,
     frameBusy: false,
+    audioBusy: false,
   };
 
   function query(name) {
@@ -135,6 +136,14 @@
         ? new Uint8Array(message.data)
         : new Uint8Array(message.data.buffer || message.data);
       state.callbacks.frame?.(bytes);
+    } else if (message.type === 'audio' && message.data) {
+      // Tagged audio chunk (u32 LE rate + interleaved stereo s16), same format
+      // the desktop WebSocket streams. Guests play it through the same
+      // resampler the local browser path uses.
+      const bytes = message.data instanceof ArrayBuffer
+        ? new Uint8Array(message.data)
+        : new Uint8Array(message.data.buffer || message.data);
+      state.callbacks.audio?.(bytes);
     } else if (message.type === 'error') {
       report(`Online guest: ${message.message || 'host rejected the connection'}`);
     }
@@ -269,6 +278,17 @@
     queueMicrotask(() => { state.frameBusy = false; });
   }
 
+  // Host -> guest audio, throttled the same way as video: at most one chunk
+  // in flight; the drain-first pump naturally produces ~60 chunks/s and this
+  // drops excess rather than queueing (latency beats completeness for audio).
+  function broadcastAudio(bytes) {
+    if (state.role !== 'host' || !state.connections.length || state.audioBusy) return;
+    state.audioBusy = true;
+    const payload = (bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).slice().buffer;
+    for (const conn of state.connections) send(conn, { type: 'audio', data: payload });
+    queueMicrotask(() => { state.audioBusy = false; });
+  }
+
   function init(callbacks) {
     state.callbacks = callbacks || {};
     if (query('online') === 'join') startGuest();
@@ -279,6 +299,7 @@
     startHost,
     sendInput,
     broadcastFrame,
+    broadcastAudio,
     isGuest: () => state.role === 'guest',
     isHost: () => state.role === 'host',
     // Read-only introspection for the crash reporter's session details.

@@ -872,6 +872,12 @@ function highlightAudio(n) {
 
 async function setAudioSource(n) {
   audioSource = n;
+  if (window.mgbaOnline?.isGuest?.()) {
+    // Guests hear whatever mix the host streams; the local pick cannot apply.
+    highlightAudio(n);
+    setStatus('Audio: the online host chooses the mix for guests');
+    return;
+  }
   if (wasmMode) {
     wasmModule._mgs_set_audio_source(n);
     if (n === 0) wasmFlushAudio();
@@ -2725,12 +2731,24 @@ let audioNode = null;
 let audioBuf = new Float32Array(0); // interleaved L,R awaiting playback
 let audioSrcRate = 32768;
 let audioPos = 0; // fractional sample-frame read position within audioBuf
+// Cheap health telemetry for the audioStateRef probe (and crash reports):
+// chunks delivered into the resampler and the loudest recent sample. A silent
+// game with pumped>0 and peak==0 points at the engine; pumped==0 points at
+// the pump/unlock path.
+const audioStats = { pumped: 0, peak: 0, lastBytes: 0 };
 
 function unlockAudio() {
   if (IS_TAURI) return; // desktop: ALSA handles audio, not WebAudio
   if (audioCtx) {
     if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
     return;
+  }
+  // A tab that received audio before its first gesture (an online guest, or
+  // any background tab the pump kept feeding) holds seconds of stale backlog;
+  // drop it so unlocking doesn't replay old audio.
+  if (audioBuf.length > audioSrcRate) {
+    audioBuf = new Float32Array(0);
+    audioPos = 0;
   }
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -2822,7 +2840,16 @@ function onAudio(data) {
   const sampleBytes = data.slice(4);
   const src = new Int16Array(sampleBytes.buffer, sampleBytes.byteOffset, count);
   const flt = new Float32Array(count);
-  for (let i = 0; i < count; i++) flt[i] = src[i] / 32768;
+  let peak = 0;
+  for (let i = 0; i < count; i++) {
+    const v = src[i] / 32768;
+    flt[i] = v;
+    const a = v < 0 ? -v : v;
+    if (a > peak) peak = a;
+  }
+  audioStats.pumped++;
+  audioStats.lastBytes = data.byteLength;
+  audioStats.peak = Math.max(audioStats.peak * 0.95, peak); // decaying so it self-clears
   const merged = new Float32Array(audioBuf.length + flt.length);
   merged.set(audioBuf, 0);
   merged.set(flt, audioBuf.length);
@@ -2879,10 +2906,14 @@ function wasmLoadRomBytes(bytes) {
   return rc;
 }
 
-// Drain the audio buffer without playing (turbo mute-on-exit, like desktop).
+// Drain the audio buffer without playing (mute, turbo exit). Must actually
+// call the drain: _mgs_get_audio() empties the cores' audio buffers, while
+// _mgs_audio_frames() only reports what the PREVIOUS drain collected. The old
+// no-op left ~2 s of backlog that kept playing after mute/turbo exited.
 function wasmFlushAudio() {
   if (!wasmModule) return;
   wasmModule._mgs_get_audio();
+  wasmModule._mgs_audio_frames();
 }
 
 // Copy every player's latest finished frame into the canvases.
@@ -2913,15 +2944,22 @@ function wasmRenderVideo() {
 function wasmPumpAudio() {
   if (!audioCtx) return;
   const M = wasmModule;
-  const frames = M._mgs_audio_frames();
-  if (frames <= 0) return;
+  if (!M || !M._mgs_get_audio || !M._mgs_audio_frames) return;
+  // Drain FIRST: _mgs_audio_frames() reports what the PREVIOUS _mgs_get_audio
+  // call collected (the C side sets the count inside the drain itself), so the
+  // old frames-first ordering read 0 on every single call and the in-browser
+  // engine was silent no matter which Audio source was picked.
   const ptr = M._mgs_get_audio();
+  const frames = M._mgs_audio_frames();
+  if (frames <= 0 || !ptr) return;
   const sampleBytes = M.HEAPU8.subarray(ptr, ptr + frames * 4);
   const tagged = new Uint8Array(4 + sampleBytes.length);
   const rate = M._mgs_get_audio_rate ? M._mgs_get_audio_rate() : 32768;
   new DataView(tagged.buffer).setUint32(0, rate, true);
   tagged.set(sampleBytes, 4);
   onAudio(tagged);
+  // Online hosts forward the same chunk to connected guests (no-op otherwise).
+  window.mgbaOnline?.broadcastAudio?.(tagged);
 }
 
 // Fixed-timestep 60 fps loop. At 60 Hz displays one frame runs per rAF; on
@@ -2957,6 +2995,25 @@ function wasmFrame(now) {
     if (wasmAccum > FRAME_MS * 6) wasmAccum = FRAME_MS * 6;
   }
   wasmRenderVideo();
+  // Online hosts must forward what they render: the browser engine never
+  // emits onFrame() (that is the desktop WebSocket path), so without this the
+  // broadcast host streamed NOTHING and guests stared at a black screen.
+  if (window.mgbaOnline?.isHost?.()) {
+    const parts = [];
+    let total = 0;
+    for (let i = 0; i < playerCount; i++) {
+      const s = screens[i];
+      if (!s || !s.imgData) break;
+      parts.push(s.imgData.data);
+      total += s.imgData.data.length;
+    }
+    if (parts.length === playerCount && total > 0) {
+      const frame = new Uint8Array(total);
+      let off = 0;
+      for (const p of parts) { frame.set(p, off); off += p.length; }
+      window.mgbaOnline.broadcastFrame(frame);
+    }
+  }
   if (!turboOn) wasmPumpAudio();
 }
 
@@ -3001,6 +3058,17 @@ window.addEventListener('DOMContentLoaded', async () => {
     Object.defineProperty(window, 'wasmModeRef', { configurable: true, get: () => wasmMode });
     Object.defineProperty(window, 'wasmModuleRef', { configurable: true, get: () => wasmModule });
     Object.defineProperty(window, 'playerCountRef', { configurable: true, get: () => playerCount });
+    Object.defineProperty(window, 'audioStateRef', {
+      configurable: true,
+      get: () => ({
+        ctxState: audioCtx ? audioCtx.state : null,
+        node: !!audioNode,
+        buffered: audioBuf.length,
+        srcRate: audioSrcRate,
+        pumped: audioStats.pumped,
+        peak: +audioStats.peak.toFixed(3),
+      }),
+    });
     window.sessionLogRef = sessionLog;
   } catch (_) {}
   if (!IS_TAURI && 'serviceWorker' in navigator) {
@@ -3173,6 +3241,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     window.mgbaOnline.init({
       status: (text) => { setOnlineStatus(text); setStatus(text); },
       frame: onFrame,
+      audio: onAudio, // guests play the host's streamed mix (tagged rate + s16)
       input: (player, keys) => setKeys(player + 1, keys),
       invites: (descriptors) => {
         updateOnlineInvites(descriptors);
