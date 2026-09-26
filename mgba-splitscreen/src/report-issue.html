@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <title>mgba-splitscreen — crash report</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; padding: 24px; background: #121212; color: #ddd;
+      font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      max-width: 860px; margin-inline: auto;
+    }
+    h1 { font-size: 1.2rem; color: #24c8db; margin: 0 0 4px; }
+    p.sub { color: #999; margin-top: 0; }
+    textarea {
+      width: 100%; box-sizing: border-box; min-height: 420px; margin-top: 8px;
+      background: #1c1c1f; color: #bbb; border: 1px solid #3a3a40; border-radius: 8px;
+      padding: 10px; font: 12px/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+      white-space: pre; overflow: auto;
+    }
+    .row { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+    button {
+      padding: 8px 14px; border-radius: 6px; border: 1px solid #3a3a40;
+      background: #24c8db; color: #06262a; font-weight: 600; cursor: pointer;
+    }
+    button.ghost { background: transparent; color: #ddd; }
+    a { color: #7ec8ff; }
+    .ok { color: #7ddc8f; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Crash report ready</h1>
+  <p class="sub" id="subtitle">
+    The game hit an error and prepared a GitHub issue with the game, system, and log details.
+    If this page opened automatically, the issue should be filling in on GitHub right now.
+  </p>
+  <div id="issue-link" class="hidden">
+    <p class="sub ok">Opened the issue on GitHub — thank you! If the tab did not appear,
+      <a id="issue-direct" target="_blank" rel="noopener">open it directly</a>.</p>
+  </div>
+  <p class="sub">Report content (also sent as the issue body — you can edit it on GitHub before submitting):</p>
+  <textarea id="body" readonly spellcheck="false"></textarea>
+  <div class="row">
+    <button id="submit">Open GitHub issue</button>
+    <button id="copy" class="ghost">Copy report</button>
+    <button id="close" class="ghost">Close this page</button>
+  </div>
+  <p class="sub hidden" id="manual-note">
+    <strong>Manual mode:</strong> this page was opened without a report in its URL.
+    It will use the last report stored by the game in this browser, if any.
+  </p>
+
+  <script>
+    (() => {
+      const ISSUES_URL = 'https://github.com/Spuds0588/mgba-splitscreen/issues/new';
+      const DEDUP_KEY = 'mgs:crashIssueOpened';
+      const params = new URLSearchParams(location.search);
+
+      // `report` arrives as JSON embedded in the URL; localStorage is the fallback.
+      function loadReport() {
+        const raw = params.get('report');
+        if (raw) {
+          try { return JSON.parse(raw); } catch (_) { /* fall through */ }
+        }
+        try { return JSON.parse(localStorage.getItem('mgs:lastCrashReport') || 'null'); } catch (_) { return null; }
+      }
+
+      function issueUrlFor(report) {
+        const url = new URL(ISSUES_URL);
+        url.searchParams.set('title', `[auto] ${report.kind}: ${String(report.message).slice(0, 160)}`);
+        url.searchParams.set('body', report.body);
+        url.searchParams.set('labels', report.labels || 'crash-report,web,online-beta');
+        return url.href;
+      }
+
+      function announceFiled() {
+        try {
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage({ type: 'mgs-crash-report-filed' }, location.origin);
+          }
+        } catch (_) {}
+      }
+
+      const report = loadReport();
+      const bodyEl = document.getElementById('body');
+      if (report) {
+        bodyEl.value = report.body || JSON.stringify(report, null, 2);
+        const url = issueUrlFor(report);
+        document.getElementById('issue-direct').href = url;
+
+        const auto = params.get('auto') === '1' || window.opener; // crash-report.js opens us
+        let alreadyFiled = false;
+        try {
+          alreadyFiled = sessionStorage.getItem(DEDUP_KEY) === url;
+        } catch (_) {}
+
+        if (auto && !alreadyFiled) {
+          try { sessionStorage.setItem(DEDUP_KEY, url); } catch (_) {}
+          // Give the opener's own window.open a beat to win the race first;
+          // if it did, we still show the direct link but skip a second open.
+          setTimeout(() => {
+            try {
+              if (window.opener && !window.opener.closed && window.opener.lastCrashIssueOpened === url) {
+                alreadyFiled = true;
+              }
+            } catch (_) {}
+            if (!alreadyFiled) {
+              try { window.open(url, '_blank', 'noopener'); } catch (_) {}
+            }
+            document.getElementById('issue-link').classList.remove('hidden');
+            announceFiled();
+          }, 400);
+        }
+      } else {
+        document.getElementById('manual-note').classList.remove('hidden');
+        bodyEl.value = 'No report found in the URL or localStorage.';
+      }
+
+      document.getElementById('submit').addEventListener('click', () => {
+        if (!report) return;
+        window.open(issueUrlFor(report), '_blank', 'noopener');
+        announceFiled();
+      });
+      document.getElementById('copy').addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(bodyEl.value); } catch (_) {}
+      });
+      document.getElementById('close').addEventListener('click', () => window.close());
+    })();
+  </script>
+</body>
+</html>

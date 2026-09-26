@@ -8,7 +8,49 @@
 
 ---
 
-## 2026-09-17 — v0.5 per-player invite capabilities
+## 2026-09-26 — online beta shipped to Pages + automatic crash reports
+
+The PeerJS multiplayer work (secure per-slot invites, QR sharing, PWA shell)
+had been sitting on this branch while Pages deploys only from `master` — that
+is why production never got it. `master` was merged in (only divergence: the
+DualBoy→mgba-splitscreen README rename), the **Online menu is now labeled
+beta** (amber `.beta-badge` chip + honest note about the host-authoritative
+prototype), and the branch was merged to `master` to ship.
+
+Crash reporting: the user asked for auto-filed issues on crash, so the page now
+ships `crash-report.js` + `report-issue.html` (a static rescue page):
+
+- Listens for `error`/`unhandledrejection` in the capture phase and renders a
+  prefilled GitHub issue (title/body/labels query params) opened in a new tab.
+  Labels `crash-report`/`web`/`online-beta` were created in the repo (GitHub
+  drops unknown labels silently).
+- Report contents: game ROM name (mirrored from every `Running: …` status
+  line), platform via `mgs_get_platform(0)`, engine stepping stats via
+  `mgs_get_stats(int[4])` (steps/link sleeps/wakes/cycles — signatures checked
+  against `mgba_splitscreen_web.c`, not guessed), players configured, online
+  session state (host + guest count / guest seat via new `mgbaOnline`
+  introspection), WASM/JS state, full system info (UA, GPU renderer via
+  WEBGL_debug_renderer_info, memory, cores, screen), and the last 80 console
+  lines from the existing session-log ring buffer.
+- Hard-crash path: the emscripten module is created with an `onAbort` handler
+  (OOM/traps never surface as JS exceptions) that shows the engine-failure
+  banner and files the report. If the browser blocks the direct popup, the
+  reporter opens `report-issue.html?report=<json>&auto=1`, which files the
+  issue from its URL/localStorage copy and dedups against the opener.
+  Report + ready-to-open issue URL are mirrored to localStorage.
+- Guards: 5 reports/session cap, 2-minute identical-fingerprint dedup,
+  `?crashreport=off` opt-out, `?crashreport=test` self-test hook, invite
+  tokens never leave the page (URL is stripped to origin+path in reports).
+- The Pages workflow stamps the deployed commit SHA into the reporter via a
+  `__GIT_SHA__` placeholder (`sed`), so issues name the exact build; the
+  service-worker cache was bumped to v2 (new shell files) and
+  `report-issue.html` is excluded from shell caching (URL-parameterized).
+- Verified live against a CI-identical staging dir: badge renders, engine
+  boots, test report renders the fully prefilled issue URL (build SHA,
+  stats, platform all present), rescue page files in both manual and auto
+  modes.
+
+### 2026-09-17 — v0.5 per-player invite capabilities
 
 Corrected the invite model: a four-player host now issues three independent guest links, one for P2, P3, and P4. Each link carries its own slot, token, and expiry; using P2's link consumes only P2's capability, leaving P3/P4 valid until they join or expire. The host UI selects the guest slot, can show/copy/download/share that slot's QR, or copy all remaining URLs together. This preserves the security of single-use links without preventing a host from filling the remaining seats.
 

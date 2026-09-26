@@ -281,6 +281,9 @@
     broadcastFrame,
     isGuest: () => state.role === 'guest',
     isHost: () => state.role === 'host',
+    // Read-only introspection for the crash reporter's session details.
+    assignedPlayer: () => state.assignedPlayer,
+    guestCount: () => state.connections.length,
     invite: () => buildInvite(1),
   };
 })();

@@ -60,6 +60,21 @@ body {
   letter-spacing: 0.03em;
 }
 
+/* Small label marking a menu as pre-release (e.g. Online beta). */
+.beta-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #4a3b10;
+  color: #ffcf4d;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  vertical-align: 2px;
+}
+
 .menu { position: relative; }
 
 .menu > summary {

@@ -112,6 +112,7 @@ function applyFsAssist() {
     if (wasmModule && wasmModule._mgs_set_fs_assist) {
       wasmModule._mgs_set_fs_assist(fsAssistRequested() ? 1 : 0);
     }
+    window.fsAssistActiveRef = fsAssistRequested();
   } catch (_) { /* older builds without the export: nothing to switch */ }
 }
 
@@ -591,6 +592,11 @@ let wasmAccum = 0;         // fixed-timestep accumulator (ms) for 60fps pacing
 const FRAME_MS = 1000 / 60;
 
 function setStatus(text) {
+  // Feed the crash reporter the currently running game (every successful ROM
+  // load reports itself as "Running: <name>", so this catches all load paths).
+  if (typeof text === 'string' && text.startsWith('Running: ')) {
+    try { window.lastRunningRom = text.slice('Running: '.length); } catch (_) {}
+  }
   document.getElementById('status').textContent = text;
 }
 
@@ -890,6 +896,7 @@ function clearScreens() {
 
 async function quitGame() {
   closeMenus();
+  try { delete window.lastRunningRom; } catch (_) { window.lastRunningRom = undefined; }
   if (wasmMode) {
     wasmModule._mgs_quit();
     wasmStates = [];
@@ -2846,7 +2853,17 @@ function loadWasmModule() {
     s.onerror = () => reject(new Error('failed to load mgba-splitscreen-web.js'));
     document.head.appendChild(s);
   }).then(async (factory) => {
-    wasmModule = await factory({ locateFile: (path) => new URL('mgba-splitscreen-web.wasm', location.href).href });
+    wasmModule = await factory({
+      locateFile: (path) => new URL('mgba-splitscreen-web.wasm', location.href).href,
+      // The emscripten runtime calls this for unrecoverable engine failures
+      // (OOM, assertions, WASM traps) that never surface as JS exceptions.
+      onAbort: (reason) => {
+        wasmMode = false;
+        try { document.getElementById('hosted-note').hidden = false; } catch (_) {}
+        setStatus('Engine crashed: ' + (reason || 'unknown cause'));
+        window.mgbaCrash?.reportEngineAbort?.(reason);
+      },
+    });
     return wasmModule;
   });
 }
@@ -2978,6 +2995,14 @@ function connectWebSocket() {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
+  // Expose live engine/session state to crash-report.js (declared `let`s are
+  // module-scoped, so hand it read-only getters instead of copies).
+  try {
+    Object.defineProperty(window, 'wasmModeRef', { configurable: true, get: () => wasmMode });
+    Object.defineProperty(window, 'wasmModuleRef', { configurable: true, get: () => wasmModule });
+    Object.defineProperty(window, 'playerCountRef', { configurable: true, get: () => playerCount });
+    window.sessionLogRef = sessionLog;
+  } catch (_) {}
   if (!IS_TAURI && 'serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }

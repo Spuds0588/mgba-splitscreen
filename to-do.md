@@ -356,6 +356,10 @@ The next versions are intentionally staged: stabilize local multi-system support
       (non-webview) renderer for the desktop app.
 - [ ] Web version on GitHub Pages is live; keep it in sync with the desktop
       feature set (turbo, save states, audio source menu…).
+- [x] 2026-09-26: online multiplayer (PeerJS host-star + invites) shipped to
+      Pages from `master`, menu labeled beta; crashes auto-file a prefilled
+      GitHub issue (`crash-report.js` + `report-issue.html` rescue page) with
+      game/system/log details. Watch the `crash-report` label for tester reports.
 - [x] v0.4 first slice: widen ROM discovery/pickers/folder scans/URL validation to GB/GBC/GBX and enable the native GB core as groundwork. WASM detection and dynamic video metadata are implemented; the browser WASM path now wires mGBA's two-device GB/GBC lockstep coordinator. Native Tauri GB runtime/link support and independent save identities remain follow-up work.
 - [ ] Separate ROMs per linked player (for example Pokémon Red/Blue) is deferred: Oracle of Ages/Seasons do not use a link cable, and Pokémon trading is outside the current audience/use case.
 

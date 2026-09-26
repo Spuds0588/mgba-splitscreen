@@ -36,6 +36,9 @@ jobs:
           mkdir -p staged
           cp -r mgba-splitscreen/src/. staged/
           cp mgba-splitscreen/web/mgba-splitscreen-web.js mgba-splitscreen/web/mgba-splitscreen-web.wasm staged/
+          # Stamp the deployed commit SHA into the crash reporter so auto-filed
+          # issues name the exact build (placeholder shipped in the repo).
+          sed -i "s/__GIT_SHA__/${GITHUB_SHA}/" staged/crash-report.js
       - name: Upload frontend
         uses: actions/upload-pages-artifact@v3
         with:
