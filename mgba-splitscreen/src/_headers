@@ -3,6 +3,10 @@
   X-Content-Type-Options: nosniff
   Permissions-Policy: geolocation=()
 
+/*.png
+  Content-Type: image/png
+  Cache-Control: public, max-age=604800
+
 /*.wasm
   Content-Type: application/wasm
   Cache-Control: public, max-age=31536000, immutable

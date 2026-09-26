@@ -1,7 +1,7 @@
 // v2: ships the online-beta menu label, the crash reporter, and its rescue page.
 // Bump whenever the shell file list or their cached contents change, or
 // installed PWAs keep serving the stale shell forever.
-const CACHE = 'mgba-splitscreen-shell-v2';
+const CACHE = 'mgba-splitscreen-shell-v3';
 const SHELL = [
   './',
   './index.html',
@@ -11,10 +11,21 @@ const SHELL = [
   './crash-report.js',
   './manifest.json',
   './icon.svg',
+  './icon-32.png',
+  './icon-192.png',
+  './icon-512.png',
+  './icon-maskable-192.png',
+  './icon-maskable-512.png',
+  './apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
+  // cache:'reload' bypasses the HTTP cache: GitHub Pages serves max-age=600,
+  // and without this a freshly-installed worker could cache up to ten-minute
+  // stale shell files right after a deploy, keeping old code alive a cycle.
+  event.waitUntil(caches.open(CACHE).then((cache) =>
+    cache.addAll(SHELL.map((path) => new Request(path, { cache: 'reload' }))),
+  ));
   self.skipWaiting();
 });
 

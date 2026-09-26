@@ -11,7 +11,11 @@
     <meta name="apple-mobile-web-app-title" content="mgba-splitscreen" />
     <meta name="referrer" content="no-referrer" />
     <link rel="manifest" href="manifest.json" />
-    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <!-- PNG favicon + PNG app icons: Chrome's install check rejects SVG-only
+         manifest icons, and iOS homescreens need apple-touch-icon. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="icon-32.png" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" sizes="any" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     <title>mgba-splitscreen</title>
     <!-- PeerJS is optional: local play and the WASM engine work if this CDN is unavailable. -->
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" defer></script>
