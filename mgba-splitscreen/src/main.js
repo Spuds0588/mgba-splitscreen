@@ -2949,10 +2949,14 @@ function wasmRenderVideo() {
 
 // Feed this frame's mixed audio into the existing WebAudio resampler, tagged
 // the same way the backend streams it (u32 LE rate + interleaved stereo s16).
+// Online hosts MUST pump even with no local audioCtx (guests need the stream
+// even when the host hasn't clicked to unlock sound yet) and during turbo
+// (guests hear normal-speed game audio while the host fast-forwards).
 function wasmPumpAudio() {
-  if (!audioCtx) return;
   const M = wasmModule;
   if (!M || !M._mgs_get_audio || !M._mgs_audio_frames) return;
+  const hostBroadcasting = !!window.mgbaOnline?.isHost?.();
+  if (!audioCtx && !hostBroadcasting) return;
   // Drain FIRST: _mgs_audio_frames() reports what the PREVIOUS _mgs_get_audio
   // call collected (the C side sets the count inside the drain itself), so the
   // old frames-first ordering read 0 on every single call and the in-browser
@@ -2965,9 +2969,10 @@ function wasmPumpAudio() {
   const rate = M._mgs_get_audio_rate ? M._mgs_get_audio_rate() : 32768;
   new DataView(tagged.buffer).setUint32(0, rate, true);
   tagged.set(sampleBytes, 4);
-  onAudio(tagged);
-  // Online hosts forward the same chunk to connected guests (no-op otherwise).
-  window.mgbaOnline?.broadcastAudio?.(tagged);
+  // Guests-first: the host's own playback stays optional (muted host,
+  // pre-gesture host, turbo host), but the guest stream must always flow.
+  if (hostBroadcasting) window.mgbaOnline.broadcastAudio(tagged);
+  if (audioCtx) onAudio(tagged);
 }
 
 // Fixed-timestep 60 fps loop. At 60 Hz displays one frame runs per rAF; on
@@ -3006,6 +3011,7 @@ function wasmFrame(now) {
   // Online hosts must forward what they render: the browser engine never
   // emits onFrame() (that is the desktop WebSocket path), so without this the
   // broadcast host streamed NOTHING and guests stared at a black screen.
+  // Audio forwarding happens in wasmPumpAudio (also called during turbo).
   if (window.mgbaOnline?.isHost?.()) {
     const parts = [];
     let total = 0;
@@ -3022,7 +3028,9 @@ function wasmFrame(now) {
       window.mgbaOnline.broadcastFrame(frame);
     }
   }
-  if (!turboOn) wasmPumpAudio();
+  // Pump audio every frame: hosts broadcast to guests even in turbo (their
+  // own playback is skipped inside wasmPumpAudio while turbo is on).
+  wasmPumpAudio();
 }
 
 function wasmStartLoop() {

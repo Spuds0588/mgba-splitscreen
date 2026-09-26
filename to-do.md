@@ -439,6 +439,13 @@ The next versions are intentionally staged: stabilize local multi-system support
 
 ## Housekeeping
 
+- [ ] Cosmetic: the `/session_log` POST 405s on GitHub Pages every load (static
+      host has no backend); the console-capture self-disables but one warning
+      line still logs. Could gate the POST on a successful first response.
+- [ ] The QR library is pinned to qrcode@1.4.4 (last release shipping the UMD
+      `build/` bundle). If it ever disappears from CDNs, vendor the file into
+      `mgba-splitscreen/src/` (55 KB).
+
 - [ ] PROJECT_LOG.md is the long-form log; `history.md` is the tried-vs-next
       log. Keep both in sync at session boundaries.
 - [ ] The `--fs*` experiment modes in `threaded_link.c` are dev tools; decide

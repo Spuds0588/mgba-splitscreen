@@ -18,8 +18,11 @@
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     <title>mgba-splitscreen</title>
     <!-- PeerJS is optional: local play and the WASM engine work if this CDN is unavailable. -->
+    <!-- qrcode MUST be 1.4.4: the build/ UMD bundle was dropped from 1.5.x,
+         and a 404 from the CDN gets ORB-blocked as a silent script failure
+         (the QR dialog then reports "generator unavailable"). -->
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js" defer></script>
     <!-- Crash reporter first: it must be listening before online.js/main.js run. -->
     <script src="crash-report.js" defer></script>
     <script src="touch-controls.js" defer></script>

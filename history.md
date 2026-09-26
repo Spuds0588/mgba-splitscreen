@@ -8,6 +8,36 @@
 
 ---
 
+## 2026-09-26 (production test pass) — two real bugs found and fixed
+
+Full sweep of every shipped feature against PRODUCTION (not staging): boot,
+cross-origin `?rom=` deep link with the repo's dmg-acid2 GB test ROM (renders
+the passing face — platform detection + dynamic 160x144 canvas verified),
+keyboard masks through the real key events, player-count switching, audio
+unlock + sources + mute, crash-reporter test hook + opt-out + rescue page,
+full PeerJS host/guest on prod with touch input forwarded (host `_mgs_set_keys`
+spy: A press and release both arrive), offline shell coverage (all 11 shell
+files from the SW cache), touch-mode persistence, save/load state, library,
+pause, view cycling. Two bugs:
+
+1. **Guest audio was coupled to the host's local playback.**
+   `wasmPumpAudio` returned early when the host had no `audioCtx` (no
+   click yet — autoplay policy) and was skipped entirely during turbo, so a
+   host who hadn't clicked (or was fast-forwarding) streamed SILENCE to
+   guests while video kept flowing. Now hosts always pump (guest stream
+   first, local playback only when unlocked and not turbo).
+2. **The QR invite dialog could never work**: it loaded
+   `qrcode@1.5.4/build/qrcode.min.js`, a path that no longer exists in the
+   npm package (the UMD bundle was dropped after 1.4.4) — the CDN 404s with
+   `nosniff`, the browser ORB-blocks it, and the dialog just said
+   "generator unavailable". The copy-URL fallback masked it since launch.
+   Pinned to `qrcode@1.4.4/build/qrcode.min.js` (verified: UMD, `window.QRCode
+   .toCanvas`, 43020 dark modules rendered into the app's real canvas).
+
+Also noted (cosmetic, not fixed): every prod page load POSTs `/session_log`,
+gets a 405 from Pages, and logs one warning — expected on static hosting,
+the capture self-disables.
+
 ## 2026-09-26 (newest) — touchscreen controls for phone guests
 
 **A magic-link guest on a phone had no way to press anything** — the overlay
