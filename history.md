@@ -8,6 +8,28 @@
 
 ---
 
+## 2026-09-26 (repo audit) — no personal ROMs/saves anywhere; nothing to remove
+
+User asked to double-check nothing private is in the repo. Audited the full
+tracked tree, ALL branches' history (`--all`), production output, and ignore
+coverage. **Everything clean — no fix needed.** The checks:
+
+- Personal assets never committed, ever: `Test Roms/`,
+  `mgba-splitscreen/src/*.gba` (linktest/fs_rom are local builds),
+  `src/roms/`, `*.dualbystate`/`*.mgsstate`/`.sav` under app dirs, and
+  `.freebuff/` scratch — zero `--diff-filter=A` hits across all refs.
+- History blob scan: the largest blobs ever committed are upstream's own
+  (sqlite3.c, `cinema/` test ROMs, `res/nointro.dat` = upstream's ROM hash
+  database, i.e. metadata, not a ROM). Nothing personal hides under odd
+  extensions in app directories.
+- The tracked `cinema/**` ROMs/`.sav` files are upstream mGBA's open test
+  suite (blargg/mooneye/samesuite/dmg-acid2); sampled `.sav` fixtures are
+  byte-identical to `mgba-emu/mgba` master. `res/scripts/pokemon.lua` is
+  endrift's own WIP example script from upstream history, not personal.
+- Production serves only `src/` + the two engine files; `cinema/` is 404.
+- No secrets/tokens/keys/env files tracked; working tree has zero
+  untracked-unignored files; ignore rules cover every local asset.
+
 ## 2026-09-26 (production test pass) — two real bugs found and fixed
 
 Full sweep of every shipped feature against PRODUCTION (not staging): boot,
