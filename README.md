@@ -6,6 +6,28 @@
 > players, and play. (A ROM is required to play; use the **Games Library** or
 > **File → Load ROM**.)
 
+> ## ⚠️ [Download test builds — pre-release](https://github.com/Spuds0588/mgba-splitscreen/releases/tag/v0.3.1)
+>
+> Want to test native builds instead? The latest pre-release has installers for
+> **Windows** (`.msi`/`.exe`), **macOS** (`.dmg`, Apple Silicon), **Linux**
+> (`.deb`/`.rpm`/`.AppImage`), and **Android** (`.apk`).
+>
+> **Please read before installing:**
+> - These are **beta quality** builds of a hobby project. Expect rough edges, and
+>   don't consider them stable. No code signing / no app store — desktop Windows
+>   and macOS will show their usual "unrecognized developer" warnings.
+> - **Android:** sideload only — enable "Install unknown apps" for your browser or
+>   file manager, then open the APK. Grab the **universal** APK for any device
+>   (phones, tablets, Android TV) or the smaller **arm64** APK for modern phones.
+>   The v0.3.1 APKs were signed with a one-off test key: uninstall that build once
+>   before installing v0.3.2 or later, which then upgrade in place.
+> - **Crash and issue reports are automatic and public:** the app collects system
+>   info, game/ROM name, and a console log tail and files a public GitHub issue
+>   (via a prompt you can also open yourself from the pause menu). Nothing else
+>   is collected, and no ROM or save data ever leaves your device.
+> - Found something broken? [Open an issue](https://github.com/Spuds0588/mgba-splitscreen/issues/new?labels=bug) —
+>   tester reports directly drive what gets fixed.
+
 mgba-splitscreen is a **split-screen Game Boy Advance emulator**: run multiple GBA instances
 side by side, linked together over a virtual link cable, so two to four players can
 play multiplayer GBA games (trading, link battles, co-op, etc.) on a single machine —
