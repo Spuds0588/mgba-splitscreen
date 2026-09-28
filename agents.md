@@ -83,6 +83,9 @@ compatibility, not live branding.
   this ROM first.**
 - `mgba-splitscreen/scripts/` — Python drivers: `nav_fs.py` (drives FS to the link
   screen), `ws_play.py`, `raw_ws.py`, `linktest_frm.py`, etc.
+- `mgba-splitscreen/JOIN_CODES.md` — implementation-ready spec for 6-digit
+  online join codes (cross-platform play). Build from this when picking up
+  that to-do; no engine changes needed.
 - `Test Roms/` — owner's legal ROMs (gitignored). Four Swords is
   `Legend of Zelda, The - A Link To The Past Four Swords (U) [!].gba`.
 - `PROJECT_LOG.md` — full chronological project log (the long-form history).

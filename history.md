@@ -42,6 +42,10 @@ no new transport or encoding work — only discovery/join UX. The plan:
 - Done-criterion: a 4-way mixed-platform session joined by code, each join
   under 30 seconds, verified with the same rigor as the 2026-09-28 2-tab
   sweep (luma seat-isolation, input spy, audio backlog pinning).
+- 2026-09-28 (later): the plan is now an implementation-ready spec at
+  `mgba-splitscreen/JOIN_CODES.md` (exact files, message formats, approval
+  flow, edge-case checklist, verification plan). Build from there tomorrow;
+  agents.md points to it.
 
 ## 2026-09-28 (release v0.3.1 + stable Android signing + issues enabled)
 

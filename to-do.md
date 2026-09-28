@@ -370,8 +370,10 @@ The next versions are intentionally staged: stabilize local multi-system support
 - [ ] Online beta follow-ups: show guest fps/latency somewhere subtle (probe
       exists: `mgbaOnline.videoStats()`), JPEG quality/fps adaptivity on slow
       links, and test >2 players sharing one host uplink.
-- [ ] **Cross-platform play: 6-digit join codes (PLANNED 2026-09-28 — design
-      rationale in history.md).** Magic links are fine for QR/DM but useless
+- [ ] **Cross-platform play: 6-digit join codes (PLANNED 2026-09-28 — full
+      implementation spec in `mgba-splitscreen/JOIN_CODES.md`: files, message
+      formats, UI details, edge-case checklist, verification plan, suggested
+      build order. Rationale in history.md.)** Magic links are fine for QR/DM but useless
       verbally; the target session is e.g. Android gaming handheld + phone
       browser + desktop + browser all in one game. All platforms already
       speak the same online protocol (Android APK and desktop ship the same
