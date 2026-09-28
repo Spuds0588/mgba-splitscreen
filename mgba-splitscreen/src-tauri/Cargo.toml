@@ -1,6 +1,6 @@
 [package]
 name = "mgba-splitscreen"
-version = "0.3.0"
+version = "0.3.1"
 description = "mgba-splitscreen — split-screen linked GBA emulator"
 authors = ["you"]
 edition = "2021"

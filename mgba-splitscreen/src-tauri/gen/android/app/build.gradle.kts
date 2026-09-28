@@ -16,6 +16,24 @@ val tauriProperties = Properties().apply {
 android {
     compileSdk = 36
     namespace = "com.coreyb.mgbasplitscreen"
+
+    // Release signing is driven entirely by environment variables so CI can
+    // inject a keystore without this file knowing any secrets. When the vars
+    // are absent (local builds), the release APK is built unsigned exactly as
+    // before. See .github/workflows/release.yml for the two supported modes:
+    // repo secrets (stable key across releases) or an ephemeral CI-generated
+    // key (fine for sideload testing; upgrades between releases need uninstall).
+    signingConfigs {
+        if (System.getenv("ANDROID_KEYSTORE_FILE") != null) {
+            create("ciRelease") {
+                storeFile = file(System.getenv("ANDROID_KEYSTORE_FILE"))
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.coreyb.mgbasplitscreen"
@@ -43,6 +61,9 @@ android {
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
                     .toList().toTypedArray()
             )
+            if (System.getenv("ANDROID_KEYSTORE_FILE") != null) {
+                signingConfig = signingConfigs.getByName("ciRelease")
+            }
         }
     }
     kotlinOptions {

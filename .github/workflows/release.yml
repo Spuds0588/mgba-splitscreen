@@ -1,16 +1,20 @@
 name: Release beta builds
 
-# Cut a release by tagging a commit with a version tag (e.g. v0.2.0-alpha.1).
-# Builds the desktop app bundle (Tauri) on Linux, macOS, and Windows, then
-# uploads everything to a GitHub Release marked as a prerelease. A separate
-# "release" job creates/updates the Release exactly once (the matrix jobs only
-# build + stash artifacts), which avoids the tauri-action create-release 403
-# and concurrent-creation races. (The web version needs no release artifacts:
-# it's pure WASM served by GitHub Pages.)
+# Cut a release by tagging a commit with a version tag (e.g. v0.3.1).
+# Builds the desktop app bundle (Tauri) on Linux, macOS, and Windows and the
+# Android APKs (universal + arm64), then uploads everything to a GitHub
+# Release marked as a prerelease. A separate "release" job creates/updates the
+# Release exactly once (the matrix jobs only build + stash artifacts), which
+# avoids the tauri-action create-release 403 and concurrent-creation races.
+#
+# workflow_dispatch (no tag) runs ALL build jobs but skips the release job —
+# use it to validate builds on a branch before cutting the tag. The web
+# version needs no release artifacts: it's pure WASM served by GitHub Pages.
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -83,8 +87,116 @@ jobs:
             mgba-splitscreen/src-tauri/target/release/bundle/msi/*.msi
             mgba-splitscreen/src-tauri/target/release/bundle/nsis/*.exe
 
+  android:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Rust with Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mgba-splitscreen/src-tauri
+          prefix-key: android
+
+      - name: Set up Java (Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK + NDK
+        run: |
+          ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --install \
+            "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Install npm dependencies
+        working-directory: mgba-splitscreen
+        run: npm ci
+
+      - name: Put the Tauri CLI on PATH (the Gradle rust tasks shell out to it)
+        run: echo "$GITHUB_WORKSPACE/mgba-splitscreen/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Write tauri.properties (versionCode/Name for the APK)
+        working-directory: mgba-splitscreen/src-tauri/gen/android/app
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER="${TAG%%-*}"            # 0.3.1 from v0.3.1 or v0.3.1-beta.1
+          MAJOR=$(echo "$VER" | cut -d. -f1)
+          MINOR=$(echo "$VER" | cut -d. -f2)
+          PATCH=$(echo "$VER" | cut -d. -f3)
+          CODE=$((MAJOR * 10000 + MINOR * 100 + PATCH))
+          printf 'tauri.android.versionCode=%s\ntauri.android.versionName=%s\n' \
+            "$CODE" "${GITHUB_REF_NAME#v}" > tauri.properties
+          cat tauri.properties
+
+      # Release APKs MUST be signed or most devices refuse to install them.
+      # Prefer the repo's keystore secret (stable identity across releases, so
+      # upgrades install over older builds); fall back to an ephemeral key
+      # generated here, which is fine for sideload testing but needs an
+      # uninstall before the next differently-keyed release.
+      - name: Prepare release signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > /tmp/release.keystore
+            echo "Using ANDROID_KEYSTORE_B64 secret for signing."
+          else
+            keytool -genkeypair -v -keystore /tmp/release.keystore \
+              -alias mgs-release -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass mgba-splitscreen-ci -keypass mgba-splitscreen-ci \
+              -dname "CN=mgba-splitscreen CI,O=mgba-splitscreen,C=US" >/dev/null
+            echo "No ANDROID_KEYSTORE_B64 secret; generated an ephemeral signing key."
+            echo "NOTE: installs will require uninstalling previous releases."
+          fi
+          {
+            echo "ANDROID_KEYSTORE_FILE=/tmp/release.keystore"
+            echo "ANDROID_KEYSTORE_PASSWORD=mgba-splitscreen-ci"
+            echo "ANDROID_KEY_ALIAS=mgs-release"
+            echo "ANDROID_KEY_PASSWORD=mgba-splitscreen-ci"
+          } >> "$GITHUB_ENV"
+
+      # Build via Gradle directly (the committed gen/ project) so we control
+      # the flavors: `universal` bundles all four ABIs into one sideload-any-
+      # device APK, arm64 is the small high-demand phone variant. Each Gradle
+      # build shells out through the rust plugin to `tauri android
+      # android-studio-script`, which cargo-builds the .so per ABI.
+      - name: Build universal + arm64 release APKs
+        working-directory: mgba-splitscreen/src-tauri/gen/android
+        run: ./gradlew --no-daemon :app:assembleUniversalRelease :app:assembleArm64Release
+
+      - name: Rename and upload APKs
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          OUT=mgba-splitscreen/src-tauri/gen/android/app/build/outputs/apk
+          mkdir -p dist
+          cp "$OUT/universal/release/app-universal-release.apk" "dist/mgba-splitscreen-${VER}-universal.apk"
+          cp "$OUT/arm64/release/app-arm64-release.apk" "dist/mgba-splitscreen-${VER}-arm64.apk"
+          ls -la dist
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundles-android
+          if-no-files-found: error
+          path: dist/*.apk
+
   release:
-    needs: build
+    needs: [build, android]
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - name: Download all bundles
@@ -101,6 +213,7 @@ jobs:
             Prebuilt mgba-splitscreen binaries.
 
             - **Desktop app** (Linux: .deb/.rpm/.AppImage, macOS: .dmg, Windows: .msi installer)
+            - **Android**: universal APK (all device architectures, phones + Android TV) or the smaller arm64-only APK. Sideload: enable "Install unknown apps" for your browser/file manager, then open the APK. No Play Store, no data collection.
             - **Web version**: fully in-browser, no install or backend needed —
               https://spuds0588.github.io/mgba-splitscreen/
           prerelease: true
