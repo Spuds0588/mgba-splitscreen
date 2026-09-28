@@ -8,6 +8,41 @@
 
 ---
 
+## 2026-09-28 (later) — cross-platform play plan: 6-digit join codes
+
+User question: magic links work browser↔browser and desktop↔browser, but
+what about a session mixing an Android gaming handheld, a phone browser, a
+desktop app, and a desktop browser? Answer written into to-do.md as a
+phased plan. The key insight that makes it EASY: **every platform already
+speaks the identical online protocol.** The Android APK and the desktop app
+ship the same frontend (Android IS the web engine in a WebView; desktop
+web builds use the same onFrame/audio paths), so cross-platform play needs
+no new transport or encoding work — only discovery/join UX. The plan:
+
+- **Host publishes a 6-digit code; the PeerJS peer ID is DERIVED from it**
+  (`mgs-<digits>`). A guest types the code, the guest's PeerJS connects to
+  that ID directly — no signaling server, no database, nothing to run.
+  Codes are ephemeral by construction (the ID only exists while hosting).
+  Collision risk at 10^6 codes is negligible for beta; the host retries a
+  new code on the (rare) broker ID-taken error. Code squatting is possible
+  but pointless until strangers can find codes — deliberately not building
+  a registry/KV service until that's a real problem.
+- **Host-side consent replaces pre-claimed slot invites**: an incoming
+  connection prompts the host "join with code XXXX — approve?" so a guessed
+  code yields a declined prompt, never silent entry. (The existing
+  high-entropy per-slot token URLs STAY supported — they're strictly better
+  for QR/DM sharing since they need no consent step.)
+- **Guest UI**: numeric keypad (inputmode=numeric) "Join with Code…" in the
+  Online menu on every platform, plus `?online=join&code=NNNNNN` deep links
+  so QR/share flows keep working; the Android/TV remote path gets the same
+  keypad.
+- Open risks parked in the plan: STUN-only NAT traversal (PeerJS default)
+  fails on some phone-hotspot pairs — the fix is an optional TURN server,
+  listed as hardening; host uplink with 3+ JPEG streams untested.
+- Done-criterion: a 4-way mixed-platform session joined by code, each join
+  under 30 seconds, verified with the same rigor as the 2026-09-28 2-tab
+  sweep (luma seat-isolation, input spy, audio backlog pinning).
+
 ## 2026-09-28 (release v0.3.1 + stable Android signing + issues enabled)
 
 **v0.3.1 shipped with all 8 assets** (deb/rpm/AppImage/dmg/msi/NSIS exe +

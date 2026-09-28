@@ -370,6 +370,34 @@ The next versions are intentionally staged: stabilize local multi-system support
 - [ ] Online beta follow-ups: show guest fps/latency somewhere subtle (probe
       exists: `mgbaOnline.videoStats()`), JPEG quality/fps adaptivity on slow
       links, and test >2 players sharing one host uplink.
+- [ ] **Cross-platform play: 6-digit join codes (PLANNED 2026-09-28 — design
+      rationale in history.md).** Magic links are fine for QR/DM but useless
+      verbally; the target session is e.g. Android gaming handheld + phone
+      browser + desktop + browser all in one game. All platforms already
+      speak the same online protocol (Android APK and desktop ship the same
+      frontend; Android/desktop-web run the WASM engine, desktop-native hosts
+      via its onFrame path) — the gap is discovery/join UX only. Phases:
+      1. Host side: "Host Online Session" shows a big 6-digit code (random,
+         retried on PeerJS ID collision) alongside today's QR/link. Host's
+         PeerJS ID is DERIVED from the code (`mgs-<code>`), so a guest needs
+         only the code — no signaling database. Ephemeral by nature (the ID
+         exists only while hosting; collisions retry, squatting is possible
+         but pointless at beta scale — revisit with a tiny KV registry if it
+         ever bites).
+      2. Host-side consent: incoming connections prompt "Someone wants to
+         join with code XXXX — approve seat P2/P3/P4?" (guessing a code gets
+         you a prompt the host declines, not silent entry; seats assigned on
+         approval, replacing the pre-claimed per-slot invites).
+      3. Guest side: "Join with Code…" keypad (inputmode=numeric, big
+         buttons, paste support) in Online menu on every platform + deep link
+         `?online=join&code=NNNNNN` for QR/copy; keep old token URLs working.
+      4. Hardening (only if needed): free TURN fallback for strict-NAT pairs
+         (PeerJS default is STUN-only — some phone-hotspot pairs fail today),
+         code registry service if squatting/collisions become real, adaptive
+         bitrate per guest.
+      5. Done = a 4-way mixed-platform session (Android handheld + phone
+         browser + desktop app + desktop browser) joined by code in under 30s
+         each, verified like the 2026-09-28 2-tab sweep.
 - [ ] Gamepad support for players 3–4 in the browser (Gamepad API — desktop
       webview works; check browser build).
 - [ ] If WebView can't composite 30 FPS on low-end hardware: native
