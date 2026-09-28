@@ -8,6 +8,34 @@
 
 ---
 
+## 2026-09-28 (release v0.3.1 + stable Android signing + issues enabled)
+
+**v0.3.1 shipped with all 8 assets** (deb/rpm/AppImage/dmg/msi/NSIS exe +
+universal 27.1MB + arm64 8.9MB APKs) after the Android CI fixes recorded in
+to-do.md. Pipeline now has workflow_dispatch build-only validation.
+
+**Stable Android keystore DONE.** No Java locally, so generated a PKCS12
+keystore with openssl (RSA 2048, CN=mgba-splitscreen, 30-year cert, alias
+`mgs-release`) at `~/.android/mgba-splitscreen/` — keystore + private key +
+BACKUP-README.txt with the password (chmod 600). All four repo secrets set:
+ANDROID_KEYSTORE_B64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS,
+ANDROID_KEY_PASSWORD. Workflow fix: the signing step previously HARDCODED
+the ephemeral key's password, so a real keystore could never unlock —
+passwords now come from secrets (alias falls back to `mgs-release`, key
+password to the store password, the PKCS12 convention). The v0.3.1 APKs
+were signed with the old ephemeral key: uninstall before installing
+anything signed with the new one. From the NEXT tag, upgrades install in
+place. Gotcha: `gh secret set` outside a git repo errors before writing —
+run it with an explicit -R flag (it worked from inside the project dir).
+
+**GitHub issues were DISABLED — every crash report ever filed 404'd.**
+`gh issue list` revealed it while confirming report access. Enabled now,
+labels already existed (crash-report/web/online-beta) + added `android`.
+Verified the full loop: created issue #1 via CLI with labels, read it back,
+deleted it; the crash reporter's /issues/new form URL returns 302 (login
+redirect), not 404. Agent access is complete — read AND write via gh CLI.
+
+
 ## 2026-09-28 (guest streaming v2) — real 2P Mario Kart over QR: 4 bugs found and fixed
 
 User ran a real 2P race (host desktop + phone guest via QR) and reported:
