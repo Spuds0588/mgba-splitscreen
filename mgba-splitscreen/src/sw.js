@@ -1,7 +1,7 @@
-// v2: ships the online-beta menu label, the crash reporter, and its rescue page.
 // Bump whenever the shell file list or their cached contents change, or
-// installed PWAs keep serving the stale shell forever.
-const CACHE = 'mgba-splitscreen-shell-v4';
+// installed PWAs keep serving the stale shell forever. v5: guest streaming
+// v2 (per-seat JPEG video, guest chrome hidden, coalesced audio).
+const CACHE = 'mgba-splitscreen-shell-v5';
 const SHELL = [
   './',
   './index.html',
