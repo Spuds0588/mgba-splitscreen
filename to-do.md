@@ -468,11 +468,20 @@ The next versions are intentionally staged: stabilize local multi-system support
       the assist makes it unnecessary).
 ### Release pipeline — verify before the next tag
 
-- [ ] Re-run a release tag now that the upload path is fixed and confirm the
-      Release page gets **only** installers (`.deb`, `.rpm`, `.AppImage`,
-      `.dmg`, `.msi`, plus `.exe` if NSIS is enabled). The three platform
-      builds have been green since the Windows quoting fix; only the publish
-      step was ever broken.
+- [x] 2026-09-28: v0.3.1 released and VERIFIED: all 8 assets landed (deb, rpm,
+      AppImage, dmg, msi, NSIS exe, universal APK 27.1MB, arm64 APK 8.9MB).
+      Android builds joined the pipeline: the gen/ Gradle project only works
+      through the Tauri CLI (it generates the gitignored
+      tauri.settings.gradle with machine-specific cargo paths, and its rust
+      plugin's android-studio-script task needs the CLI's socket — raw
+      ./gradlew fails with ConnectionRefused); two `tauri android build --apk`
+      passes (plain = universal all-ABI, --target aarch64 = phone variant)
+      with the output copied between them. Release signing via env vars:
+      ANDROID_KEYSTORE_B64 secret (stable identity, upgrades install over old
+      builds) or an ephemeral CI key (fine for testing, needs uninstall
+      between releases). workflow_dispatch runs all builds without publishing
+      for branch validation. No secrets are set yet — consider adding
+      ANDROID_KEYSTORE_B64 before the release leaves prerelease status.
 - [ ] Any JavaScript embedded in `tauri.conf.json` runs through a shell on
       Linux/macOS but is spawned directly on Windows. Keep such work in a
       script file under `scripts/` invoked via an npm script.
