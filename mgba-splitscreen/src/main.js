@@ -2020,6 +2020,14 @@ function renderPauseMenu() {
     addItem('Quick Load State', quickLoadState, 'pause-load');
     addItem('Players\u2026', () => { pauseSub = 'players'; renderPauseMenu(); }, 'pause-players');
     addItem('Games Library', () => { closePauseMenu(); openLibrary(); }, 'pause-library');
+    // Voluntary bug reports: this is how phone guests (no menubar) tell us
+    // about live problems like garbled audio. Details are collected at the
+    // moment of the click; the crash reporter opens GitHub from the gesture.
+    addItem('Report an Issue\u2026', () => {
+      closePauseMenu();
+      if (window.mgbaCrash?.manualReport) window.mgbaCrash.manualReport();
+      else setStatus('Issue reporter unavailable in this build.');
+    }, 'pause-report');
     addItem('Quit ROM', async () => { closePauseMenu(); await quitGame(); }, 'pause-quit');
   }
   pauseFocus = 0;
@@ -3231,6 +3239,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('toggle-debug').addEventListener('click', () => {
     closeMenus();
     toggleDebug();
+  });
+  document.getElementById('report-issue-menu').addEventListener('click', () => {
+    closeMenus();
+    if (window.mgbaCrash?.manualReport) window.mgbaCrash.manualReport();
+    else setStatus('Issue reporter unavailable in this build.');
   });
   document.querySelectorAll('#view-menu [data-view]').forEach((btn) => {
     btn.addEventListener('click', () => {

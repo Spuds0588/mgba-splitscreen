@@ -72,6 +72,38 @@ press/release from synthetic events needs clientX/clientY (or buttons stick);
 (c) background host tabs throttle rAF to 1fps, so measure throughput with the
 host foregrounded.
 
+## 2026-09-28 (same day) — reporting no longer needs a crash or a desktop
+
+User's point: nobody goes back into the app to press "report bug" after a
+crash, and guests (menubar hidden) had NO way to report anything at all.
+Findings + changes, all verified live on the staging mirror:
+
+- The crash path ALREADY auto-collects and auto-opens GitHub (proved live
+  earlier when it caught the guestDecoder regression), but on phones
+  `window.open` from an error handler has no user gesture, so the popup AND
+  the rescue-page fallback are both blocked. The old UI was a tiny bottom pill
+  — easy to miss under the touch pad.
+- Now a crash takes over the screen with a full overlay (z-index 400, above
+  the touch pad and modals; inline styles so it survives a broken CSS load):
+  error message, "details were collected automatically", big **Report on
+  GitHub** button (the tap IS the gesture mobile browsers require, so this
+  always works), **Copy report**, and **Keep playing** which dismisses to the
+  old pill. Verified with a synthetic uncaught error and a stubbed
+  window.open (blocked-popup simulation): overlay shows, button re-opens,
+  dismiss→pill→pill-reopens all work.
+- Voluntary reporting now exists in two places: **Pause → Report an Issue…**
+  (guests reach it via the touch pad's ⋮ — this is how a phone tester reports
+  live problems like garbled audio) and **Help → Report an Issue…**. Manual
+  reports collect the SAME automatic details (ROM, online seat, audio state,
+  console tail) at the moment of the click, titled `[feedback]` instead of
+  `[auto]` so crash triage stays clean.
+- In the embedded test browser, a synthetic (non-gesture) click on the
+  report button navigates the tab to GitHub instead of opening a new tab —
+  that is a test-environment quirk, NOT a bug: real taps carry user
+  activation and open normally. We lose nothing: `mgs:lastCrashIssueUrl` in
+  localStorage always holds the ready URL as a third fallback.
+- SW bumped to shell-v6 (crash overlay + in-app issue reporting).
+
 ## 2026-09-26 (repo audit) — no personal ROMs/saves anywhere; nothing to remove
 
 User asked to double-check nothing private is in the repo. Audited the full

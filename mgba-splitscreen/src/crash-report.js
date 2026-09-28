@@ -162,7 +162,9 @@
 
   function formatBody(report) {
     const lines = [];
-    lines.push(`${report.kind} on the web build (reported automatically by the in-app beta reporter).`);
+    lines.push(report.kind === 'Manual report'
+      ? 'Manual bug report from the web build (filed by the tester from the in-app menu; the details below were collected automatically at that moment).'
+      : `${report.kind} on the web build (reported automatically by the in-app beta reporter).`);
     lines.push('');
     lines.push(`**What failed:** ${report.message}`);
     if (report.stack) {
@@ -186,7 +188,8 @@
 
   function issueUrl(report) {
     const url = new URL(ISSUES_URL);
-    url.searchParams.set('title', `[auto] ${report.kind}: ${report.message.slice(0, 160)}`);
+    const prefix = report.kind === 'Manual report' ? '[feedback]' : '[auto]';
+    url.searchParams.set('title', `${prefix} ${report.kind}: ${report.message.slice(0, 160)}`);
     url.searchParams.set('body', formatBody(report));
     url.searchParams.set('labels', 'crash-report,web,online-beta');
     return url.href;
@@ -217,7 +220,91 @@
     if (!opened) {
       try { window.open(rescueUrl(report), '_blank', 'noopener'); } catch (_) {}
     }
-    showReopenPill();
+    // Desktops usually let the auto-open through; phones block window.open
+    // from an error handler (no user gesture). Either way, take over the
+    // screen with a one-tap file button: the tap IS the gesture mobile
+    // browsers demand, so filing always works from here.
+    if (!showCrashOverlay(report, opened)) showReopenPill();
+  }
+
+  // Full-screen crash/report offer. Returns false only if it could not render
+  // (catastrophically early crash with no body) so callers can fall back to
+  // the small pill. Built with inline styles: it must look right even if the
+  // stylesheet never loaded and it must appear above every app layer
+  // (touch pad 250, modals 350).
+  function showCrashOverlay(report, autoOpened) {
+    try {
+      if (!document.body) return false;
+      const old = document.getElementById('crash-overlay');
+      if (old) old.remove();
+      const isManual = report.kind === 'Manual report';
+      const root = document.createElement('div');
+      root.id = 'crash-overlay';
+      root.style.cssText = [
+        'position:fixed', 'inset:0', 'z-index:400', 'display:flex',
+        'align-items:center', 'justify-content:center', 'padding:18px',
+        'background:rgba(0,0,0,.85)', 'font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif',
+      ].join(';');
+      const panel = document.createElement('div');
+      panel.style.cssText = [
+        'width:min(430px,96vw)', 'max-height:94vh', 'overflow-y:auto',
+        'padding:20px', 'border:1px solid #b3552f', 'border-radius:12px',
+        'background:#1e1e22', 'color:#ddd', 'box-shadow:0 12px 44px rgba(0,0,0,.72)',
+      ].join(';');
+      const h = document.createElement('h2');
+      h.textContent = isManual ? 'Report an issue' : 'Something went wrong';
+      h.style.cssText = 'margin:0 0 8px;font-size:1.2rem;color:#ffb18a;';
+      const msg = document.createElement('p');
+      msg.textContent = report.message.slice(0, 300);
+      msg.style.cssText = 'margin:0 0 8px;font:12px/1.45 ui-monospace,Consolas,monospace;word-break:break-word;color:#ddd;';
+      const sub = document.createElement('p');
+      sub.textContent = autoOpened
+        ? 'A prefilled GitHub issue (game, system, and log details attached) should have opened in a new tab. If it did not, use the button below.'
+        : `The game, system, and log details were collected automatically — no dev tools needed. One tap opens a prefilled GitHub issue${isManual ? '' : ' about this error'} that you can edit before submitting.`;
+      sub.style.cssText = 'margin:0 0 14px;color:#aaa;font-size:.84rem;';
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+      const mkBtn = (label, primary, fn) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.style.cssText = [
+          'padding:10px 14px', 'border-radius:8px', 'font-weight:600', 'cursor:pointer',
+          primary ? 'border:1px solid #24c8db;background:#24c8db;color:#06262a'
+                 : 'border:1px solid #3a3a40;background:transparent;color:#ddd',
+        ].join(';');
+        b.addEventListener('click', fn);
+        return b;
+      };
+      row.appendChild(mkBtn('Report on GitHub', true, () => {
+        // Called from a real user gesture: popup blockers allow this everywhere,
+        // including iOS Safari and Android Chrome.
+        try { window.open(issueUrl(report), '_blank', 'noopener'); } catch (_) {}
+      }));
+      const copyBtn = mkBtn('Copy report', false, async () => {
+        try { await navigator.clipboard.writeText(report.body); copyBtn.textContent = 'Copied \u2713'; } catch (_) { copyBtn.textContent = 'Copy failed'; }
+      });
+      row.appendChild(copyBtn);
+      row.appendChild(mkBtn(isManual ? 'Close' : 'Keep playing', false, dismiss));
+      const tiny = document.createElement('p');
+      tiny.textContent = 'Filed to Spuds0588/mgba-splitscreen. Thank you for testing the beta!';
+      tiny.style.cssText = 'margin:12px 0 0;color:#777;font-size:.74rem;';
+      panel.appendChild(h); panel.appendChild(msg); panel.appendChild(sub);
+      panel.appendChild(row); panel.appendChild(tiny);
+      root.appendChild(panel);
+      function dismiss() {
+        root.remove();
+        document.removeEventListener('keydown', onKey, true);
+        // The report stays in localStorage; the small pill keeps the option
+        // alive for later without shouting over the game.
+        showReopenPill();
+      }
+      function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); dismiss(); } }
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(root);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   function reportError(kind, message, err) {
@@ -287,6 +374,25 @@
     report: reportError,
     sessionLogTail: logTail,
     issueUrl: () => lastIssueUrl,
+    // Voluntary "Report an Issue…" (pause menu / Help menu). MUST be called
+    // from a click handler so the window.open counts as a user gesture on
+    // mobile. Collects the same automatic details as a crash, taken at the
+    // moment of the click — exactly what we want for live problems like
+    // "the guest audio is garbled".
+    manualReport() {
+      const report = collect('Manual report', 'Filed by the user from the in-app menu (no crash)', null);
+      const url = issueUrl(report);
+      try {
+        lastReport = report;
+        lastIssueUrl = url;
+        localStorage.setItem('mgs:lastCrashReport', JSON.stringify(report));
+        localStorage.setItem('mgs:lastCrashIssueUrl', url);
+      } catch (_) {}
+      let opened = false;
+      try { opened = !!window.open(url, '_blank', 'noopener'); } catch (_) {}
+      if (!opened) showCrashOverlay(report, false);
+      return { status: opened ? 'opened' : 'blocked', url };
+    },
     // Called by main.js when the emscripten module aborts.
     reportEngineAbort(reason) {
       const bannerShown = (() => {
