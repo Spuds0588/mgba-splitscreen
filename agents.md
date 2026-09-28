@@ -3,6 +3,38 @@
 > **Read this first, then `to-do.md` and `history.md`. `PROJECT_LOG.md` has the
 > full chronological detail; this file is the fast-start version.**
 
+## GitHub issues — tester feedback (check early, check often)
+
+The repo has **in-app crash/issue reporting** wired to
+`Spuds0588/mgba-splitscreen` issues (auto-filed by `crash-report.js` from the
+crash overlay and the pause-menu "Report an Issue…"). Titles are prefixed
+`[auto]` (crashes) or `[feedback]` (manual reports) and carry labels
+`crash-report`, `web`, `online-beta`, or `android`; the body auto-includes
+ROM name, online-session state, audio state, system info, and a console log
+tail. Issues were only ENABLED 2026-09-28 — older reports never landed, so
+the tracker's history starts there.
+
+**Check the tracker with `gh` (CLI is authenticated):**
+
+- **Before starting any bug fix or feature:**
+  `gh issue list -R Spuds0588/mgba-splitscreen --state open --limit 50 --json number,title,labels`
+  — a tester report on the same area is ground truth about what actually
+  breaks on real devices, and often contains the repro steps and
+  environment data (GPU, network type, device memory) you'd otherwise guess.
+- **When looking for the next thing to work on:** treat open issues as the
+  priority signal alongside `to-do.md`. Prefer a real user-reported bug over
+  speculative backlog items; label-filter (`--label android` etc.) when
+  working a specific platform.
+- **When you fix something a report describes:** comment on the issue with
+  the commit hash and the release that carries the fix, then close it (or
+  leave it open until the release ships and let the reporter confirm).
+- **After a release:** sweep the newly-filed `[auto]`/`[feedback]` issues for
+  crash fingerprints (the stack in the body) — repeated fingerprints from
+  different users are release blockers, single ones are leads.
+
+Add context back: when fixing a reported bug, note in `history.md` which
+issue(s) drove the change so the next session can trace decisions.
+
 ## What this project is
 
 **mgba-splitscreen** is a split-screen GBA emulator: 2–4 GBA instances running side by
