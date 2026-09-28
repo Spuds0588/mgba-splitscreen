@@ -8,6 +8,70 @@
 
 ---
 
+## 2026-09-28 (guest streaming v2) — real 2P Mario Kart over QR: 4 bugs found and fixed
+
+User ran a real 2P race (host desktop + phone guest via QR) and reported:
+guest video minutes behind at 3-4 fps, guest saw MORE than their own screen,
+all menus visible on mobile, guest audio garbled (host local playback fine).
+Controls were already great. All four root causes identified and fixed;
+no transport change needed — **PeerJS already IS WebRTC DataChannels**; the
+problem was payload size and queueing, not the pipe.
+
+**Bandwidth math (the "why"):** the host broadcast ALL players' raw RGBA —
+2P = ~300KB/frame × 60fps ≈ 18MB/s through a single reliable DataChannel.
+Reliable mode queues rather than drops, so the send backlog grew unboundedly:
+a few fps delivered, minutes of latency, and audio embedded in that backlog.
+
+Fixes (all verified live 2-tab host/guest with Mario Kart over the staging
+Pages mirror):
+
+1. **Per-seat JPEG video.** `online.js broadcastFrame` now takes a
+   seat→pixels provider; each guest connection JPEG-encodes ONLY its own seat
+   (canvas.toDataURL 240x160 @ q0.55 → ~8-9KB/frame, rate-capped at 30fps per
+   guest, encode serialized per seat keeping only the newest frame). Wire
+   message gained `seat` + `jpg` fields; a seat provider means ZERO copies of
+   pixel data on the host (the old path rebuilt a 300KB concatenated buffer
+   every single frame). Legacy concatenated-RGBA input is still accepted
+   (sliced per seat) for the desktop-socket path.
+2. **Guest sees one screen: their own.** `welcome{players}` no longer builds
+   the host's grid on the guest; guests get `playerCount→1` and
+   `applyGuestSeatView()` relabels the single tile to their real seat (P2 tag,
+   seat-colored border, no focus ring). Verified seat isolation numerically:
+   with P1 advanced to the menu (luma 179.7) and P2 still on the title
+   (125), the guest canvas read 126 — i.e. it receives P2's screen, full stop.
+3. **Guest chrome hidden.** `setStatus` adds `body.guest-session` when the
+   Online-guest status lands; CSS hides `.menubar`, the debug overlay and the
+   solo badge with `!important`. Also fixed: `.touch-player-picker[hidden]
+   {display:none}` (its `display:flex` used to defeat the hidden attribute —
+   guests saw a stray P1 pill), and `touch-controls.setPlayerCount` no longer
+   clamps an assigned guest's `activePlayer` (order-of-callbacks hazard).
+4. **Audio: coalesce, never drop + bounded guest backlog.** The old
+   `broadcastAudio` audioBusy throttle DROPPED whole chunks under load
+   (periodic gaps = crackle). Now chunks are coalesced into ~30ms sends with
+   per-chunk rate headers STRIPPED and one fresh header on the merged payload
+   (concatenating raw chunks would feed header bytes in as samples — that
+   alone is audible garbage). Guests keep at most ~500ms of pending PCM and
+   drop the OLDEST when over (hosts keep ~4s); verified `audioStateRef.buffered`
+   pinned at exactly 32768 frames (= 500ms) across a whole session.
+
+Sandbox caveat: our test host renders via software canvas, so per-frame JPEG
+encode there costs ~30ms and the probe showed ~10-20fps; on real GPUs canvas
+encode is ~1-2ms, so the 30fps cap is the binding limit. Either way the
+structural fix holds: nothing queues anymore, so minutes-of-latency is
+impossible by construction.
+
+Bonus finding: the crash reporter caught a REAL regression during this work
+(`guestDecoder is not defined` — a declaration lost in an edit) and auto-
+filed it with the exact stack trace from the rescue page's localStorage copy.
+It did precisely the job it was built for.
+
+Gotchas for next time: (a) the persistent browser profile keeps the SW shell,
+so between test rounds you must unregister SW + clear caches on EVERY tab of
+the origin (a reload alone serves the stale install — bit us twice); (b) touch
+press/release from synthetic events needs clientX/clientY (or buttons stick);
+(c) background host tabs throttle rAF to 1fps, so measure throughput with the
+host foregrounded.
+
 ## 2026-09-26 (repo audit) — no personal ROMs/saves anywhere; nothing to remove
 
 User asked to double-check nothing private is in the repo. Audited the full

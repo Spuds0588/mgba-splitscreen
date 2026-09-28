@@ -742,6 +742,14 @@ body {
   letter-spacing: 0.06em;
 }
 
+/* Guest seat tile: same video-call look, but the one tile is the guest's own
+   seat — drop the focus ring (there is nothing to focus past it). */
+.screen-cell.guest-seat-tile { outline: none; }
+
+/* Hidden must always win: the touch player picker is display:flex by default,
+   which used to defeat the hidden attribute and left guests a stray P1 pill. */
+.touch-player-picker[hidden] { display: none; }
+
 /* Short screens (landscape phones): slim everything so the game stays visible. */
 @media (max-height: 460px) {
   .touch-dpad {
@@ -754,6 +762,22 @@ body {
   }
   .touch-shoulder { width: 62px; height: 32px; }
   .touch-meta { width: 66px; height: 26px; }
+}
+
+/* ---- Online guest session (magic-link joiners) ----
+   A guest on a phone gets a console-free controller view: the menu bar is all
+   host powers (ROMs, invites, saves, remap), so body.guest-session (set by
+   main.js when the Online guest status lands) removes it and everything that
+   floats over the game. The touch pad itself is NOT hidden — that's the guest's
+   controls — and the crash-report pill stays reachable for bug reports. */
+body.guest-session .menubar,
+body.guest-session .overlay,
+body.guest-session #solo-badge {
+  display: none !important;
+}
+body.guest-session .screen-container {
+  padding: 0;
+  gap: 0;
 }
 
 /* ---- Online invite QR/share dialog ---- */

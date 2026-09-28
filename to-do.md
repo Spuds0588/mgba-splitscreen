@@ -358,6 +358,18 @@ The next versions are intentionally staged: stabilize local multi-system support
       online guests now receive host video AND audio over PeerJS. GB/GBC rate
       reporting in mixed mode still assumes 32768 — verify a GB game's audio
       pitch on the web build when convenient.
+- [x] 2026-09-28: guest streaming v2 (real QR 2P test feedback). Per-seat JPEG
+      video (~8-9KB/frame, 30fps cap, host zero-copy seat provider) replacing
+      the 300KB all-players RGBA flood that stranded guests minutes behind at
+      3-4 fps; guest renders ONLY their own seat; menubar/overlay/solo-badge
+      hidden via body.guest-session; audio coalesced ~30ms (rate headers
+      stripped, one fresh header) instead of dropped, guest backlog capped at
+      ~500ms oldest-drop. Verified live 2-tab (seat isolation by luma, input
+      spy, audio buffered pinned at cap). Watch for tester reports on real
+      phones; PeerJS is already WebRTC so no transport change is needed.
+- [ ] Online beta follow-ups: show guest fps/latency somewhere subtle (probe
+      exists: `mgbaOnline.videoStats()`), JPEG quality/fps adaptivity on slow
+      links, and test >2 players sharing one host uplink.
 - [ ] Gamepad support for players 3–4 in the browser (Gamepad API — desktop
       webview works; check browser build).
 - [ ] If WebView can't composite 30 FPS on low-end hardware: native

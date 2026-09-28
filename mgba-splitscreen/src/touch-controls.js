@@ -231,7 +231,12 @@
       if (n === state.playerCount) return;
       state.playerCount = n;
       state.masks.fill(0);
-      state.activePlayer = Math.min(state.activePlayer, n - 1);
+      // Never clamp an assigned guest down to the local count: guests build a
+      // 1-screen view but drive a seat the host picked (0..3). Only local
+      // players follow the local grid size.
+      if (state.guestSeat === null) {
+        state.activePlayer = Math.min(state.activePlayer, n - 1);
+      }
       updatePicker();
     },
     // main.js calls this when an online session role resolves:

@@ -605,6 +605,12 @@ function setStatus(text) {
     try { window.lastRunningRom = text.slice('Running: '.length); } catch (_) {}
   }
   document.getElementById('status').textContent = text;
+  // Mobile guests get a controller, not an admin console: every menu in the
+  // bar is a host-only power (ROM loading, invites, saves, remap). online.js
+  // reports "Online guest: …" on join/welcome — that string is our signal to
+  // strip the chrome (CSS: body.guest-session). Status text stays for bugs.
+  document.body.classList.toggle('guest-session',
+    typeof text === 'string' && text.startsWith('Online guest:'));
 }
 
 let currentOnlineInvite = null;
@@ -1239,6 +1245,32 @@ function initScreens(count) {
 let pendingFrame = null;
 let renderScheduled = false;
 
+// Online guests render exactly ONE screen: the seat the host assigned them.
+// The old behavior built the host's full N-screen grid from welcome{players},
+// which showed every guest more than they should see. The host now sends the
+// guest's own seat as per-seat JPEG; frames arrive as {jpeg: HTMLImageElement}
+// and blit straight onto the single canvas.
+function applyGuestSeatView() {
+  if (!window.mgbaOnline?.isGuest?.()) return;
+  const seat = window.mgbaOnline.assignedPlayer?.();
+  if (!(Number.isInteger(seat) && seat >= 0)) return;
+  playerCount = 1;
+  initScreens(1);
+  const cell = document.querySelector('#screens .screen-cell');
+  if (cell) {
+    cell.classList.add('guest-seat-tile', PLAYER_TAGS[seat] || '');
+    // initScreens(1) defaults every label to P1; the guest drives seat N, so
+    // relabel all three texts to their real seat (border color is already
+    // right via the PLAYER_TAGS class).
+    cell.classList.remove('focused-tile');
+    const label = cell.querySelector('.screen-label');
+    const tag = cell.querySelector('.screen-tag');
+    if (label) label.textContent = `P${seat + 1}`;
+    if (tag) tag.textContent = `P${seat + 1}`;
+  }
+  applyViewMode();
+}
+
 function onFrame(data) {
   if (window.mgbaOnline?.isHost()) window.mgbaOnline.broadcastFrame(data);
   pendingFrame = data;
@@ -1249,6 +1281,19 @@ function onFrame(data) {
     const frame = pendingFrame;
     pendingFrame = null;
     if (!frame) return;
+    if (frame.jpeg instanceof HTMLImageElement) {
+      // Online guest, per-seat JPEG: one screen, drawn image-first.
+      const s = screens[0];
+      if (s) {
+        if (s.canvas.width !== frame.jpeg.naturalWidth || s.canvas.height !== frame.jpeg.naturalHeight) {
+          s.canvas.width = frame.jpeg.naturalWidth;
+          s.canvas.height = frame.jpeg.naturalHeight;
+          s.imgData = null;
+        }
+        s.ctx.drawImage(frame.jpeg, 0, 0);
+      }
+      return;
+    }
     const bytes = new Uint8ClampedArray(frame);
     for (let i = 0; i < playerCount; i++) {
       if (frame.byteLength < FRAME_SIZE * (i + 1)) break;
@@ -2861,14 +2906,23 @@ function onAudio(data) {
   const merged = new Float32Array(audioBuf.length + flt.length);
   merged.set(audioBuf, 0);
   merged.set(flt, audioBuf.length);
-  // Cap the pending buffer (~4s) so a stalled consumer can't balloon memory.
-  // When we drop the head, adjust the read position too (it indexes frames into
-  // the buffer), otherwise the next callback jumps and glitches.
-  const max = audioSrcRate * 2 * 4;
+  // Cap the pending buffer so a stalled consumer can't balloon memory. Hosts
+  // keep ~4s (latency is irrelevant for local playback; head drop with the
+  // read position adjusted, as before). Online guests keep only ~500ms and
+  // drop the OLDEST audio when over the cap: a phone on a slow link that falls
+  // behind must hear recent audio, not an ever-growing stale backlog (the
+  // old unbounded growth played back overlapping, garbled sound).
+  const guestAudio = !!window.mgbaOnline?.isGuest?.();
+  const max = (guestAudio ? audioSrcRate / 2 : audioSrcRate * 4) * 2;
   if (merged.length > max) {
-    const dropped = merged.length - max;
-    audioBuf = merged.subarray(dropped);
-    audioPos = Math.max(0, audioPos - (dropped >> 1));
+    if (guestAudio) {
+      audioBuf = merged.subarray(merged.length - max);
+      audioPos = 0; // the past is gone; read the kept (recent) samples from the start
+    } else {
+      const dropped = merged.length - max;
+      audioBuf = merged.subarray(dropped);
+      audioPos = Math.max(0, audioPos - (dropped >> 1));
+    }
   } else {
     audioBuf = merged;
   }
@@ -3008,25 +3062,18 @@ function wasmFrame(now) {
     if (wasmAccum > FRAME_MS * 6) wasmAccum = FRAME_MS * 6;
   }
   wasmRenderVideo();
-  // Online hosts must forward what they render: the browser engine never
-  // emits onFrame() (that is the desktop WebSocket path), so without this the
-  // broadcast host streamed NOTHING and guests stared at a black screen.
+  // Online hosts forward ONLY each guest's own seat: broadcastFrame takes a
+  // seat->pixels provider so we hand it live views into the screens' ImageData
+  // with zero copies, and online.js JPEG-encodes per connection at a capped
+  // fps. (The old path reassembled ALL players' raw RGBA into one ~300KB
+  // message per frame — ~18MB/s through a reliable DataChannel, which stalled
+  // to a few fps and left guests minutes behind.)
   // Audio forwarding happens in wasmPumpAudio (also called during turbo).
   if (window.mgbaOnline?.isHost?.()) {
-    const parts = [];
-    let total = 0;
-    for (let i = 0; i < playerCount; i++) {
-      const s = screens[i];
-      if (!s || !s.imgData) break;
-      parts.push(s.imgData.data);
-      total += s.imgData.data.length;
-    }
-    if (parts.length === playerCount && total > 0) {
-      const frame = new Uint8Array(total);
-      let off = 0;
-      for (const p of parts) { frame.set(p, off); off += p.length; }
-      window.mgbaOnline.broadcastFrame(frame);
-    }
+    window.mgbaOnline.broadcastFrame((seat) => {
+      const s = screens[seat];
+      return s && s.imgData ? s.imgData.data : null;
+    });
   }
   // Pump audio every frame: hosts broadcast to guests even in turbo (their
   // own playback is skipped inside wasmPumpAudio while turbo is on).
@@ -3257,6 +3304,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
   loadSolo();
 
+  // A guest whose welcome arrived before init rebuilt its view via the
+  // playerCount callback; if the messages raced the other way, apply the
+  // single-seat view now. One call covers both (no-op for hosts).
+  applyGuestSeatView();
+
   if (window.mgbaTouch) {
     window.mgbaTouch.init({
       onInput: (p) => sendKeys(p),
@@ -3292,6 +3344,9 @@ window.addEventListener('DOMContentLoaded', async () => {
           playerCount = count;
           initScreens(count);
           highlightPlayersMenu(count);
+          // Guests are told "1 screen": rebuild as the single-seat view pinned
+          // to the seat the host assigned (welcome may have arrived already).
+          applyGuestSeatView();
         }
         return playerCount;
       },
