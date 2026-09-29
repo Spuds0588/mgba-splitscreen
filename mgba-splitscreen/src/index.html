@@ -110,12 +110,13 @@
           <button data-view="overlay">Overlay (PiP)</button>
           <button id="cycle-view">Cycle View (F8)</button>
           <button id="cycle-focus">Focus: P1 (F9)</button>
+          <button id="toggle-ui-hide">Hide Menu / Full Screen: Off</button>
           <button id="bg-image">Background Image&#8230;</button>
           <button id="bg-clear">Clear Background</button>
           <button id="toggle-outlines" class="active">Player Outlines: On</button>
           <button id="toggle-touch">Touch Controls: Auto</button>
           <button id="toggle-debug">Debug Log: Off</button>
-          <div class="menu-note">Arrange the linked screens like a video call. Cycle View (F8) and Cycle Focus (F9) flip through them; both are remappable. Background shows behind the tiles; Player Outlines toggles the colored borders; Debug Log toggles the stats ticker.</div>
+          <div class="menu-note">Arrange the linked screens like a video call. Cycle View (F8) and Cycle Focus (F9) flip through them; both are remappable. Hide Menu / Full Screen (F11) drops the chrome so the game fills the window. Background shows behind the tiles; Player Outlines toggles the colored borders; Debug Log toggles the stats ticker.</div>
         </div>
       </details>
 
@@ -153,13 +154,17 @@
           <div class="menu-note">P4: I/Q/C/E + P/[ + ,/. + 3/4</div>
           <button id="report-issue-menu">Report an Issue&#8230;</button>
           <div class="menu-note">Gamepads: slot #1&#8594;P1, #2&#8594;P2, etc. Face buttons, LB/RB, Select/Start, D-pad, and left stick. Remap via Controls menu.</div>
-          <div class="menu-note">Hotkeys: Turbo, Quick Save, Quick Load, and Pause &#8212; remap them via Controls &#8594; Remap Hotkeys.</div>
+          <div class="menu-note">Hotkeys: Turbo, Quick Save, Quick Load, Pause, Cycle View/Focus, and Hide Menu / Full Screen (F11) &#8212; remap them via Controls &#8594; Remap Hotkeys.</div>
         </div>
       </details>
 
       <span id="status" class="status">Waiting for ROM&#8230;</span>
       <span id="solo-badge" class="solo-badge"></span>
     </header>
+
+    <!-- Full screen (Hide Menu) mode: the hotkey restores the chrome; this hint
+         fades in briefly so a fullscreen player is never truly lost. -->
+    <div id="ui-hidden-hint" class="ui-hidden-hint" hidden></div>
 
     <!-- Screens fill the rest of the window; grid cells are laid out like a
          video call (2/3/4 equal regions, letterboxed to the GBA 3:2 ratio). -->

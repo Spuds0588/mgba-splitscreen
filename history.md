@@ -8,6 +8,114 @@
 
 ---
 
+## 2026-09-29 — README screenshots from real 4P sessions + Hide Menu/Full Screen (F11)
+
+**Hide Menu / Full Screen shipped.** `F11` (remappable, id `ui_hide` in the hotkeys
+list) toggles `body.ui-hidden` — the menubar/overlay/solo-badge hide and the screen
+grid goes edge-to-edge (same treatment as the guest view). Where the Fullscreen API
+exists it also requests document fullscreen; **the chrome-hide must not wait on that
+promise** — the embedded Chromium/Tauri webview can hand back a requestFullscreen
+promise that never settles, which silently swallowed the toggle until applyUiHidden()
+ran (first live test caught this; fix races the promise against a 500 ms timeout).
+While hidden, only F11 or Escape restore the menu (game keys keep flowing); a
+"Press F11 or Esc for the menu" hint pill fades out after ~4 s; the preference
+persists in localStorage (`mgba-splitscreen_uihide_v1`), so PWAs reopen fullscreen.
+Wired into: HOTKEY_ACTIONS/defaultHotkeys/refreshHotkeyLabels, the View menu
+(#toggle-ui-hide), Help text, and README's hotkey table. sw.js cache bumped to v7.
+
+**Screenshot pipeline that produced docs/screens/.** Local stack:
+`python3 -m http.server 8090 -d /tmp/mgs-www` where /tmp/mgs-www holds symlinks
+`src -> mgba-splitscreen/src` and `roms -> Test Roms` (lets `?rom=/roms/<name>` work
+without copying ROMs), plus `mgba-splitscreen/scripts/shot_server.py` (tiny CORS
+PNG receiver on :8091, writes into docs/screens/). In the page (driven over the
+preview browser): helpers `press()/tapAll()/sig()/shot()` — shot() composes the
+current view mode (tiles + P# badges) at 1152x768 from the live canvases and POSTs
+it to the receiver. GetEventListeners-style debugging note: the stale-sw.js bug
+below is the second time a service worker ate a JS change; check `navigator.serviceWorker
+getRegistrations()` whenever edited frontend code seems dead in this environment.
+
+**Which Test Roms actually do 4P linked gameplay (verified live, not assumed):**
+
+- **Mario Kart: Super Circuit — full 4P Multi-Pak session: TITLE → SINGLE-PAK LINK
+  menu → MULTI-PAK LINK → all four OK? → single-card TRANSFER (P2-P4 boot through
+  the host's ROM over the virtual cable) → CHOOSE A GAME wheel → VS → 50cc →
+  char select ('?' boxes OK) → PEACH CIRCUIT → live race, LAP 1/3 on all four
+  screens.** Captured in grid, speaker, focus and overlay views. Notes: the
+  Multi-Pak transfer is the most link-heavy moment in the set and it worked first
+  try on this build; the host (P1) is the only one who navigates the VS/track
+  wheels, guests show WAIT — input must be per-player, host-only at those steps.
+- **Kirby & The Amazing Mirror — full 4P single-card session: file select → GAME
+  SELECT banner "ADVENTURE WITH 4 KIRBYS!" → MULTIPLAYER → TRANSFER OK? →
+  Rainbow Route hub with all four Kirbys (per-player HUD colors), group jumps,
+  splits into pairs, live co-op movement.** Captured gameplay + all view modes +
+  fullscreen mode. Notes: the hub's star door needs the whole group positioned
+  right and a plain UP while overlapping; we didn't get the level-interior
+  transition on camera — next time walk the pink Kirby (P2's cursor ends on it)
+  into the door with UP held ~1s.
+- **Not 4P single-card (menu-level verified, not driven further):** WarioWare
+  Mega Microgame$ (its MP is host-gadget specific), SMA2/SMA4 (no link MP),
+  Shining Soul II (needs separate save/proper link menu flow, 2P), Mario Tennis
+  GB (link is for trades/minigames), Tetris DX / Double Dragon II / F-1 Race (GB
+  titles — GB lockstep is a different coordinator; v0.4 scope), Oracle of
+  Ages/Seasons (passwords, no cable).
+- Menu screenshots deliberately NOT used in the README — every image shows real
+  in-game play (per user request), with the one UI-state exception of the
+  fullscreen-mode shot which is mid-gameplay with the menu hidden.
+
+Gotchas for next time: solo keyboard must be OFF or keys drive only one player;
+synthetic keydown/keyup must be balanced or a stuck bit eats later presses (nuke
+with keyup for every mapped code); P3's B = KeyU, P4's B = BracketLeft (not
+obvious from P3/P4 comments); track/menu A presses sometimes need a second tap
+after a screen transition (wait 2-3 s between steps); `?players=4&rom=` deep links
+make each run reproducible (`&v=N` busts caches).
+
+---
+
+## 2026-09-28 (latest) — RetroArch core: researched, feasible, spec written
+
+Goal: ship the splitscreen multiplayer as a RetroArch (libretro) core. Full spec:
+`mgba-splitscreen/RETROARCH_CORE.md` (same impl-ready format as JOIN_CODES.md).
+Verdicts, all verified against primary sources on 2026-09-28:
+
+- **The single-instance objection is surmountable.** libretro docs: implementations
+  are "designed to be single-instance, so global state is allowed." One core = one
+  `retro_run()` = one video frame. But **TGB Dual (libretro/tgbdual-libretro)**
+  already does what we need at N=2: `g_gb[2]` — two emulator instances inside ONE
+  core, an internal link cable, both screens composited into one video frame,
+  mixed-or-per-player audio, and multi-ROM loading via `retro_load_game_special`
+  with `retro_subsystem_info`/`retro_subsystem_rom_info` (`gb_link_2p`), including
+  per-instance SRAM via `retro_subsystem_memory_info` (`RETRO_MEMORY_GAMEBOY_1_SRAM`
+  etc.). Our core = the same pattern at N=2-4 with mGBA cores.
+- **Upstream mGBA's libretro port is in-tree and single-instance only:**
+  `src/platform/libretro/libretro.c` (1,414 lines; one `static struct mCore* core`,
+  zero lockstep references) built by `BUILD_LIBRETRO` in CMakeLists.txt. The
+  lockstep DRIVER it never drives (`GBASIOLockstepCoordinator/Driver`) is the same
+  code our apps use, so the core work is frontend, not engine.
+- **The fork's frame loop ports directly.** `emulation.rs`'s sequential model
+  (budgeted cooperative stepping, per-player sleep flags bridging lockstep
+  sleep/wake to one thread, snapshot-on-frame-counter) is ~50 lines of C. The core
+  calls it once per `retro_run()` and composites N=2-4 snapshots.
+- **Official-core pipeline (4 steps, no formal review):** .info file in
+  libretro-super `dist/info/`; `.gitlab-ci.yml` at repo root (copy `libretro/mgba`'s
+  — it proves the CMake path: `CORE_ARGS: -DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO=ON`
+  across all templates); the undocumented step — a maintainer adds the repo to
+  libretro's GitLab mirror/crawl list (Discord #programming; per Clownacy's Aug-2025
+  write-up the buildbot ONLY builds mirrored repos and the docs don't mention it);
+  docs PR to libretro-docs. Test .info locally by deleting RetroArch's
+  `core_info.cache` or it silently ignores the new file.
+- **Phase plan (spec §Suggested build order):** skeleton core → N instances no link
+  → link + linktest 4P → subsystem + options + saves → submission. New dir
+  `src/platform/libretro-splitscreen/` so upstream's libretro port stays untouched
+  for rebases.
+- Key gotchas carried into the spec: `retro_serialize_size` must never increase
+  (pad to max at load); subsystem `num_memory` must cover every per-ROM memory
+  array or the frontend never asks for P2-4 saves (TGB Dual's own comment);
+  attach lockstep before `core->reset()`; budgeted-stepping needs a livelock cap;
+  run-ahead/netplay explicitly unsupported v1.
+
+Also added: `to-do.md` RetroArch section (phases as checkboxes) and an
+`agents.md` "Where things live" pointer to RETROARCH_CORE.md.
+
 ## 2026-09-28 (later) — cross-platform play plan: 6-digit join codes
 
 User question: magic links work browser↔browser and desktop↔browser, but

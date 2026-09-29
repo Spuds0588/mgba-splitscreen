@@ -780,6 +780,40 @@ body.guest-session .screen-container {
   gap: 0;
 }
 
+/* ---- Full screen / hide menu (F11) ----
+   body.ui-hidden drops the chrome so the game fills the window — the same
+   treatment the guest view gets, but user-toggled instead of role-based. The
+   menubar is display:none rather than collapsed so its shortcut keys can't
+   fire while hidden; the hint pill fades out after a few seconds. */
+body.ui-hidden .menubar,
+body.ui-hidden .overlay,
+body.ui-hidden #solo-badge {
+  display: none !important;
+}
+body.ui-hidden .screen-container {
+  padding: 0;
+  gap: 0;
+}
+
+.ui-hidden-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  z-index: 300;
+  padding: 7px 16px;
+  border-radius: 999px;
+  background: rgba(28, 28, 31, 0.88);
+  border: 1px solid #3a3a40;
+  color: #ddd;
+  font-size: 0.86rem;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 1.1s ease 2.2s;
+}
+.ui-hidden-hint[hidden] { display: none; }
+.ui-hidden-hint.fade { opacity: 0; }
+
 /* ---- Online invite QR/share dialog ---- */
 .online-qr-overlay {
   position: fixed;

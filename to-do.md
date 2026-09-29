@@ -3,6 +3,24 @@
 > Ordered by priority within each section. **Aggressively append results to
 > `history.md` as you work** so the next session can pick up mid-thought.
 
+## 🟢 2026-09-29 — README screenshots + Hide Menu/Full Screen (this session)
+
+- [x] **Hide Menu / Full Screen (F11, `ui_hide`)** shipped + verified live in the
+      browser (toggle, Esc-restore, hint pill, persistence, sw v7). Desktop Tauri
+      build compiles the same frontend — worth one manual smoke in the app.
+- [x] **docs/screens/ + README screenshots section** — real 4P gameplay from
+      Mario Kart: Super Circuit (VS race, 4 views) and Kirby & The Amazing Mirror
+      (co-op hub, group jump, 3 views + fullscreen). Screenshot pipeline:
+      scripts/shot_server.py + local static host with `?rom=/roms/<name>` symlinks
+      (recipe in history.md 2026-09-29).
+- [ ] Kirby: capture the level-interior transition (hub star door → level). The
+      door needs the whole group at it + UP while overlapping; P2's cursor ends
+      on the pink Kirby that stands closest.
+- [ ] Optional: a third game with real linked play for the README (Shining Soul
+      II 2P co-op is the best candidate — needs its save-file flow driven).
+- [ ] Clean up the debug/mks* captures in /tmp (they're outside the repo, fine
+      to leave) and consider a scripts/README note for shot_server.py.
+
 ## 🔴 Top priority: Four Swords multiplayer link fix
 
 ### 2026-09-11 (final) — FIX CONFIRMED, and it is not FS-specific
@@ -422,6 +440,30 @@ The next versions are intentionally staged: stabilize local multi-system support
 - **Pop-out windows** — each player's screen in its own OS window (multi-screen
   / streamer layouts). The threaded harness infrastructure (`threaded_link.c`)
   is a stepping stone here.
+
+## 🟦 RetroArch (libretro) core — FEASIBLE, spec'd 2026-09-28
+
+Full research + implementation-ready spec in `mgba-splitscreen/RETROARCH_CORE.md`:
+libretro is single-instance, but the TGB Dual core proves the model (N emulators
+inside one core + `retro_load_game_special` subsystem for multi-ROM + layout/audio
+core options), and our sequential frame loop in `emulation.rs` ports to C directly.
+The fork's `lockstep.c` (FS assist + gated kick) ships to RetroArch users for free.
+
+- [ ] Phase 1: skeleton core (`src/platform/libretro-splitscreen/`, copy of upstream
+      `src/platform/libretro/libretro.c` renamed) loading one ROM in RetroArch.
+- [ ] Phase 2: N instances + per-player RetroPad input + composite video + audio
+      options, link compiled out.
+- [ ] Phase 3: wire `GBASIOLockstepCoordinator` + sleep-flag frame loop; linktest
+      ROM must pass 4P; Mario Kart 2P race check.
+- [ ] Phase 4: subsystem manifest (2/3/4-player), core options (layout, audio,
+      FS assist), save-state size discipline, SRAM per player, `.info` file.
+- [ ] Phase 5: official distribution — `.gitlab-ci.yml` (copy `libretro/mgba`'s),
+      libretro-super `dist/info` PR, libretro-docs PR, GitLab mirror request
+      (Discord #programming — the buildbot only builds mirrored repos), nightly
+      verification in the Core Downloader. Optional: hook the core into
+      `release.yml` first so testers get .so/.dll artifacts early.
+- [ ] Later: GB/GBC 2P subsystem, determinism testing for the
+      `savestate_features = "deterministic"` claim, run-ahead/netplay caveats doc.
 
 ### 2026-09-10 (round 6) — the link-screen assist was never armed; state import is a dead end
 - **Fixed:** `GBASIOLockstepCoordinatorSetFSArmed()` had exactly one caller in

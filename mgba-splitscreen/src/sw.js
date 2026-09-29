@@ -1,7 +1,9 @@
 // Bump whenever the shell file list or their cached contents change, or
-// installed PWAs keep serving the stale shell forever. v6: crash overlay + in-app issue reporting; prior: guest streaming
-// v2 (per-seat JPEG video, guest chrome hidden, coalesced audio).
-const CACHE = 'mgba-splitscreen-shell-v6';
+// installed PWAs keep serving the stale shell forever. v7: Hide Menu / Full
+// Screen mode (F11) + README screenshot era; prior: crash overlay + in-app
+// issue reporting (v6), guest streaming v2 (per-seat JPEG video, guest chrome
+// hidden, coalesced audio).
+const CACHE = 'mgba-splitscreen-shell-v7';
 const SHELL = [
   './',
   './index.html',

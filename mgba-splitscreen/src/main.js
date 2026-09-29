@@ -437,6 +437,7 @@ const HOTKEY_ACTIONS = [
   { id: 'pause', label: 'Pause' },
   { id: 'cycle_view', label: 'Cycle View Mode' },
   { id: 'cycle_focus', label: 'Cycle Focus Player' },
+  { id: 'ui_hide', label: 'Hide Menu / Full Screen' },
 ];
 
 function defaultHotkeys() {
@@ -447,6 +448,7 @@ function defaultHotkeys() {
     pause: { keyboard: 'Escape', gamepad: null },
     cycle_view: { keyboard: 'F8', gamepad: null },
     cycle_focus: { keyboard: 'F9', gamepad: null },
+    ui_hide: { keyboard: 'F11', gamepad: null },
   };
 }
 
@@ -495,6 +497,7 @@ function refreshHotkeyLabels() {
     load: '#quick-load-state',
     pause: '#toggle-pause',
     cycle_view: '#cycle-view',
+    ui_hide: '#toggle-ui-hide',
   };
   for (const id in map) {
     const el = document.querySelector(map[id]);
@@ -858,6 +861,7 @@ function triggerHotkey(id) {
   else if (id === 'pause') togglePause();
   else if (id === 'cycle_view') cycleViewMode();
   else if (id === 'cycle_focus') cycleFocusPlayer();
+  else if (id === 'ui_hide') toggleUiHide();
 }
 
 // The backend recreates the emulator (and resets turbo/pause to off) on
@@ -868,6 +872,98 @@ function resetRuntimeState() {
   paused = false;
   highlightPause(false);
   if (pauseOpen()) closePauseMenu();
+}
+
+// ---- Full screen / hide menu (F11, remappable as "ui_hide") ----
+// Hides the menu bar + overlays so the game fills the window; with the real
+// Fullscreen API available (desktop/web browsers) it also requests the
+// document-wide fullscreen so nothing outside the game is visible. F11 (or the
+// bound key) toggles it back. Kept out of resetRuntimeState: hiding the chrome
+// is a UI preference, not emulation state, and should survive pause/quit.
+const UI_HIDE_KEY = 'mgba-splitscreen_uihide_v1';
+let uiHidden = false;
+let browserFullscreen = false;
+
+function loadUiHide() {
+  try {
+    const raw = localStorage.getItem(UI_HIDE_KEY);
+    // Sessions restore the full-screen look (the PWA case); plain tabs start
+    // with the menu shown so the app is discoverable.
+    uiHidden = raw === '1';
+  } catch (e) {}
+  applyUiHidden();
+}
+
+function saveUiHide() {
+  try { localStorage.setItem(UI_HIDE_KEY, uiHidden ? '1' : '0'); } catch (e) {}
+}
+
+function fullscreenAvailable() {
+  return !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+}
+
+let uiHideHintTimer = 0;
+
+function applyUiHidden() {
+  document.body.classList.toggle('ui-hidden', uiHidden);
+  closeMenus();
+  const btn = document.getElementById('toggle-ui-hide');
+  if (btn) {
+    btn.textContent = uiHidden ? 'Hide Menu / Full Screen: On (F11)' : 'Hide Menu / Full Screen: Off';
+    btn.classList.toggle('active', uiHidden);
+  }
+  // Fade in a "how to get back" hint for a few seconds when hiding; never
+  // shown while the menu is visible (the button label already says it).
+  const hint = document.getElementById('ui-hidden-hint');
+  if (hint) {
+    if (uiHidden) {
+      hint.textContent = `Press ${hotkeyLabel('ui_hide')} or Esc for the menu`;
+      hint.hidden = false;
+      hint.classList.remove('fade');
+      void hint.offsetWidth; // restart the CSS transition
+      hint.classList.add('fade');
+      clearTimeout(uiHideHintTimer);
+      uiHideHintTimer = setTimeout(() => { hint.hidden = true; }, 4000);
+    } else {
+      clearTimeout(uiHideHintTimer);
+      hint.hidden = true;
+    }
+  }
+  saveUiHide();
+  if (uiHidden) {
+    setStatus(`Full screen — press ${hotkeyLabel('ui_hide')} to bring the menu back`);
+  }
+}
+
+function toggleUiHide() {
+  uiHidden = !uiHidden;
+  if (uiHidden && fullscreenAvailable() && !browserFullscreen) {
+    try {
+      const el = document.documentElement;
+      const p = el.requestFullscreen
+        ? el.requestFullscreen()
+        : el.webkitRequestFullscreen && el.webkitRequestFullscreen();
+      // Some embedders (Tauri webview, kiosk shells) hand back a promise that
+      // never settles — the chrome-hide must not depend on it. Race a short
+      // timeout and swallow both outcomes; fullscreenchange keeps the flag in
+      // step if the request does land later.
+      if (p && typeof p.then === 'function') {
+        Promise.race([p, new Promise((r) => setTimeout(r, 500))]).catch(() => {});
+      }
+    } catch (e) {
+      // Denied (e.g. no user gesture): chrome-hide still works, just windowed.
+    }
+  } else if (!uiHidden && browserFullscreen) {
+    try { document.exitFullscreen(); } catch (e) {}
+  }
+  applyUiHidden();
+}
+
+// Browser-initiated fullscreen changes (Esc exits fullscreen natively) keep the
+// flag in step; leaving fullscreen while hidden stays hidden — F11 still
+// restores the menu.
+function refreshFullscreenFlag() {
+  browserFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
 }
 
 // ---- Audio routing ----
@@ -1421,6 +1517,19 @@ async function handleKey(e, isDown) {
   if (menuOpen()) {
     if (e.code === 'Escape') closeMenus();
     return;
+  }
+
+  // Full screen (menu hidden): the ONLY keys that bring the chrome back are
+  // the hide hotkey itself and Escape (a second Esc also exits the browser's
+  // fullscreen natively — the keydown order below tolerates that). Everything
+  // else keeps flowing to the game.
+  if (uiHidden) {
+    const hideCode = hotkeys.ui_hide && hotkeys.ui_hide.keyboard;
+    if ((hideCode && e.code === hideCode) || e.code === 'Escape') {
+      e.preventDefault();
+      if (isDown) toggleUiHide();
+      return;
+    }
   }
 
   // Global hotkeys (turbo / quick save / quick load / pause) — remappable, and
@@ -3182,6 +3291,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   loadControls();
   loadHotkeys();
   refreshHotkeyLabels();
+  loadUiHide();
   loadDebugToggle();
   loadViewPrefs();
   loadOutlinesPref();
@@ -3268,6 +3378,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('toggle-touch').addEventListener('click', () => {
     closeMenus();
     if (window.mgbaTouch) window.mgbaTouch.cycleMode();
+  });
+  document.getElementById('toggle-ui-hide').addEventListener('click', () => {
+    closeMenus();
+    toggleUiHide();
   });
   document.querySelectorAll('#audio-menu button').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -3369,6 +3483,14 @@ window.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('keydown', (e) => handleKey(e, true));
   window.addEventListener('keyup', (e) => handleKey(e, false));
   window.addEventListener('resize', () => layout());
+  document.addEventListener('fullscreenchange', () => {
+    refreshFullscreenFlag();
+    applyUiHidden();
+  });
+  document.addEventListener('webkitfullscreenchange', () => {
+    refreshFullscreenFlag();
+    applyUiHidden();
+  });
 
   // Browsers require a user gesture before audio may start; unlock on any
   // click or keypress so game sound starts the moment the user interacts.

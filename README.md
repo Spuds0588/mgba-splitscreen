@@ -38,6 +38,48 @@ It is built on top of the excellent [mGBA](https://mgba.io/) core and is a fork 
 the emulation engine, accuracy, and the lockstep link-cable synchronization used to keep
 the instances in perfect sync.
 
+## Screenshots
+
+Real 4-player sessions captured from the app — four linked instances, one keyboard.
+
+**Mario Kart: Super Circuit — a live 4-player VS race** over the virtual link cable
+(single-card Multi-Pak play: three of the screens booted from the host's transfer):
+
+| | |
+|---|---|
+| ![Mario Kart Super Circuit 4-player race, grid view](docs/screens/mario-kart-race-grid.png) | ![Mario Kart Super Circuit, a moment later in the same race](docs/screens/mario-kart-race-grid2.png) |
+
+The same live race in the **Speaker** and **Overlay (PiP)** view modes — every player
+keeps playing no matter how the screens are arranged:
+
+| | |
+|---|---|
+| ![Mario Kart race in Speaker view](docs/screens/mario-kart-race-speaker.png) | ![Mario Kart race in Overlay/PiP view](docs/screens/mario-kart-race-overlay.png) |
+
+**Kirby & The Amazing Mirror — 4-Kirby co-op** (single-card GBA multiplayer): the game
+boots its "ADVENTURE WITH 4 KIRBYS!" banner on the linked session and each player gets
+their own screen into the shared hub world:
+
+| | |
+|---|---|
+| ![Kirby and the Amazing Mirror, four Kirbys in the hub](docs/screens/kirby-4p-hub.png) | ![Kirby: the group splits up and explores](docs/screens/kirby-4p-split.png) |
+
+A mid-air group jump — each screen shows the same moment from that player's camera:
+
+![Kirby: a mid-air group jump](docs/screens/kirby-4p-jump.png)
+
+View modes work during play — here the same co-op session in **Speaker**, **Focus**
+(one screen full-size) and **Overlay/PiP**:
+
+| | | |
+|---|---|---|
+| ![Kirby in Speaker view](docs/screens/kirby-speaker-view.png) | ![Kirby in Focus view](docs/screens/kirby-focus-view.png) | ![Kirby in Overlay view](docs/screens/kirby-overlay-view.png) |
+
+**Hide Menu / Full Screen (F11)** drops the menu bar so the game fills the window
+(the same session, mid-play):
+
+![Kirby co-op in full screen / hidden-menu mode](docs/screens/kirby-fullscreen-mode.png)
+
 ## Architecture
 
 - **`libmgba` (C)** — the mGBA core, compiled as a static library. Does all emulation,
@@ -71,6 +113,9 @@ both inside the Tauri desktop app and in a plain web browser.
 - **Video-call-style view modes** (**View** menu): Grid, Speaker (1 big + smalls),
   Focus (single screen), and Overlay/PiP, cycled with F8/F9 (remappable). Background
   image, per-player outline toggles, and a toggleable debug log are all in the View menu.
+- **Hide menu / full screen** (`F11`, remappable): drops the menu bar (and requests
+  real fullscreen where the platform allows) so the game fills the window — the mode
+  shown in some screenshots above. `F11` or `Escape` brings the menu back.
 - **Turbo mode** (Q): fast-forward past 60 fps for grinding through menus/animations.
 - **Save import/export** per instance or as a set across all running instances.
 - **Web version**: play fully in the browser with no install. The mGBA core is compiled
@@ -122,6 +167,7 @@ Defaults are listed in **Help** in the app; every key for every player can be re
 | Pause / resume (all players) | `Escape` |
 | Cycle view mode | `F8` |
 | Cycle focus player | `F9` |
+| Hide menu / full screen | `F11` |
 
 ## Building
 

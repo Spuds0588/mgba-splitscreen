@@ -1,5 +1,19 @@
 # Test drivers
 
+## shot_server.py — screenshot receiver for browser-driven sessions
+
+Tiny CORS-enabled HTTP server (port 8091) that writes any POSTed body to
+`docs/screens/<name>.png`. Pair it with a static host that serves `mgba-splitscreen/src`
+plus the ROM directory (e.g. a `/tmp` dir with `src` and `roms` symlinks), drive the
+page in a browser over its `?players=N&rom=/roms/<name>` deep links, and compose
+screenshots from the live canvases. The 2026-09-29 README screenshots were made
+this way — see history.md for the exact page-side helper code.
+
+```bash
+python3 mgba-splitscreen/scripts/shot_server.py &
+# then POST http://127.0.0.1:8091/<name>.png with PNG bytes
+```
+
 ## ws_play.py — deterministic gameplay driver (preferred)
 
 Drives the desktop app over its WebSocket (`ws://127.0.0.1:8088`): loads a ROM, injects
