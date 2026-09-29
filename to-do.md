@@ -25,6 +25,80 @@
 - [ ] Clean up the debug/mks* captures in /tmp (they're outside the repo, fine
       to leave) and consider a scripts/README note for shot_server.py.
 
+## 🟢 2026-09-29 — Future feature: single-card (Multi-Pak) sessions — committed, not yet built
+
+The README said "single-card Multi-Pak play" in the Mario Kart caption; an audit
+found that's **not what the app does** — every unit runs its own copy of the ROM
+and multiplayer goes through each game's link-menu mode (verified live in the
+captioned sessions). Corrected the README captions and added a Features note
+pointing here. What real single-card would add: the host transmits a multiboot
+image (~EWRAM-sized) to P2–P4 over the cable and boots them as guests, so games
+whose multiplayer is *only* Multi-Pak (or guests with no copy) work.
+
+**Committed roadmap feature** (owner, 2026-09-29). The project's north star —
+compatibility, playability, and stability at the lowest minimum hardware
+requirements; accuracy is not the goal (see agents.md) — shapes this design
+on purpose:
+
+- **Compatibility:** some games are single-card-only (WarioWare's host-gadget
+  multiplayer, per history.md) and are simply unplayable today; guests also
+  shouldn't need to own the cart.
+- **Playability:** the flow should feel like the real thing — the host starts
+  a single-card session, P2–P4 power on with no cart and land in the game via
+  the host's TRANSFER.
+- **Low hardware floor:** the guest receiver is in-process HLE, so no real
+  16 KiB BIOS is required (a BIOS file would raise the floor for users who
+  don't have one), and a guest booting nothing holds no ROM copy — per-guest
+  memory drops by the full ROM size, which matters on 1–2 GB Android TV
+  devices.
+
+Why it doesn't work today:
+
+- **Userspace multiboot exists, our virtual cable doesn't.** The boot ROM's
+  `MultiBoot` protocol (entry `0x002C` in `src/gba/hle-bios.s`) runs over SIO
+  Normal 8/32-bit mode, and mGBA's core does implement userspace multiboot
+  receiving (`GBASIONormalInit` → header handshake → `EWRAM 0x0203FFF0` vector
+  → `gba->memory.io[REG_KEYCNT >> 1] |= 0x8000` in `src/gba/sio/normal.c`).
+  But the lockstep coordinator only carries **Multi**-mode transfers
+  (`GBASIOLockstepCoordinatorUpdateMulti` is the only wire path); a guest's
+  `MultiBoot` probe switches its SIO to Normal mode and the lockstep driver
+  never forwards those bits, so the handshake never starts.
+- **Even the userspace path is only half the story.** The majority of real
+  games boot guests through the **BIOS multiboot protocol** (SWI `0x25`
+  `MultiBoot` with the ROM header's `0x9C` `0x62 0x02 0x03 0x01 0x9A` — "Multi-Pak
+  signature") — e.g. Mario Kart: Super Circuit transfers its link program when
+  the host picks TRANSFER. mGBA's `mCoreLoadBIOS` **rejects the real 16 KiB GBA
+  BIOS multiboot data** (it requires the `GBA_BIOS_CHECK` checksum over the full
+  image, and a complete BIOS is required for multiboot), so an HLE/host path is
+  needed.
+- **No hook exists in the wrapper.** `GbaInstance::load_rom`
+  (mgba-splitscreen/src-tauri/src/emulation.rs) and the libretro splitscreen
+  core's `sp_load` (src/platform/libretro-splitscreen/instances.c) both load the
+  same ROM into every instance; there is no "guest boots nothing" mode at all.
+
+### Design sketch (for the session that picks this up)
+
+1. **Wire Normal mode through the coordinator** (the prerequisite, also the
+   hardest part): extend `GBASIOLockstepCoordinator` (src/gba/sio/lockstep.c)
+   with a Normal 8/32-bit transfer path alongside `UpdateMulti`, so bit-exact
+   Normal-mode traffic can flow between N instances. The GB/GBC v0.4 link work
+   needs the same plumbing.
+2. **Host side**: nothing changes — the host boots its full ROM and its game
+   drives the transfer (SWI 0x25 on real hardware).
+3. **Guest side**: a new load mode where P2–P4 boot with an empty cartridge
+   slot and HLE the *receiving* half of the protocol: header/Multi-Pak
+   signature handshake over Normal mode, payload streamed into EWRAM, boot at
+   the `0x0203FFF0` entrypoint with handoff bits matching `GBASIONormalInit`.
+4. **Completion handshake**: the host's game expects the MASTER/SLAVE id
+   exchange before showing guest menus; replicate what `src/gba/sio/normal.c`
+   does for a single receiver, fanned out to N guests.
+5. **Serialization**: the guests' EWRAM image + reception state must join the
+   DUALSTATE set (libretro: `sp_serialize`'s blob), or a state saved
+   mid-transfer desyncs the games on reload.
+6. **Verification**: grow the `linktest` ROM with a MULTIBOOT host/guest pair
+   (it already reports link state on screen), then Mario Kart Super Circuit 4P
+   via host TRANSFER with guests booting from the cable, then Kirby co-op.
+
 ## 🔴 Top priority: Four Swords multiplayer link fix
 
 ### 2026-09-11 (final) — FIX CONFIRMED, and it is not FS-specific
@@ -445,7 +519,7 @@ The next versions are intentionally staged: stabilize local multi-system support
   / streamer layouts). The threaded harness infrastructure (`threaded_link.c`)
   is a stepping stone here.
 
-## 🟦 RetroArch (libretro) core — FEASIBLE, spec'd 2026-09-28
+## 🟩 RetroArch (libretro) core — DONE (local), verified in RetroArch 2026-09-29
 
 Full research + implementation-ready spec in `mgba-splitscreen/RETROARCH_CORE.md`:
 libretro is single-instance, but the TGB Dual core proves the model (N emulators
@@ -453,21 +527,26 @@ inside one core + `retro_load_game_special` subsystem for multi-ROM + layout/aud
 core options), and our sequential frame loop in `emulation.rs` ports to C directly.
 The fork's `lockstep.c` (FS assist + gated kick) ships to RetroArch users for free.
 
-- [ ] Phase 1: skeleton core (`src/platform/libretro-splitscreen/`, copy of upstream
+- [x] Phase 1: skeleton core (`src/platform/libretro-splitscreen/`, copy of upstream
       `src/platform/libretro/libretro.c` renamed) loading one ROM in RetroArch.
-- [ ] Phase 2: N instances + per-player RetroPad input + composite video + audio
+- [x] Phase 2: N instances + per-player RetroPad input + composite video + audio
       options, link compiled out.
-- [ ] Phase 3: wire `GBASIOLockstepCoordinator` + sleep-flag frame loop; linktest
-      ROM must pass 4P; Mario Kart 2P race check.
-- [ ] Phase 4: subsystem manifest (2/3/4-player), core options (layout, audio,
+- [x] Phase 3: wire `GBASIOLockstepCoordinator` + sleep-flag frame loop; linktest
+      ROM passes 4P (`LINK ACTIVE - 4 PS` in the master quadrant, verified via
+      UDP screenshot inside RetroArch; docs/screens/retroarch-4p-linktest.png).
+- [x] Phase 4: subsystem manifest (2/3/4-player), core options (layout, audio,
       FS assist), save-state size discipline, SRAM per player, `.info` file.
-- [ ] Phase 5: official distribution — `.gitlab-ci.yml` (copy `libretro/mgba`'s),
-      libretro-super `dist/info` PR, libretro-docs PR, GitLab mirror request
-      (Discord #programming — the buildbot only builds mirrored repos), nightly
-      verification in the Core Downloader. Optional: hook the core into
-      `release.yml` first so testers get .so/.dll artifacts early.
+- [x] Phase 5 (local): `.gitlab-ci.yml` written (copy of libretro/mgba's, adapted:
+      CORENAME mgba_splitscreen, -DBUILD_LIBRETRO_SPLITSCREEN=ON) — only builds
+      once the repo is mirrored on libretro's GitLab.
+- [ ] Phase 5 (out-of-band): libretro-super `dist/info` PR, libretro-docs PR,
+      GitLab mirror request (Discord #programming — the buildbot only builds
+      mirrored repos), nightly verification in the Core Downloader. Optional:
+      hook the core into `release.yml` so testers get .so/.dll artifacts early.
 - [ ] Later: GB/GBC 2P subsystem, determinism testing for the
-      `savestate_features = "deterministic"` claim, run-ahead/netplay caveats doc.
+      `savestate_features = "deterministic"` claim, run-ahead/netplay caveats doc,
+      Mario Kart 2P + Four Swords 4P end-to-end in RetroArch (expected to work;
+      the core inherits the app-proven lockstep.c).
 
 ### 2026-09-10 (round 6) — the link-screen assist was never armed; state import is a dead end
 - **Fixed:** `GBASIOLockstepCoordinatorSetFSArmed()` had exactly one caller in

@@ -8,6 +8,100 @@
 
 ---
 
+## 2026-09-29 (latest) — RetroArch core: 2 bugs found & fixed; 4P linktest VERIFIED inside RetroArch
+
+**Verdict: the libretro core works.** `mgba_splitscreen_libretro.so` (Release,
+`build-libretro-sp/`) loads and runs in RetroArch 1.20: 1P renders, and the 4P
+subsystem (`--subsystem gba_link_4p`, 4× linktest) attaches the link (wire ids
+0-3), composites 480x320, and reaches the green link-active status line in all
+four quadrants — master shows `LINK ACTIVE - 4 PS` (448 green px in the status
+band vs 911-922 for the slaves' longer TRANSFERS FLOWING line; PNG parsed with
+PIL). Evidence: `docs/screens/retroarch-4p-linktest.png`. Standalone harness
+(`/tmp/sp_test.c`): 2P/3P/4P × 600 frames + serialize roundtrip OK + clean exit.
+
+**Bug 1 — container-of cast (the segfault that started this session):** the four
+`mLockstepUser` callbacks received `&p->lockstepUser` and cast it straight back
+to `struct sp_player*` — only valid if `lockstepUser` is the FIRST member, which
+it wasn't (driver/audio fields preceded it). Every `p->asleep`/`p->playerId`
+write landed ~232 bytes past the intended player, into the next player's driver
+struct — GDB watchpoints showed `_lockstepPlayerIdChanged`/`_lockstepWake`
+scrambling `driver.event.callback` during reset. Fix: `lockstepUser` first in
+`struct sp_player` (same base-first pattern as the Rust `LockstepUserCtx`) +
+`_Static_assert(offsetof(...) == 0)`. Lesson: whenever a callback receives an
+embedded-struct pointer, assert the offset or use container_of — never assume.
+
+**Bug 2 — serialize layout (2 layers):** (a) `mCoreSaveStateNamed` seeks its
+target VFile to 0, so player 0's state silently overwrote the SPST header —
+serialize each core to a scratch VFile, concatenate slices manually. (b) mGBA
+GBA core states are raw fixed structs with NO in-band length, so slice bounds
+must live in the header: `magic | version | nPlayers | sliceLen[n] | slices`.
+Load with `SAVESTATE_SAVEDATA | SAVESTATE_RTC` (flags only gate restored
+extdata) and clamp each slice against the buffer.
+
+**Bug 3 — the coordinator reset on unserialize was exactly backwards** (4P-only
+SIGSEGV in `_lockstepEvent` after restore): the lockstep driver serializes its
+FULL state through each core's savestate (per-player queues, cycleOffset,
+asleep flags; coordinator bookkeeping rides player 0's slice), so the link
+resumes as saved. My Deinit/Init/Attach recreated the coordinator —
+`TableDeinit` freed every `GBASIOLockstepPlayer` while the drivers kept stale
+`lockstepId`s → `TableLookup` NULL → crash. Fix: don't touch the coordinator
+on load. Lesson: read the driver's Save/LoadState BEFORE designing the wrapper's
+state container.
+
+**Local verification recipe (repeatable):** build `build-libretro-sp/` Release
+with `-DBUILD_LIBRETRO_SPLITSCREEN=ON -DLIBMGBA_ONLY=ON`, install `.so` to
+`~/.config/retroarch/cores/` + `.info` to `~/.config/retroarch/`, then
+`retroarch -L ~/.config/retroarch/cores/mgba_splitscreen_libretro.so --subsystem
+gba_link_4p linktest.gba ×4 --verbose` with `network_cmd_enable=true`;
+`printf SCREENSHOT | nc -u -w1 127.0.0.1 55355` grabs proof mid-run.
+`.gitlab-ci.yml` written at repo root (copy of libretro/mgba's with
+CORENAME=mgba_splitscreen, `-DBUILD_LIBRETRO_SPLITSCREEN=ON`); it is inert off
+libretro's GitLab until the mirror request lands.
+
+---
+
+## 2026-09-29 — Audit: single-card (Multi-Pak) play is NOT supported; README corrected
+
+**Verdict:** the README's Mario Kart caption claimed "single-card Multi-Pak
+play: three of the screens booted from the host's transfer" — that is **not
+what the app does and never was**. Every unit runs its own copy of the ROM;
+multiplayer goes through each game's own link-menu mode. The captioned sessions
+were real (the screenshots are genuine 4P linked play), but the "single-card"
+framing was wrong: the Multi-Pak TRANSFER step simply wasn't exercised because
+guests already had the cart. Kirby's "(single-card GBA multiplayer)" parenthetical
+was likewise just describing how the real cart works, not how the app links the
+four screens. **Corrected both README captions + added a "Not yet: single-card"
+Features bullet; filed the feature with a design sketch in to-do.md (2026-09-29
+section).** No code claims single-card anywhere; it has never been tested because
+it does not exist.
+
+**Code evidence:** both wrappers load the *same* ROM into all N instances
+(`GbaInstance::load_rom` → `EmulationManager::load_rom`
+[mgba-splitscreen/src-tauri/src/emulation.rs]; `sp_load` in
+src/platform/libretro-splitscreen/instances.c — "Per-player ROM copy: save data
+must not alias between players"), and no multiboot path exists in the wrapper.
+The closest upstream machinery is userspace multiboot **receiving** in
+src/gba/sio/normal.c (`GBASIONormalInit` → EWRAM `0x0203FFF0` entrypoint →
+KEYCNT `|=` 0x8000 handoff) and the boot ROM's `MultiBoot` entry at `0x002C`
+(src/gba/hle-bios.s) — both run over SIO **Normal** mode, which the lockstep
+coordinator does not carry (its only wire path is `UpdateMulti`), so even that
+half is inert in a linked session. Real-game transfers (Mario Kart TRANSFER)
+use the BIOS multiboot protocol (SWI 0x25, header `0x9C` signature
+`0x62 0x02 0x03 0x01 0x9A`), which additionally needs a real 16 KiB BIOS —
+mGBA's `mCoreLoadBIOS` rejects multiboot BIOS data — so the plan is host-full-
+ROM/guests-HLE-receiver, with Normal-mode bridging as the prerequisite (shared
+plumbing with the GB/GBC v0.4 link work). Full sketch + acceptance bar in
+to-do.md; this entry is the verdict trail.
+
+**Follow-up (same day):** the owner confirmed single-card sessions are a
+committed future feature and set the project's north star for all engineering
+decisions: **compatibility, playability, and stability at the lowest minimum
+hardware requirements — accuracy is explicitly not the goal.** Now recorded
+in agents.md (new "North star for engineering decisions" section); the
+to-do.md single-card section is reframed as committed, with the goals mapped
+to the design (HLE guest receiver, no BIOS requirement, guests hold no ROM
+copy).
+
 ## 2026-09-29 (later) — Four Swords 4P co-op screenshots for the README
 
 **Third game in the README gallery, and the flagship one**: The Legend of Zelda:
