@@ -8,6 +8,41 @@
 
 ---
 
+## 2026-09-29 (later) — Four Swords 4P co-op screenshots for the README
+
+**Third game in the README gallery, and the flagship one**: The Legend of Zelda:
+Four Swords, captured live in real 4-player linked co-op in the browser build
+(`docs/screens/four-swords-4p-room.png`, `four-swords-4p-swords.png`,
+`four-swords-speaker-view.png`; README Screenshots section updated).
+
+- **Setup shortcut that made this cheap: `mgba-splitscreen/src/fs_state.dualbystate`
+  (untracked local file, 1.59 MB, 4×397 KB blobs) is a DUALSTATE set with all four
+  games sitting at the FS title screen.** Reload the page at
+  `?players=4&rom=/roms/<FS rom>`, then restore it directly through the engine
+  (bypasses the file picker): `fetch('/src/fs_state.dualbystate')` →
+  `deserializeStateSet` shape (magic+ver+count, per-state u32 len) →
+  `wasmModuleRef._mgs_load_state_bytes(i, ptr, len)` per player (all rc=0) →
+  `_mgs_reset_sio()`. All four booted straight to the title, perfectly in sync.
+- **The linking dance on this build** (matches the to-do.md "known wart"): title
+  needs START (A does nothing there — P2/P4 sat on PRESS START twice before I
+  switched); all four then show "Linking with other systems…"; P1/P3 progressed,
+  P2/P4 needed one more START; the handshake then stalled per the documented
+  first-START wart — **host P1: B (abort) then START again** cleared it, and this
+  time all four reached the slot-badge screen together (P2 needed one final START
+  after dropping to title). From there the games walked into the starting room on
+  their own: four Links (blue/green/red/pink), four HUD colors, one shared room.
+- **Capture notes:** the `shot()` composer must mirror the DOM or view modes lie —
+  the fixed-2×2 version kept drawing a grid while the app showed Speaker/Focus.
+  `shot2()` uses `getBoundingClientRect()` per `.screen-cell` (plus badge pills),
+  so whatever arrangement the app displays is what lands in the PNG. Evade the
+  double-buffer blank frame the same way as before: drawImage into a scratch
+  canvas first. Spin attacks read great on camera (hold A ~500 ms: charge spark →
+  release for the glowing arc); the room's beam pad freezes Links mid-swing so
+  action shots are easy to time.
+- Leftovers: `dbg-*` scratch shots deleted; the two `Test Roms/*.dualbystate`
+  sets are gitignored as always; `fs_state.dualbystate` stays untracked (it sits
+  in `mgba-splitscreen/src/` purely so the static host can serve it).
+
 ## 2026-09-29 — README screenshots from real 4P sessions + Hide Menu/Full Screen (F11)
 
 **Hide Menu / Full Screen shipped.** `F11` (remappable, id `ui_hide` in the hotkeys

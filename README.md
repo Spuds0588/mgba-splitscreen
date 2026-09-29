@@ -42,6 +42,18 @@ the instances in perfect sync.
 
 Real 4-player sessions captured from the app — four linked instances, one keyboard.
 
+**The Legend of Zelda: Four Swords — 4-Link co-op**, the game that drove this fork's
+link-cable work: the four games find each other over the virtual cable, link up, and
+every screen follows its own player's Link in the shared rooms:
+
+| | |
+|---|---|
+| ![Four Swords, four Links in the starting room](docs/screens/four-swords-4p-room.png) | ![Four Swords, the Links roam and pair off](docs/screens/four-swords-4p-swords.png) |
+
+The same session in **Speaker** view — one screen big, the other three still live:
+
+![Four Swords in Speaker view](docs/screens/four-swords-speaker-view.png)
+
 **Mario Kart: Super Circuit — a live 4-player VS race** over the virtual link cable
 (single-card Multi-Pak play: three of the screens booted from the host's transfer):
 

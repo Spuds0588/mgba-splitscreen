@@ -9,15 +9,19 @@
       browser (toggle, Esc-restore, hint pill, persistence, sw v7). Desktop Tauri
       build compiles the same frontend — worth one manual smoke in the app.
 - [x] **docs/screens/ + README screenshots section** — real 4P gameplay from
-      Mario Kart: Super Circuit (VS race, 4 views) and Kirby & The Amazing Mirror
-      (co-op hub, group jump, 3 views + fullscreen). Screenshot pipeline:
+      Mario Kart: Super Circuit (VS race, 4 views), Kirby & The Amazing Mirror
+      (co-op hub, group jump, 3 views + fullscreen), and **Four Swords (4-Link
+      co-op, room + sword action + Speaker view)**. Screenshot pipeline:
       scripts/shot_server.py + local static host with `?rom=/roms/<name>` symlinks
-      (recipe in history.md 2026-09-29).
+      (recipe in history.md 2026-09-29; FS session recipe in the (later) entry —
+      the `fs_state.dualbystate` title-screen state set skips all menu nav).
 - [ ] Kirby: capture the level-interior transition (hub star door → level). The
       door needs the whole group at it + UP while overlapping; P2's cursor ends
       on the pink Kirby that stands closest.
 - [ ] Optional: a third game with real linked play for the README (Shining Soul
       II 2P co-op is the best candidate — needs its save-file flow driven).
+      **Done for Four Swords 2026-09-29** (see history.md); Shining Soul II still
+      open if a fourth game is ever wanted.
 - [ ] Clean up the debug/mks* captures in /tmp (they're outside the repo, fine
       to leave) and consider a scripts/README note for shot_server.py.
 
