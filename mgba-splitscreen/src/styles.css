@@ -188,20 +188,6 @@ body {
   background: #000;
 }
 
-.screen-label {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  padding: 2px 8px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.55);
-  border-radius: 4px;
-  letter-spacing: 0.04em;
-  pointer-events: none;
-}
-
 /* ---- Player color coding (like name borders on a video call) ---- */
 .screen-cell.player-1 { outline: 3px solid #ff4444; outline-offset: -3px; }
 .screen-cell.player-2 { outline: 3px solid #4488ff; outline-offset: -3px; }

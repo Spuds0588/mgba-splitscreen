@@ -1291,10 +1291,6 @@ function initScreens(count) {
     const cell = document.createElement('div');
     cell.className = 'screen-cell ' + (PLAYER_TAGS[i] || '');
 
-    const label = document.createElement('div');
-    label.className = 'screen-label';
-    label.textContent = `P${i + 1}`;
-
     // Bottom-right tag, colored to match the tile border.
     const tag = document.createElement('div');
     tag.className = 'screen-tag ' + (PLAYER_TAGS[i] || '');
@@ -1305,7 +1301,6 @@ function initScreens(count) {
     canvas.height = GBA_HEIGHT;
 
     cell.appendChild(canvas);
-    cell.appendChild(label);
     cell.appendChild(tag);
     container.appendChild(cell);
 
@@ -1355,13 +1350,11 @@ function applyGuestSeatView() {
   const cell = document.querySelector('#screens .screen-cell');
   if (cell) {
     cell.classList.add('guest-seat-tile', PLAYER_TAGS[seat] || '');
-    // initScreens(1) defaults every label to P1; the guest drives seat N, so
-    // relabel all three texts to their real seat (border color is already
-    // right via the PLAYER_TAGS class).
+    // initScreens(1) defaults the tag to P1; the guest drives seat N, so
+    // relabel it to the real seat (border color is already right via the
+    // PLAYER_TAGS class).
     cell.classList.remove('focused-tile');
-    const label = cell.querySelector('.screen-label');
     const tag = cell.querySelector('.screen-tag');
-    if (label) label.textContent = `P${seat + 1}`;
     if (tag) tag.textContent = `P${seat + 1}`;
   }
   applyViewMode();
