@@ -1633,7 +1633,35 @@ void _enqueueEvent(struct GBASIOLockstepCoordinator* coordinator, const struct G
 			continue;
 		}
 		struct GBASIOLockstepPlayer* player = TableLookup(&coordinator->players, coordinator->attachedPlayers[i]);
-		mASSERT_LOG(GBA_SIO, player->freeList, "No free events");
+		if (!player->freeList) {
+			/* Event-queue overflow (mgba-splitscreen 2026-09-30): the target
+			 * player has fallen too far behind for its 8 slots (observed when
+			 * one game spins link-discovery rounds while the peer sits in a
+			 * menu that never services SIO). mASSERT_LOG only logs, so the
+			 * old code fell through and memcpy'd into NULL, killing the whole
+			 * embedded process. Recycle the player's OLDEST queued event
+			 * instead -- it is by definition beyond late -- and, when that
+			 * event carried flow control (HARD_SYNC/TRANSFER_START acks),
+			 * ack on the player's behalf so the round still completes instead
+			 * of wedging `waiting` with everyone asleep. */
+			struct GBASIOLockstepEvent* oldest = player->queue;
+			if (oldest) {
+				player->queue = oldest->next;
+				mLOG(GBA_SIO, GAME_ERROR, "Lockstep event overflow for player %i: recycling type %X (timestamp %X)",
+				                     player->playerId, oldest->type, oldest->timestamp);
+				if (oldest->type == SIO_EV_HARD_SYNC || oldest->type == SIO_EV_TRANSFER_START) {
+					GBASIOLockstepCoordinatorAckPlayer(coordinator, player);
+				}
+				oldest->next = NULL;
+				player->freeList = oldest;
+			} else {
+				/* Free list empty with an empty queue would mean leaked slots
+				 * (memory corruption); drop the new event rather than crash. */
+				mLOG(GBA_SIO, FATAL, "Lockstep event slots leaked for player %i; dropping type %X",
+				                     player->playerId, event->type);
+				continue;
+			}
+		}
 		struct GBASIOLockstepEvent* newEvent = player->freeList;
 		player->freeList = newEvent->next;
 
@@ -1920,6 +1948,47 @@ void GBASIOLockstepCoordinatorAckPlayer(struct GBASIOLockstepCoordinator* coordi
 	// on to finishCycle so both sides complete the transfer at the SAME cycle.
 	// Callers that DO need the sleep (hard sync, mode set) call
 	// GBASIOLockstepPlayerSleep themselves. Matches the rendezvous driver.
+}
+
+void GBASIOLockstepCoordinatorRecover(struct GBASIOLockstepCoordinator* coordinator) {
+	/* mgba-splitscreen stall watchdog (2026-09-30): last-ditch recovery when
+	 * the frame loop has made zero progress for a while. The caller has
+	 * already established that no player stepped; here the wedge signature
+	 * is EVERY attached player asleep (with or without a barrier):
+	 * a sleeping core cannot service its event queue, so only an outside
+	 * wake can make progress again. Clear any barrier/transfer latch and
+	 * wake everyone so the games re-handshake from a clean, consistent
+	 * state instead of staying frozen forever. */
+	MutexLock(&coordinator->mutex);
+	int asleep = 0;
+	int i;
+	for (i = 0; i < (int) coordinator->nAttached; ++i) {
+		struct GBASIOLockstepPlayer* player = TableLookup(&coordinator->players, coordinator->attachedPlayers[i]);
+		if (player && player->asleep) {
+			++asleep;
+		}
+	}
+	if (!asleep || asleep < (int) coordinator->nAttached) {
+		/* Someone is awake and runnable; not our wedge. */
+		MutexUnlock(&coordinator->mutex);
+		return;
+	}
+	mLOG(GBA_SIO, WARN, "Lockstep recovery: all %d players asleep (waiting=0x%X transferActive=%d) -- waking all players",
+	     asleep, (unsigned) coordinator->waiting, coordinator->transferActive ? 1 : 0);
+	coordinator->waiting = 0;
+	coordinator->transferActive = false;
+	coordinator->nextHardSync = HARD_SYNC_INTERVAL;
+	/* Wake EVERY attached player. WakePlayers deliberately skips the
+	 * primary (the master wakes itself via its own event in normal
+	 * operation); in this wedge the master's event will not fire until
+	 * something steps it, so recovery must clear its flag directly. */
+	for (i = 0; i < (int) coordinator->nAttached; ++i) {
+		struct GBASIOLockstepPlayer* player = TableLookup(&coordinator->players, coordinator->attachedPlayers[i]);
+		if (player) {
+			GBASIOLockstepPlayerWake(player);
+		}
+	}
+	MutexUnlock(&coordinator->mutex);
 }
 
 void GBASIOLockstepPlayerSleep(struct GBASIOLockstepPlayer* player) {

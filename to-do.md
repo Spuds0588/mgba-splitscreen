@@ -24,11 +24,15 @@
       at 0cba705d8). GitLab mirror ask DRAFTED in RETROARCH_CORE.md — needs a
       human to post in libretro Discord #programming; PR merge + buildbot
       nightlies remain.
-- [ ] **Link-wedge fix (top remaining core defect)**: coordinator can deadlock
-      ("Primary waiting for players to ack", 0 steps/frame, frozen picture) when
-      one player idles minutes in a link-discovery screen while the other sits
-      in a non-link menu. Repro + state printed by the new watchdog. Needs a
-      re-arm/abort path (coordinator round timeout or sp-level desync→resync).
+- [x] **Link-wedge rescue (2026-09-30 pass 4)**: event-queue overflow now
+      recycles the oldest event (+ auto-acks flow-control events) instead of
+      NULL-memcpy SIGSEGV; GBASIOLockstepCoordinatorRecover clears the
+      all-asleep deadlock (wake EVERYONE incl. primary) from the sp stall
+      watchdog. Verified: forced-wedge self-heals at ~62 frames; 2P/3P/4P
+      linktest + savestate regressions green; all asymmetric MKSC scenarios
+      3.6-4k frames clean; RetroArch boot sanity green. Exact GUI trigger
+      repro remains open — future freezes now log "Lockstep event overflow"/
+      "Lockstep recovery" instead of dying silently.
 - [ ] Finish the MKSC 2P link flow to a race screenshot: drive both players
       through MULTI-PAK LINK → TRANSFER (OCR the menus — tesseract-ocr needs
       an elevation-approved apt install; blind pixel-reading hit its limit).

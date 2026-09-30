@@ -1,5 +1,19 @@
 # RETROARCH_CORE.md — shipping mgba-splitscreen as a RetroArch core
 
+> **STATUS 2026-09-30 (4): WEDGE-RESISTANT.** Two lockstep failure modes that
+> could freeze or kill a session are fixed (see history.md 2026-09-30 pass 4):
+> (1) `_enqueueEvent` overflow no longer NULL-memcpy's — it recycles the peer's
+> oldest queued event and auto-acks flow-control events so rounds complete;
+> (2) an all-asleep deadlock self-heals: sp_run_frame's stall watchdog calls
+> the new `GBASIOLockstepCoordinatorRecover()` after ~60 zero-step frames,
+> which clears `waiting`/`transferActive` and wakes every attached player
+> INCLUDING the primary (`CoordinatorWakePlayers` skips it by design in healthy
+> rounds). Verified: forced-wedge self-heals (~62 frames to resumed progress);
+> 2P/3P/4P linktest 600-frame + savestate roundtrip green; asymmetric MKSC
+> menu scenarios 3.6-4k frames clean; RetroArch MKSC 2P boot sanity green.
+> If a freeze is ever seen again, check the log for "Lockstep event overflow"
+> / "Lockstep recovery" lines — failure is now loud, not silent.
+
 > **STATUS 2026-09-30 (2): SUBMITTED UPSTREAM.** libretro-super recipe+info PR
 > **libretro/libretro-super#2127** (dist/info/mgba_splitscreen_libretro.info +
 > recipe lines in 15 files, CMAKE build against master with
@@ -12,7 +26,9 @@
 > the nightly buildbot verification. Console-recipe note: android/wii/wiiu/
 > gamecube/ps2 recipe files have no CMAKE-type precedent, so those lines were
 > left out of the super PR on purpose (the buildbot .gitlab-ci.yml still covers
-> them via the mirror path).
+> them via the mirror path). NOTE: pass 4's wedge fixes land AFTER this PR
+> snapshot; push them to master so the PR picks them up (the recipe builds
+> master).
 
 > **STATUS 2026-09-29: BUILT AND VERIFIED IN RETROARCH.** Phases 1–4 done plus
 > the local half of phase 5. `mgba_splitscreen_libretro.so` loads and runs in

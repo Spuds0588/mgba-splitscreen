@@ -345,17 +345,24 @@ bool sp_run_frame(struct sp_manager* sp, void (*poll)(void),
 	}
 	if (steps == 0) {
 		/* Every player slept without stepping: the link layer deadlocked
-		 * (e.g. all cores asleep waiting on an ack that never came). Report
-		 * it once per wedge so a frozen picture is diagnosable from the log. */
-		if (sp->stallRun < 30) {
+		 * (all cores asleep waiting on a barrier that nothing will clear --
+		 * a sleeping core cannot service its own event queue). Self-heal:
+		 * after ~60 frozen frames (~1 s) clear the coordinator barrier and
+		 * wake everyone so the games re-handshake; the games treat it like
+		 * link static (see GBASIOLockstepCoordinatorRecover). */
+		if (sp->stallRun < 90) {
 			++sp->stallRun;
-			if (sp->stallRun == 30) {
-				int asleep = 0;
-				for (int i = 0; i < n; ++i) {
-					asleep += sp->players[i].asleep;
-				}
-				_spLog("[splitscreen] STALL: 0 steps on all %d players for ~%d frames; asleep=%d, transferActive=%d, waiting=%u", n, sp->stallRun, asleep, sp->coordinator.transferActive, sp->coordinator.waiting);
+		}
+		if (sp->stallRun == 30 && sp->linkAttached) {
+			int asleep = 0;
+			for (int i = 0; i < n; ++i) {
+				asleep += sp->players[i].asleep;
 			}
+			_spLog("[splitscreen] STALL: 0 steps on all %d players for ~%d frames; asleep=%d, transferActive=%d, waiting=%u", n, sp->stallRun, asleep, sp->coordinator.transferActive, sp->coordinator.waiting);
+		}
+		if (sp->stallRun >= 60 && sp->linkAttached) {
+			GBASIOLockstepCoordinatorRecover(&sp->coordinator);
+			sp->stallRun = 0;
 		}
 	} else {
 		sp->stallRun = 0;

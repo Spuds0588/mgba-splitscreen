@@ -8,7 +8,57 @@
 
 ---
 
-## 2026-09-30 (3, latest) — SUBMITTED: libretro-super#2127 + libretro/docs#1214
+## 2026-09-30 (4, latest) — link-wedge rescue: overflow crash fixed + self-healing recovery
+
+**Verdict: the two concrete wedge mechanisms are fixed and verified; the exact
+GUI trigger reproduction remains open (every GUI-faithful asymmetric scenario
+now runs 3.6-4k frames clean, WITH the fixes in place).**
+
+**Mechanism 1 — event-queue overflow = silent SIGSEGV (real, fixed):**
+`mASSERT_LOG` ONLY LOGS (common.h L334), so `_enqueueEvent`'s "No free events"
+check fell through and `memcpy`'d into NULL — killing the process with zero
+shutdown noise, exactly the GUI wedge signature (log cut mid-line, SWI/DMA
+static, no STALL watchdog line because the process was already dead). Trigger:
+a peer's 8 event slots exhaust when its game stops servicing SIO while the
+master keeps enqueueing HARD_SYNC/MODE_SET/TRANSFER_START (the pre-freeze log
+showed back-to-back type-2 enqueues ~0x900 cycles apart). Fix: recycle the
+player's OLDEST queued event (it is beyond late by definition) and, when the
+recycled event was flow control (HARD_SYNC/TRANSFER_START), ack on the
+player's behalf so the round completes instead of wedging `waiting` with
+everyone asleep. Verified by hammering the ops entry points; queue stays
+bounded at 8 and emulation continues.
+
+**Mechanism 2 — all-asleep deadlock can never self-clear (real, fixed):**
+a sleeping core is never stepped by sp_run_frame and therefore cannot service
+its own event queue — so once every player is asleep with nobody left to wake
+them, progress is impossible without outside intervention. New
+`GBASIOLockstepCoordinatorRecover()`: when ALL attached players are asleep,
+clear `waiting`/`transferActive`, reset `nextHardSync`, and wake EVERY player
+— including the primary: `CoordinatorWakePlayers` deliberately starts at i=1
+(master self-wakes via its own event in healthy rounds, but in a wedge nothing
+steps the master to fire it — found by the harness probe mid-freeze). The sp
+stall watchdog now calls Recover after ~60 zero-step frames (~1 s), having
+logged the STALL state at 30.
+
+**Harness** (/tmp/sp_wedge.c, links the built .so; scenarios): 0/1 lopsided
+menu states, 3 both-at-menu + P1 deeper, 4 both-in-MULTI lopsided, 5 both-in-
+discovery then P1 exits, 8 forced all-asleep wedge (asserts STALL→Recover→
+progress), 9 ops-hammer overflow. Results post-fix: every scenario runs clean,
+scenario 8 recovers at ~62 frames and continues 600 more; sp_test 2P/3P/4P
+600-frame + savestate roundtrip + 60 post-restore frames all green (twice:
+before/after the Recover rework); RetroArch MKSC 2P boot sanity green (window,
+2× AV_INFO, SWI/DMA growing, animated titles both quadrants, RESET survives).
+
+**Cautions:** (1) `asleep` exists on BOTH structs (lockstep player AND
+sp_player) and must move together — the wake callback chain covers this in
+real flows, but any direct poking must set both. (2) The GUI's exact freeze
+trigger was never reproduced live; if a freeze is ever seen again, look for
+the new "Lockstep event overflow" / "Lockstep recovery" lines — the failure
+mode is now loud instead of silent.
+
+---
+
+## 2026-09-30 (3) — SUBMITTED: libretro-super#2127 + libretro/docs#1214
 
 **Submission shipped via gh.** Facts future sessions need:
 

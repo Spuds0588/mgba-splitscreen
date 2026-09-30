@@ -124,6 +124,7 @@ void GBASIOLockstepCoordinatorDeinit(struct GBASIOLockstepCoordinator*);
 void GBASIOLockstepCoordinatorAttach(struct GBASIOLockstepCoordinator*, struct GBASIOLockstepDriver*);
 void GBASIOLockstepCoordinatorDetach(struct GBASIOLockstepCoordinator*, struct GBASIOLockstepDriver*);
 size_t GBASIOLockstepCoordinatorAttached(struct GBASIOLockstepCoordinator*);
+void GBASIOLockstepCoordinatorRecover(struct GBASIOLockstepCoordinator*);
 
 void GBASIOLockstepDriverCreate(struct GBASIOLockstepDriver*, struct mLockstepUser*);
 
