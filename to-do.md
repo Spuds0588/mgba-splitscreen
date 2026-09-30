@@ -3,7 +3,33 @@
 > Ordered by priority within each section. **Aggressively append results to
 > `history.md` as you work** so the next session can pick up mid-thought.
 
-## 🔴 2026-09-30 — RetroArch core: MKSC 2P proof + reset-crash fix (this session)
+## 🔴 2026-09-30 — RetroArch core: view modes live + upstream path to production
+
+- [x] **All 4 app view modes in the core as live per-viewer options (pass 6,
+      commit 88831a7ef, pushed to fs-link-loosen-timing + master)**: grid/
+      speaker/focus/overlay via `splitscreen_layout` + `splitscreen_focus_player`,
+      session-size-restricted menus (v2 core options), stale-aspect fix,
+      speaker-strip fix, player outlines + P-badges (`splitscreen_overlays`).
+      Pixel-verified at 2P and 4P; link + savestate regressions green; live
+      RetroArch geometry/option plumbing proven (480x480 speaker screenshot).
+      Details in history.md 2026-09-30 (6).
+- [ ] **Human retest of live view switching** (the pass-6 session ended before
+      the human re-cycled views on the fixed build): MKSC 2P window, flip all
+      layouts + focused player + overlays toggle, confirm aspect holds and no
+      link stalls. Evidence shots to docs/screens/.
+- [ ] **HUMAN: post the GitLab mirror ask in libretro Discord #programming**
+      (draft in mgba-splitscreen/RETROARCH_CORE.md "GitLab mirror ask (draft)") —
+      hizzlekizzle confirmed the updater is fed by GitLab CI reading the core
+      repo's .gitlab-ci.yml (ours already adapted), so the crawl-list addition
+      IS the path to official nightlies.
+- [ ] **HUMAN: update libretro/docs#1214** Core options section before merge
+      (it predates live views; replacement text prepped in RETROARCH_CORE.md).
+- [ ] FS 4P in RetroArch (untested; the FS assist + kick path is 2P-verified
+      only). Use the same human-rig recipe from history.md pass 5.
+- [ ] After review feedback: adjust recipes/info per maintainer preference
+      (platforms, core name); watch libretro-super#2127 + libretro/docs#1214.
+
+## 🔴 2026-09-30 — RetroArch core: MKSC 2P proof + reset-crash fix (superseded details)
 
 - [x] **Audio-rate fix PROVEN inside real RetroArch with MKSC 2P**: 2×
       SET_SYSTEM_AV_INFO per boot, continuous emulation (2.27M SWI/DMA lines in

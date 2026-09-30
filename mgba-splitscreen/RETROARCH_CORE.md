@@ -1,5 +1,29 @@
 # RETROARCH_CORE.md — shipping mgba-splitscreen as a RetroArch core
 
+> **STATUS 2026-09-30 (6): APP VIEWS IN THE CORE + SUBMISSION PATH PIVOTS TO GITLAB CI.**
+> All four app view modes (grid / speaker / focus / overlay) are LIVE core
+> options: `splitscreen_layout` auto|2x1|1x2|2x2|speaker|focus|overlay plus
+> `splitscreen_focus_player` 1-4 — per-viewer (each netplay client picks their
+> own view, shader-style) and restricted by session size (1P: auto only; 2P: no
+> quadrants; 3-4P: no 1-wide grids) via the v2 core-options interface with
+> clean labels. Pixel-verified every mode at 2P and 4P (view harness), link
+> regressions green. Fixed en route: stale-aspect stretch after live geometry
+> switches (aspect was rebuilt from the PREVIOUS base size), speaker strip
+> centering going negative, and the legacy "desc; v1|v2" option string form
+> (semicolons in the label generated phantom menu values that RetroArch even
+> persisted into the .opt file). NEW: 3px player-color outlines + P-number
+> badges on every screen (the app's .screen-cell/.screen-tag look;
+> `splitscreen_overlays` on|off). Pushed as 88831a7ef to fs-link-loosen-timing
+> AND master (recipes build master).
+> SUBMISSION: hizzlekizzle on libretro-super#2127 — libretro-super no longer
+> feeds the online updater; cores are built by libretro's GitLab CI reading the
+> gitlab-ci.yml IN THE CORE REPO. Ours is already adapted (CORENAME=
+> mgba_splitscreen, CORE_ARGS=-DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO_SPLITSCREEN=ON),
+> so the mirror/crawl-list ask below is THE path to nightlies; the super PR
+> reduces to metadata (info + recipes), still wanted. libretro/docs#1214 needs
+> one content update before merge: its Core options section predates live
+> views (says "Screen layout (restart required); 2x1/1x2/2x2").
+
 > **STATUS 2026-09-30 (5): HUMAN-VERIFIED WITH A COMMERCIAL GAME.** A human
 > drove Mario Kart Super Circuit 2P, 3P, AND 4P through the complete multiplayer
 > flow (same-cartridge link menus, per-player OK? confirms, guest WAIT, CHOOSE
@@ -171,6 +195,11 @@ mGBA's own libretro build is the safest possible recipe to copy.
 > libretro/mgba with `CORENAME=mgba_splitscreen` and
 > `CORE_ARGS=-DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO_SPLITSCREEN=ON`).
 > Submission PRs: libretro-super#2127 (info + recipes) and libretro/docs#1214.
+> hizzlekizzle confirmed on #2127 that the updater is fed by GitLab CI reading
+> the core repo's own .gitlab-ci.yml — ours is already adapted (CORENAME=
+> mgba_splitscreen, CORE_ARGS=-DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO_SPLITSCREEN=ON)
+> — so what we need from you is the mirror/crawl-list addition; the super PR
+> carries the metadata (info file + recipes) meanwhile.
 > Verified in RetroArch 1.21: 4P linktest reaches LINK ACTIVE - 4 PS in all
 > quadrants; Mario Kart: Super Circuit 2P runs continuously (with the core
 > re-sending SET_SYSTEM_AV_INFO after the game's SOUNDBIAS rate change);

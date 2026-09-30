@@ -8,7 +8,65 @@
 
 ---
 
-## 2026-09-30 (5, latest) — HUMAN-VERIFIED: MKSC 2P/3P/4P all race cleanly in RetroArch
+## 2026-09-30 (6, latest) — the app's 4 view modes ported into the core as live per-viewer options; submission path pivots to GitLab CI
+
+**Verdict: view parity with the desktop app is IN THE CORE and pixel-verified;
+the updater path is GitLab CI reading the core repo's own .gitlab-ci.yml (the
+libretro-super PR is metadata-only in practice). Commit 88831a7ef pushed to
+fs-link-loosen-timing AND master.**
+
+What landed:
+- `splitscreen_layout` = auto|2x1|1x2|2x2|speaker|focus|overlay, live-applied
+  every retro_run (options re-read per frame); `splitscreen_focus_player` 1-4
+  picks the enlarged player for speaker/focus/overlay. Per-viewer by design:
+  each netplay client picks their own view, like shaders. Views restricted by
+  session size (1P: auto only; 2P: no quadrants; 3-4P: no 1-wide grids) via
+  the v2 core-options interface (SET_CORE_OPTIONS_V2 + dynamic value list +
+  SET_CORE_OPTIONS_DISPLAY hiding Focused player at 1P; legacy
+  SET_VARIABLES fallback kept).
+- Player outlines + P-number badges on every screen in every view (app's
+  .screen-cell/.screen-tag styling: 3px inset, P1 red/P2 blue/P3 green/P4
+  orange, bottom-right Pn badge), `splitscreen_overlays` on|off.
+- SPEAKER geometry is 480x480 (2x focused band + 1x strip); max geometry now
+  480x480. New: 4P speaker strip drops to half-scale cells (3x160px) instead
+  of overlapping; shared `_blitHalf()` with overlay PiPs.
+- Bugs found & fixed: (1) speaker strip centering `ox` went negative for
+  rest=1, drawing P2 mostly off-screen; (2) stale-aspect stretch after live
+  switches — SET_SYSTEM_AV_INFO carried an aspect computed from the PREVIOUS
+  base size, so every view change displayed stretched until restart; (3) the
+  legacy "desc; v1|v2" option form splits the DESC at the first semicolon, so
+  our prose labels produced a phantom first value ("per-viewer,
+  netplay-safe). splitscreen_layout; auto") that RetroArch even PERSISTED
+  into the per-core .opt file — v2 labels/values fixed this; a stale .opt
+  value also silently blocks new defaults, delete it when option shapes
+  change.
+- Verification: harness probes (COLOR_16_BIT build!) verify grid/speaker/
+  focus/overlay pixel-exactly at 2P (incl. focus-swap), 4P speaker half-scale
+  strip + 3-pip overlay + focus-swap, all badge/outline positions; sp_test
+  2P/4P 600-frame + savestate roundtrip + pointer-integrity harnesses green.
+  GOTCHA that burned the day: the view harness was compiled WITHOUT
+  -DCOLOR_16_BIT -DCOLOR_5_6_5, so mColor read 32-bit while the core wrote
+  packed 16-bit pixels — every probe past the first was garbage and looked
+  like core bugs. Always mirror the core's CMake defines in hand-built
+  harnesses.
+- Live RetroArch check: MKSC 2P boots in the new build; screenshot is exactly
+  480x480 in speaker (native composite, no frontend scaling) and 720x240 in
+  grid with visible P1 red outline/badge; geometry/option plumbing proven
+  live. Human view-cycling retest (incl. aspect-after-switch + overlays
+  toggle) is the open verification item.
+- Upstream: hizzlekizzle on libretro-super#2127 — "we don't use libretro-super
+  to feed our online updater / core downloader infrastructure anymore. That
+  all happens through our gitlab CI setup ... gitlab-ci.yml in the top level
+  of the repo". Our .gitlab-ci.yml is already adapted (CORENAME=
+  mgba_splitscreen, CORE_ARGS=-DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO_SPLITSCREEN=ON).
+  The practical to-do moved to: (a) human posts the Discord mirror ask (draft
+  in RETROARCH_CORE.md), (b) docs PR #1214 needs its Core options section
+  updated to live views before merge (the fork-side text is prepped in this
+  session's status block).
+
+---
+
+## 2026-09-30 (5) — HUMAN-VERIFIED: MKSC 2P/3P/4P all race cleanly in RetroArch
 
 **Verdict: the commercial-game gap is CLOSED. A human drove Mario Kart Super
 Circuit 2P, 3P, and 4P through the FULL multiplayer flow in real RetroArch —
