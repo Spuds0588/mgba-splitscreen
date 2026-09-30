@@ -54,6 +54,16 @@ What landed:
   grid with visible P1 red outline/badge; geometry/option plumbing proven
   live. Human view-cycling retest (incl. aspect-after-switch + overlays
   toggle) is the open verification item.
+- CONFIG-LEAK GOTCHA: RetroArch saves its config on exit, so a session launched
+  with --appendconfig (the test rig) MERGED the test overrides (QAZ/WSX/EDC/
+  TGB binds, Start/Select/B = nul, video_context_driver=x) into the user's
+  MAIN retroarch.cfg — broken Start keys and P1-shoulder/P2-move collisions
+  in every other core afterwards. Core input itself is clean (keymap matches
+  GBAKey enum A,B,Select,Start,R,Left,Up,Down,R-order = upstream libretro
+  convention; no hardcodes). Fix: main cfg restored from backup
+  (/tmp/retroarch.cfg.bak-contaminated) and /tmp/ra_human.cfg now sets
+  config_save_on_exit="false" so test sessions can never write back. Keep
+  that line in ANY future appendconfig used for testing.
 - Upstream: hizzlekizzle on libretro-super#2127 — "we don't use libretro-super
   to feed our online updater / core downloader infrastructure anymore. That
   all happens through our gitlab CI setup ... gitlab-ci.yml in the top level
