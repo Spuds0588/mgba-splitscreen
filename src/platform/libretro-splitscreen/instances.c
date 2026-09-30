@@ -372,18 +372,246 @@ bool sp_run_frame(struct sp_manager* sp, void (*poll)(void),
 
 /* ---- Video composition ---- */
 
+/* Player color palette, ported from the app (src/styles.css): P1 red,
+ * P2 blue, P3 green, P4 orange — outlines and P-number badges. */
+const uint16_t spPlayerColors[SP_MAX_PLAYERS] = {
+	0xF908, /* #ff4444 */
+	0x445F, /* #4488ff */
+	0x2D48, /* #2eaa44 */
+	0xE443, /* #e08a1e */
+};
+
+static void _hLine(struct sp_video* vid, int x0, int x1, int y, uint16_t color) {
+	if (y < 0 || y >= (int) vid->height) {
+		return;
+	}
+	if (x0 < 0) {
+		x0 = 0;
+	}
+	if (x1 >= (int) vid->width) {
+		x1 = (int) vid->width - 1;
+	}
+	for (int x = x0; x <= x1; ++x) {
+		vid->out[y * vid->width + x] = color;
+	}
+}
+
+static void _vLine(struct sp_video* vid, int y0, int y1, int x, uint16_t color) {
+	if (x < 0 || x >= (int) vid->width) {
+		return;
+	}
+	if (y0 < 0) {
+		y0 = 0;
+	}
+	if (y1 >= (int) vid->height) {
+		y1 = (int) vid->height - 1;
+	}
+	for (int y = y0; y <= y1; ++y) {
+		vid->out[y * vid->width + x] = color;
+	}
+}
+
+static void _fillRect(struct sp_video* vid, int ox, int oy, int w, int h, uint16_t color) {
+	for (int y = oy; y < oy + h; ++y) {
+		_hLine(vid, ox, ox + w - 1, y, color);
+	}
+}
+
+/* 3x5 glyphs (MSB = left column) for "P" and digits 1-4. */
+static const uint8_t _glyphP[5] = { 0x7, 0x5, 0x7, 0x4, 0x4 };
+static const uint8_t _glyphDigits[4][5] = {
+	{ 0x2, 0x6, 0x2, 0x2, 0x7 }, /* 1 */
+	{ 0x6, 0x5, 0x2, 0x4, 0x7 }, /* 2 */
+	{ 0x7, 0x4, 0x6, 0x4, 0x7 }, /* 3 */
+	{ 0x5, 0x5, 0x7, 0x4, 0x4 }, /* 4 */
+};
+
+static void _drawPText(struct sp_video* vid, int ox, int oy, int player) {
+	const uint8_t* glyphs[2] = { _glyphP, _glyphDigits[player & 3] };
+	for (int gi = 0; gi < 2; ++gi) {
+		for (int row = 0; row < 5; ++row) {
+			for (int col = 0; col < 3; ++col) {
+				if (glyphs[gi][row] & (0x4 >> col)) {
+					int px = ox + gi * 4 + col;
+					int py = oy + row;
+					if (px >= 0 && px < (int) vid->width && py >= 0 && py < (int) vid->height) {
+						vid->out[py * vid->width + px] = 0xFFFF;
+					}
+				}
+			}
+		}
+	}
+}
+
+/* One player's screen decoration: colored inset outline (the app's
+ * .screen-cell) plus a bottom-right "P<n>" badge on the player's color
+ * (the app's .screen-tag). Drawn AFTER the pixels, so it survives every
+ * layout at any scale. */
+static void _drawOverlayCell(struct sp_video* vid, int player, int ox, int oy,
+                             int w, int h, bool draw) {
+	if (!draw || player < 0 || player >= SP_MAX_PLAYERS) {
+		return;
+	}
+	const uint16_t color = spPlayerColors[player];
+	for (int i = 0; i < SP_OUTLINE_PX; ++i) {
+		int x0 = ox + i;
+		int y0 = oy + i;
+		int x1 = ox + w - 1 - i;
+		int y1 = oy + h - 1 - i;
+		if (x0 > x1 || y0 > y1) {
+			break;
+		}
+		_hLine(vid, x0, x1, y0, color);
+		_hLine(vid, x0, x1, y1, color);
+		_vLine(vid, y0, y1, x0, color);
+		_vLine(vid, y0, y1, x1, color);
+	}
+	int bw = SP_TAG_W;
+	int bh = SP_TAG_H;
+	int bx = ox + w - bw - 1;
+	int by = oy + h - bh - 1;
+	if (bx < ox + SP_OUTLINE_PX) {
+		bx = ox + SP_OUTLINE_PX;
+	}
+	if (by < oy + SP_OUTLINE_PX) {
+		by = oy + SP_OUTLINE_PX;
+	}
+	_fillRect(vid, bx, by, bw, bh, color);
+	_drawPText(vid, bx + (bw - 7) / 2, by + (bh - 5) / 2, player);
+}
+
 static void _blitRow(mColor* dst, const mColor* src, int w) {
 	memcpy(dst, src, w * BYTES_PER_PIXEL);
 }
 
-void sp_composite(struct sp_manager* sp, struct sp_video* vid) {
+/* Blit a snapshot at half scale (nearest 2x2 downsample), used by overlay
+ * PiPs and narrow speaker-strip cells. Clips against the WxH output. */
+static void _blitHalf(struct sp_video* vid, const mColor* snap, int ox, int oy) {
+	const int W = (int) vid->width;
+	const int H = (int) vid->height;
+	for (int y = 0; y < SP_VIDEO_H; y += 2) {
+		int dy = oy + y / 2;
+		if (dy >= H) {
+			break;
+		}
+		if (dy < 0) {
+			continue;
+		}
+		mColor* dstRow = vid->out + dy * W;
+		const mColor* srcRow = snap + y * SP_VIDEO_W;
+		for (int x = 0; x < SP_VIDEO_W; x += 2) {
+			int dx = ox + x / 2;
+			if (dx >= 0 && dx < W) {
+				dstRow[dx] = srcRow[x];
+			}
+		}
+	}
+}
+
+/* Blit one player's snapshot at integer scale `scale` with top-left (ox, oy);
+ * clips against the WxH output. Grid uses scale 1; the focused views use 2. */
+static void _blitScaled(struct sp_video* vid, const mColor* snap, int ox, int oy, int scale) {
+	const int W = (int) vid->width;
+	const int H = (int) vid->height;
+	const int sw = SP_VIDEO_W * scale;
+	const int sh = SP_VIDEO_H * scale;
+	if (ox >= W || oy >= H || ox + sw <= 0 || oy + sh <= 0) {
+		return;
+	}
+	for (int y = 0; y < sh; ++y) {
+		int dy = oy + y;
+		if (dy < 0 || dy >= H) {
+			continue;
+		}
+		const mColor* srcRow = snap + (y / scale) * SP_VIDEO_W;
+		mColor* dstRow = vid->out + dy * W;
+		for (int x = 0; x < sw; ++x) {
+			int dx = ox + x;
+			if (dx < 0 || dx >= W) {
+				continue;
+			}
+			dstRow[dx] = srcRow[x / scale];
+		}
+	}
+}
+
+void sp_composite(struct sp_manager* sp, struct sp_video* vid, bool overlays) {
 	const int W = (int) vid->width;
 	const int H = (int) vid->height;
 	memset(vid->out, 0, vid->outSize);
 	int n = sp->nPlayers;
 
-	/* Resolve layout. */
+	/* Clamp the focused player into range; grid layouts ignore it. */
+	int f = vid->focused;
+	if (f < 0 || f >= n) {
+		f = 0;
+	}
+
 	enum spLayout layout = vid->layout;
+	if (layout == SP_LAYOUT_FOCUS) {
+		/* App's focus view: the focused player alone, 2x. */
+		_blitScaled(vid, sp->players[f].snapshot, 0, 0, 2);
+		_drawOverlayCell(vid, f, 0, 0, SP_VIDEO_W * 2, SP_VIDEO_H * 2, overlays);
+		return;
+	}
+	if (layout == SP_LAYOUT_SPEAKER) {
+		/* App's speaker view: focused 2x centered on top, remaining players
+		 * in a 1x strip beneath. */
+		int bigX = (W - SP_VIDEO_W * 2) / 2;
+		_blitScaled(vid, sp->players[f].snapshot, bigX, 0, 2);
+		_drawOverlayCell(vid, f, bigX, 0, SP_VIDEO_W * 2, SP_VIDEO_H * 2, overlays);
+		int rest = n - 1;
+		if (rest > 0) {
+			int stripY = SP_VIDEO_H * 2;
+			int stripH = H - stripY;
+			int step = W / rest; /* equal cells across the full width */
+			/* Cells narrower than a full screen drop to half scale so the
+			 * strip never overlaps (4P: three 160px cells). */
+			int half = step < SP_VIDEO_W;
+			int dw = half ? SP_VIDEO_W / 2 : SP_VIDEO_W;
+			int dh = half ? SP_VIDEO_H / 2 : SP_VIDEO_H;
+			int ox = (W - step * rest) / 2; /* center the group of cells */
+			int cy = stripY + (stripH - dh) / 2;
+			if (cy < stripY) {
+				cy = stripY;
+			}
+			int idx = 0;
+			for (int i = 0; i < n; ++i) {
+				if (i == f) {
+					continue;
+				}
+				int cx = ox + step * idx + (step - dw) / 2;
+				if (half) {
+					_blitHalf(vid, sp->players[i].snapshot, cx, cy);
+				} else {
+					_blitScaled(vid, sp->players[i].snapshot, cx, cy, 1);
+				}
+				_drawOverlayCell(vid, i, cx, cy, dw, dh, overlays);
+				++idx;
+			}
+		}
+		return;
+	}
+	if (layout == SP_LAYOUT_OVERLAY) {
+		/* App's overlay view: focused 2x fills the frame, others as small
+		 * (half-scale) PiPs along the right edge. */
+		_blitScaled(vid, sp->players[f].snapshot, 0, 0, 2);
+		_drawOverlayCell(vid, f, 0, 0, SP_VIDEO_W * 2, SP_VIDEO_H * 2, overlays);
+		const int pipW = SP_VIDEO_W / 2;
+		int idx = 0;
+		for (int i = 0; i < n; ++i) {
+			if (i == f) {
+				continue;
+			}
+			int py = idx * (SP_VIDEO_H / 2);
+			_blitHalf(vid, sp->players[i].snapshot, W - pipW, py);
+			_drawOverlayCell(vid, i, W - pipW, py, pipW, SP_VIDEO_H / 2, overlays);
+			++idx;
+		}
+		return;
+	}
+
+	/* Grid layouts (2x1 / 1x2 / 2x2 / auto). */
 	int cols, rows;
 	switch (layout) {
 	case SP_LAYOUT_2X1:
@@ -446,6 +674,7 @@ void sp_composite(struct sp_manager* sp, struct sp_video* vid) {
 			}
 			_blitRow(vid->out + dy * W + dx, p->snapshot + y * SP_VIDEO_W, SP_VIDEO_W);
 		}
+		_drawOverlayCell(vid, i, ox, oy, SP_VIDEO_W, SP_VIDEO_H, overlays);
 	}
 }
 

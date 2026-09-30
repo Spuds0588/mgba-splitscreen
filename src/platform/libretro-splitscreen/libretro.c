@@ -52,8 +52,11 @@ static unsigned lastHeight = 160;
 static enum spLayout layoutOpt = SP_LAYOUT_AUTO;
 static enum spAudio audioOpt = SP_AUDIO_P1;
 static int playersOpt = 1;
+static int focusedOpt = 0;   /* zero-based player index for speaker/focus/overlay */
 static bool fsAssistOpt = false;
+static bool overlaysOpt = true;
 static unsigned advertisedRate; /* audio rate last sent via SET_SYSTEM_AV_INFO */
+static bool coreOptionsChanged; /* option visibility changed since last poll */
 
 /* The upstream keymap order: libretro pad -> GBA keymask bit. */
 static const int keymap[] = {
@@ -83,6 +86,131 @@ static void _spLogLine(const char* line) {
 	if (logCallback) {
 		logCallback(RETRO_LOG_INFO, "[splitscreen] %s\n", line);
 	}
+}
+
+/* ---- Core options (v2) ----
+ * Sent as a full static table; the view-layout VALUE LIST is rebuilt whenever
+ * the number of emulated sessions changes (views that cannot hold N players
+ * are removed from the menu instead of showing dead entries), and the whole
+ * struct is re-sent to the frontend on load. Frontends without v2 support
+ * fall back to the legacy SET_VARIABLES string form below. */
+#define SP_OPT_LAYOUT 1 /* index of the layout definition in _optionDefs */
+
+static struct retro_core_option_v2_definition _optionDefs[] = {
+	{ "splitscreen_players", "Players per ROM (requires reload)", NULL,
+	  "Link N instances of one ROM (subsystems load distinct ROMs instead).",
+	  NULL, NULL, { { NULL, NULL } }, "1" },
+	{ "splitscreen_layout", "View layout", NULL,
+	  "Applies live; per-viewer (each netplay client picks their own view).",
+	  NULL, NULL, { { NULL, NULL } }, "auto" },
+	{ "splitscreen_focus_player", "Focused player", NULL,
+	  "Player enlarged in speaker/focus/overlay views. Applies live.",
+	  NULL, NULL, { { NULL, NULL } }, "1" },
+	{ "splitscreen_audio", "Audio source", NULL,
+	  "Whose mix to play (mixed blends all players). Applies live.",
+	  NULL, NULL, { { NULL, NULL } }, "player 1" },
+	{ "splitscreen_fs_assist", "Four Swords link assist", NULL,
+	  "Handshake assist for Four Swords (matches the app default: off).",
+	  NULL, NULL, { { NULL, NULL } }, "off" },
+	{ "splitscreen_overlays", "Player outlines & badges", NULL,
+	  "Colored border and P-number tag on each player's screen (like the app).",
+	  NULL, NULL, { { NULL, NULL } }, "on" },
+	{ NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },
+};
+
+static struct retro_core_options_v2 _optionsV2 = {
+	NULL,          /* categories: top level */
+	_optionDefs,
+};
+
+/* Fill one option's value list from a NULL-terminated initializer. */
+static void _setValues(struct retro_core_option_v2_definition* def,
+                       const struct retro_core_option_value* vals, int count) {
+	memset(def->values, 0, sizeof(def->values));
+	memcpy(def->values, vals, sizeof(*vals) * count);
+}
+
+/* (Re)build the view-layout value list for `n` emulated sessions; n <= 0
+ * means unknown (all views). Views that cannot hold n players are dropped:
+ * 1P sees only Auto, 2P drops Quadrants, 3-4P drop the 2x1/1x2 grids. */
+static void _setLayoutValues(int n) {
+	static const struct retro_core_option_value all[] = {
+		{ "auto", "Auto" },
+		{ "2x1", "Side by side (2x1)" },
+		{ "1x2", "Stacked (1x2)" },
+		{ "2x2", "Quadrants (2x2)" },
+		{ "speaker", "Speaker (big + strip)" },
+		{ "focus", "Focus (single screen)" },
+		{ "overlay", "Overlay (big + thumbnails)" },
+	};
+	static const struct retro_core_option_value two[] = {
+		{ "auto", "Auto (side by side)" },
+		{ "2x1", "Side by side (2x1)" },
+		{ "1x2", "Stacked (1x2)" },
+		{ "speaker", "Speaker (big + strip)" },
+		{ "focus", "Focus (single screen)" },
+		{ "overlay", "Overlay (big + thumbnails)" },
+	};
+	static const struct retro_core_option_value multi[] = {
+		{ "auto", "Auto (quadrants)" },
+		{ "2x2", "Quadrants (2x2)" },
+		{ "speaker", "Speaker (big + strip)" },
+		{ "focus", "Focus (single screen)" },
+		{ "overlay", "Overlay (big + thumbnails)" },
+	};
+	static const struct retro_core_option_value solo[] = {
+		{ "auto", "Single player" },
+	};
+	if (n <= 0) {
+		_setValues(&_optionDefs[SP_OPT_LAYOUT], all, sizeof(all) / sizeof(*all));
+	} else if (n == 1) {
+		_setValues(&_optionDefs[SP_OPT_LAYOUT], solo, sizeof(solo) / sizeof(*solo));
+	} else if (n == 2) {
+		_setValues(&_optionDefs[SP_OPT_LAYOUT], two, sizeof(two) / sizeof(*two));
+	} else {
+		_setValues(&_optionDefs[SP_OPT_LAYOUT], multi, sizeof(multi) / sizeof(*multi));
+	}
+	_optionDefs[SP_OPT_LAYOUT].default_value = "auto";
+	coreOptionsChanged = true;
+}
+
+static void _initOptionDefs(void) {
+	static const struct retro_core_option_value valsPlayers[] = {
+		{ "1", "1 (single)" }, { "2", "2" }, { "3", "3" }, { "4", "4" },
+	};
+	static const struct retro_core_option_value valsFocus[] = {
+		{ "1", "Player 1" }, { "2", "Player 2" }, { "3", "Player 3" }, { "4", "Player 4" },
+	};
+	static const struct retro_core_option_value valsAudio[] = {
+		{ "player 1", "Player 1" }, { "player 2", "Player 2" },
+		{ "player 3", "Player 3" }, { "player 4", "Player 4" }, { "mixed", "Mixed" },
+	};
+	static const struct retro_core_option_value valsAssist[] = {
+		{ "off", "Off" }, { "on", "On" },
+	};
+	static const struct retro_core_option_value valsOverlays[] = {
+		{ "on", "On" }, { "off", "Off" },
+	};
+	_setValues(&_optionDefs[0], valsPlayers, 4);
+	_setValues(&_optionDefs[2], valsFocus, 4);
+	_setValues(&_optionDefs[3], valsAudio, 5);
+	_setValues(&_optionDefs[4], valsAssist, 2);
+	_setValues(&_optionDefs[5], valsOverlays, 2);
+	_setLayoutValues(0);
+}
+
+/* Hide options that make no sense for the current session (called by the
+ * frontend's update-display poll and once right after a load). Returns
+ * whether visibility changed since the last call, per the libretro spec. */
+static bool _updateOptionVisibility(void) {
+	int n = sp.nPlayers ? sp.nPlayers : pendingPlayers;
+	struct retro_core_option_display d;
+	d.visible = n > 1;
+	d.key = "splitscreen_focus_player";
+	environCallback(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &d);
+	bool changed = coreOptionsChanged;
+	coreOptionsChanged = false;
+	return changed;
 }
 
 static const struct retro_subsystem_memory_info _gba1_mem[] = {
@@ -125,6 +253,43 @@ static void _applyFsAssist(void) {
 	}
 }
 
+static enum spLayout lastLoggedLayout = SP_LAYOUT_AUTO;
+static int lastLoggedFocus = -1;
+
+/* Can session size `n` show this layout? (Mirrors the dynamic option list.) */
+static bool _layoutValidFor(int n, enum spLayout layout) {
+	if (n <= 1) {
+		return layout == SP_LAYOUT_AUTO;
+	}
+	switch (layout) {
+	case SP_LAYOUT_SPEAKER:
+	case SP_LAYOUT_FOCUS:
+	case SP_LAYOUT_OVERLAY:
+		return true;
+	case SP_LAYOUT_2X1:
+	case SP_LAYOUT_1X2:
+		return n == 2;
+	case SP_LAYOUT_2X2:
+		return n >= 3;
+	case SP_LAYOUT_AUTO:
+	default:
+		return true;
+	}
+}
+
+static const char* _layoutName(enum spLayout layout) {
+	switch (layout) {
+	case SP_LAYOUT_2X1: return "side by side";
+	case SP_LAYOUT_1X2: return "stacked";
+	case SP_LAYOUT_2X2: return "quadrants";
+	case SP_LAYOUT_SPEAKER: return "speaker";
+	case SP_LAYOUT_FOCUS: return "focus";
+	case SP_LAYOUT_OVERLAY: return "overlay";
+	case SP_LAYOUT_AUTO:
+	default: return "auto";
+	}
+}
+
 static void _readOptions(void) {
 	struct retro_variable var;
 	var.value = NULL;
@@ -135,6 +300,18 @@ static void _readOptions(void) {
 		if (strcmp(var.value, "2x1") == 0) layoutOpt = SP_LAYOUT_2X1;
 		else if (strcmp(var.value, "1x2") == 0) layoutOpt = SP_LAYOUT_1X2;
 		else if (strcmp(var.value, "2x2") == 0) layoutOpt = SP_LAYOUT_2X2;
+		else if (strcmp(var.value, "speaker") == 0) layoutOpt = SP_LAYOUT_SPEAKER;
+		else if (strcmp(var.value, "focus") == 0) layoutOpt = SP_LAYOUT_FOCUS;
+		else if (strcmp(var.value, "overlay") == 0) layoutOpt = SP_LAYOUT_OVERLAY;
+	}
+
+	var.key = "splitscreen_focus_player";
+	focusedOpt = 0;
+	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		focusedOpt = atoi(var.value) - 1;
+		if (focusedOpt < 0 || focusedOpt >= SP_MAX_PLAYERS) {
+			focusedOpt = 0;
+		}
 	}
 
 	var.key = "splitscreen_audio";
@@ -161,8 +338,33 @@ static void _readOptions(void) {
 	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
 		fsAssistOpt = strcmp(var.value, "on") == 0;
 	}
+
+	var.key = "splitscreen_overlays";
+	overlaysOpt = true;
+	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		overlaysOpt = strcmp(var.value, "on") == 0;
+	}
+
+	/* A persisted value may name a view the current session cannot show (e.g.
+	 * a saved quadrant layout after dropping to 2 players); fall back to Auto. */
+	if (!_layoutValidFor((int) sp.nPlayers ? (int) sp.nPlayers : pendingPlayers, layoutOpt)) {
+		layoutOpt = SP_LAYOUT_AUTO;
+	}
+
+	if (layoutOpt != lastLoggedLayout || focusedOpt != lastLoggedFocus) {
+		char msg[96];
+		snprintf(msg, sizeof(msg), "view: %s, focused player %d",
+		         _layoutName(layoutOpt), focusedOpt + 1);
+		_spLogLine(msg);
+		lastLoggedLayout = layoutOpt;
+		lastLoggedFocus = focusedOpt;
+	}
 	_applyFsAssist();
 }
+
+#define SP_MAX_W 480
+#define SP_MAX_H 480  /* speaker view: 2x focused (320) + 1x strip (160) */
+static unsigned baseWidth, baseHeight; /* geometry the aspect was built from */
 
 static void _applyGeometry(void) {
 	int n = sp.nPlayers ? sp.nPlayers : pendingPlayers;
@@ -177,6 +379,17 @@ static void _applyGeometry(void) {
 		wantH = 320;
 		break;
 	case SP_LAYOUT_2X2:
+		wantW = 480;
+		wantH = 320;
+		break;
+	case SP_LAYOUT_SPEAKER:
+		/* 2x focused screen on top (320) + 1x strip beneath (160). */
+		wantW = 480;
+		wantH = 480;
+		break;
+	case SP_LAYOUT_OVERLAY:
+	case SP_LAYOUT_FOCUS:
+		/* Focused player alone at 2x (overlay PiPs draw over the edge). */
 		wantW = 480;
 		wantH = 320;
 		break;
@@ -196,11 +409,17 @@ static void _applyGeometry(void) {
 		retro_get_system_av_info(&info);
 		info.geometry.base_width = wantW;
 		info.geometry.base_height = wantH;
-		info.geometry.max_width = 480;
-		info.geometry.max_height = 320;
+		/* retro_get_system_av_info derives the aspect from the PREVIOUS
+		 * base size; with it stale, the frontend stretched the new composite
+		 * to the old view's shape after every live layout switch. */
+		info.geometry.aspect_ratio = wantW / (double) wantH;
+		info.geometry.max_width = SP_MAX_W;
+		info.geometry.max_height = SP_MAX_H;
 		environCallback(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info);
 		lastWidth = wantW;
 		lastHeight = wantH;
+		baseWidth = wantW;
+		baseHeight = wantH;
 	}
 	if (vid.width != wantW || vid.height != wantH) {
 		vid.width = wantW;
@@ -231,8 +450,13 @@ static bool _doLoad(int nPlayers, const void* data, size_t size, const char* pat
 	advertisedRate = sp.players[0].core->audioSampleRate(sp.players[0].core);
 	_geometryFromPlayers(nPlayers);
 	_applyFsAssist();
-	_spLogLine(nPlayers == 1 ? "loaded 1 player (single mode)"
-	                          : "loaded N linked players");
+	_setLayoutValues(nPlayers); /* rebuild the menu for this session size */
+	_updateOptionVisibility();
+	char msg[96];
+	snprintf(msg, sizeof(msg), "loaded %d player%s%s", nPlayers,
+	         nPlayers == 1 ? " (single mode)" : " linked",
+	         nPlayers > 1 ? " (per-viewer views active)" : "");
+	_spLogLine(msg);
 	return true;
 }
 
@@ -243,21 +467,31 @@ unsigned retro_api_version(void) {
 }
 
 void retro_set_environment(retro_environment_t env) {
-	environCallback = env;
-
-	struct retro_variable vars[] = {
-		{ "splitscreen_players",
-		  "Players per ROM (requires reload); 1 shares the cartridge across players. splitscreen_players; 1|2|3|4" },
-		{ "splitscreen_layout",
-		  "Screen layout; restart required. splitscreen_layout; 2x1|1x2|2x2" },
-		{ "splitscreen_audio",
-		  "Audio source. splitscreen_audio; player 1|player 2|player 3|player 4|mixed" },
-		{ "splitscreen_fs_assist",
-		  "Four Swords link handshake assist (matches the app's default: off). splitscreen_fs_assist; off|on" },
-		{ NULL, NULL },
-	};
-	environCallback(RETRO_ENVIRONMENT_SET_VARIABLES, vars);
-	environCallback(RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO, (void*) _subsystems);
+	environCallback = env;		struct retro_core_options_update_display_callback udisp = {
+			_updateOptionVisibility,
+		};
+		environCallback(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &udisp);
+		/* Prefer the v2 interface (per-value visibility, clean labels); fall
+		 * back to the legacy string form for frontends without v2. */
+		if (!environCallback(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &_optionsV2)) {
+			static struct retro_variable vars[] = {
+				{ "splitscreen_players",
+				  "Players per ROM (requires reload); 1|2|3|4" },
+				{ "splitscreen_layout",
+				  "View layout (applies live); auto|2x1|1x2|2x2|speaker|focus|overlay" },
+				{ "splitscreen_focus_player",
+				  "Focused player (applies live); 1|2|3|4" },
+				{ "splitscreen_audio",
+				  "Audio source (applies live); player 1|player 2|player 3|player 4|mixed" },
+				{ "splitscreen_fs_assist",
+				  "Four Swords link handshake assist; off|on" },
+				{ "splitscreen_overlays",
+				  "Player outlines & badges; on|off" },
+				{ NULL, NULL },
+			};
+			environCallback(RETRO_ENVIRONMENT_SET_VARIABLES, vars);
+		}
+		environCallback(RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO, (void*) _subsystems);
 }
 
 void retro_set_video_refresh(retro_video_refresh_t video) {
@@ -289,12 +523,12 @@ void retro_get_system_info(struct retro_system_info* info) {
 }
 
 void retro_get_system_av_info(struct retro_system_av_info* info) {
-	unsigned w = lastWidth ? lastWidth : 480;
-	unsigned h = lastHeight ? lastHeight : 160;
+	unsigned w = baseWidth ? baseWidth : (lastWidth ? lastWidth : 480);
+	unsigned h = baseHeight ? baseHeight : (lastHeight ? lastHeight : 160);
 	info->geometry.base_width = w;
 	info->geometry.base_height = h;
-	info->geometry.max_width = 480;
-	info->geometry.max_height = 320;
+	info->geometry.max_width = SP_MAX_W;
+	info->geometry.max_height = SP_MAX_H;
 	info->geometry.aspect_ratio = w / (double) h;
 	/* 59.7275 Hz GBA video. The sample rate is DYNAMIC: games may rewrite
 	 * SOUNDBIAS (Mario Kart Super Circuit does at boot), which changes the
@@ -340,6 +574,7 @@ void retro_init(void) {
 	memset(&vid, 0, sizeof(vid));
 	vid.layout = SP_LAYOUT_AUTO;
 	vid.audio = SP_AUDIO_P1;
+	_initOptionDefs();
 
 	static struct mLogger logger; /* lives for the process: fine, global state allowed */
 	logger.log = 0;
@@ -380,10 +615,12 @@ void retro_run(void) {
 		return;
 	}
 
-	/* Option updates are cheap; layout/audio changes apply live. */
+	/* Option updates are cheap; layout/audio/focus changes apply live. */
 	_readOptions();
 	vid.layout = layoutOpt;
 	vid.audio = audioOpt;
+	vid.focused = focusedOpt;
+	vid.overlays = overlaysOpt;
 	_applyGeometry();
 
 	/* A SOUNDBIAS rewrite can change the audio production rate mid-game;
@@ -401,7 +638,7 @@ void retro_run(void) {
 		/* Livelock bailout already returned; still present the last frames. */
 	}
 
-	sp_composite(&sp, &vid);
+	sp_composite(&sp, &vid, overlaysOpt);
 	videoCallback(vid.out, vid.width, vid.height, vid.width * BYTES_PER_PIXEL);
 
 	int16_t mix[SP_AUDIO_SAMPLES_PER_FRAME * 4];

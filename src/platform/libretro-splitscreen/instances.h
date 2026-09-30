@@ -27,6 +27,14 @@ CXX_GUARD_START
 #define SP_VIDEO_W 240
 #define SP_VIDEO_H 160
 
+/* Per-screen player overlays (ported from the app's screen-cell styling):
+ * a 3px inset outline in the player's color plus a bottom-right P-number
+ * badge, sized in composite pixels so they match across views. */
+#define SP_OUTLINE_PX 3
+#define SP_TAG_W 26
+#define SP_TAG_H 14
+extern const uint16_t spPlayerColors[SP_MAX_PLAYERS]; /* RGB565, app palette */
+
 /* Log sink wired by libretro.c (routes into the frontend's log callback). */
 extern void (*spLogCallback)(const char* line);
 
@@ -38,6 +46,9 @@ enum spLayout {
 	SP_LAYOUT_2X1,
 	SP_LAYOUT_1X2,
 	SP_LAYOUT_2X2,
+	SP_LAYOUT_SPEAKER,  /* focused 2x on top, others in a strip below */
+	SP_LAYOUT_FOCUS,    /* focused player only, 2x */
+	SP_LAYOUT_OVERLAY,  /* focused 2x + others as small PiPs (app's overlay) */
 };
 
 enum spAudio {
@@ -85,6 +96,8 @@ struct sp_video {
 	unsigned height;
 	enum spLayout layout;
 	enum spAudio audio;
+	int focused;               /* player index for speaker/focus/overlay */
+	bool overlays;             /* draw per-screen outline + P-number badge */
 	mColor* out;               /* composite RGB565 buffer, WxH */
 	size_t outSize;
 };
@@ -108,8 +121,10 @@ void sp_reset(struct sp_manager* sp);
 bool sp_run_frame(struct sp_manager* sp, void (*poll)(void),
                   uint32_t (*readKeys)(unsigned port));
 
-/* Blit the per-player snapshots into vid->out per vid->layout. */
-void sp_composite(struct sp_manager* sp, struct sp_video* vid);
+/* Blit the per-player snapshots into vid->out per vid->layout. When
+ * vid->overlays is set, each screen also gets the player's colored outline
+ * and P-number badge (the app's screen-cell treatment). */
+void sp_composite(struct sp_manager* sp, struct sp_video* vid, bool overlays);
 
 /* Read up to `samples` stereo frames of mixed audio into out; returns frames.
  * `source` picks whose mix (players 0..3) or SP_AUDIO_MIX for a blend. */
