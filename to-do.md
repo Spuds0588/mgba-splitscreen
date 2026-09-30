@@ -22,8 +22,12 @@
       hizzlekizzle confirmed the updater is fed by GitLab CI reading the core
       repo's .gitlab-ci.yml (ours already adapted), so the crawl-list addition
       IS the path to official nightlies.
-- [ ] **HUMAN: update libretro/docs#1214** Core options section before merge
-      (it predates live views; replacement text prepped in RETROARCH_CORE.md).
+- [x] **libretro/docs#1214 updated** (2026-09-30, via gh API on the PR branch,
+      commit 03542ec): Core options section now documents live view layouts,
+      per-viewer focus, session-size-adapted lists, and outlines/badges; PR
+      comment posted. Merge remains with maintainers. A reply acknowledging
+      hizzlekizzle's GitLab-CI note (and asking about the mirror/crawl list
+      in-thread) was also posted on libretro-super#2127.
 - [ ] FS 4P in RetroArch (untested; the FS assist + kick path is 2P-verified
       only). Use the same human-rig recipe from history.md pass 5.
 - [ ] After review feedback: adjust recipes/info per maintainer preference
