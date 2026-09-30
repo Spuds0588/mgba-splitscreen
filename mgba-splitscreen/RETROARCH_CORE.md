@@ -186,6 +186,28 @@ There is no formal PR template or review board; the practical bar is "builds
 green on the buildbot templates + a maintainer willing to mirror it." Upstream
 mGBA's own libretro build is the safest possible recipe to copy.
 
+## Fork diff vs upstream mGBA (c3c8e5e81, 2026-09-30) — the "safe fork" catalog
+
+Full-tree diff against mgba-emu/mgba master. mGBA-side footprint is small and
+all of it is deliberate; `src/gb/` is UNTOUCHED (zero fork commits — GB/GBC
+behavior identical to upstream), and so are the ARM core, other cores, and
+the frontend-neutral layers.
+
+| File | Δ | Attribution |
+|---|---|---|
+| src/gba/sio/lockstep.c | +945 | OURS: the whole value-add — FS assist (SetFSuppressed/SetFSArmed + round-boundary kick), event-queue overflow RECYCLE (fixes NULL-memcpy SIGSEGV), CoordinatorRecover (all-asleep deadlock self-heal), AckPlayer no longer sleeps the secondary, DriverReset re-registration (reset segfault), MULTI finish pacing |
+| src/gba/serialize.c | +8 | OURS: memset GBABundledState before serialize (garbage hw.unlCartFlags made imported states drop the bootleg section — observed as FS link-screen garbage execution) |
+| src/gba/gba.c | +61/−some | OURS: SIO IRQ/halt DEBUG trace instrumentation (mLOG-gated, constant-cost bookkeeping, inert at default log levels) |
+| src/gba/io.c | +36 | OURS: SIO BUSYRD/MULTIRD DEBUG trace (same gating) |
+| src/gba/audio.c | −8 | UPSTREAM-NEWER: FIFO sourceOffset rescale exists upstream, absent here — fork predates it. CHERRY-PICK CANDIDATE (evaluate before next release; see to-do) |
+| src/platform/libretro-splitscreen/ | new | OURS: the core itself (not mGBA changes) |
+| build system | + | OURS: BUILD_LIBRETRO_SPLITSCREEN option (+ BUILD_LIBRETRO untouched) |
+
+Review posture: the trace instrumentation is the only thing a maintainer
+might push back on (debug code in core emulation paths); it is mLOG-gated and
+deletable in one pass if asked. Everything else is additive, opt-in via
+BUILD_LIBRETRO_SPLITSCREEN, or a straightforward bug fix.
+
 ## GitLab mirror ask (draft) — POSTED 2026-09-30 in libretro Discord #programming
 
 > Deep link: https://discord.com/channels/184109094070779904/876520593636335646

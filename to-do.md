@@ -38,6 +38,15 @@
       in-thread) was also posted on libretro-super#2127.
 - [ ] FS 4P in RetroArch (untested; the FS assist + kick path is 2P-verified
       only). Use the same human-rig recipe from history.md pass 5.
+- [x] **Fork-diff catalog recorded (pass 6)**: full diff vs upstream master
+      (c3c8e5e81) in RETROARCH_CORE.md "Fork diff vs upstream" — src/gb/
+      UNTOUCHED, all mGBA-side changes ours and deliberate (lockstep value-add,
+      serialize memset fix, mLOG-gated trace), ONE cherry-pick candidate:
+      upstream's audio FIFO sourceOffset rescale postdates the fork (evaluate
+      before next release). GB/GBC link = feature gap, not regression.
+- [ ] **Evaluate the audio sourceOffset cherry-pick** (upstream "The width was
+      just forced..." hunk in GBAAudioScheduleFifoDma): confirm our removal
+      was fork-age (not deliberate), test MKSC after applying, then keep.
 - [ ] After review feedback: adjust recipes/info per maintainer preference
       (platforms, core name); watch libretro-super#2127 + libretro/docs#1214.
 
