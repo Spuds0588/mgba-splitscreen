@@ -74,6 +74,8 @@ struct sp_manager {
 	int nPlayers;
 	struct GBASIOLockstepCoordinator coordinator;
 	bool linkAttached;         /* true when nPlayers > 1 (link wired up) */
+	bool fsSuppressed;         /* host FS-assist policy, re-applied on reset */
+	unsigned stallRun;         /* consecutive 0-step frames (stall watchdog) */
 };
 
 /* State of the last compositors + outputs, owned by libretro.c but shared with

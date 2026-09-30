@@ -3,6 +3,33 @@
 > Ordered by priority within each section. **Aggressively append results to
 > `history.md` as you work** so the next session can pick up mid-thought.
 
+## 🔴 2026-09-30 — RetroArch core: MKSC 2P proof + reset-crash fix (this session)
+
+- [x] **Audio-rate fix PROVEN inside real RetroArch with MKSC 2P**: 2×
+      SET_SYSTEM_AV_INFO per boot, continuous emulation (2.27M SWI/DMA lines in
+      one session), animated title screens pixel-verified in both quadrants,
+      P1 driven to the link-flow area (docs/screens/retroarch-mksc-2p*.png;
+      evidence story + working launch recipe in history.md 2026-09-30).
+- [x] **RESET segfault found & fixed** (reproduced 2/2 before the fix): sp_reset
+      now detaches drivers BEFORE coordinator teardown (stale lockstepIds →
+      NULL deref in GBASIOLockstepDriverReset) and re-applies the host
+      FS-assist policy after CoordinatorInit; lockstep.c re-registers from
+      scratch on a stale id instead of crashing. Verified live: RESET survives,
+      emulation continues.
+- [x] Stall watchdog: sp_run_frame logs STALL state after ~30 zero-step frames
+      so future link deadlocks self-report.
+- [ ] **Link-wedge fix (top remaining core defect)**: coordinator can deadlock
+      ("Primary waiting for players to ack", 0 steps/frame, frozen picture) when
+      one player idles minutes in a link-discovery screen while the other sits
+      in a non-link menu. Repro + state printed by the new watchdog. Needs a
+      re-arm/abort path (coordinator round timeout or sp-level desync→resync).
+- [ ] Finish the MKSC 2P link flow to a race screenshot: drive both players
+      through MULTI-PAK LINK → TRANSFER (OCR the menus — tesseract-ocr needs
+      an elevation-approved apt install; blind pixel-reading hit its limit).
+- [ ] Upstream submission (spec step 5): libretro-super PR + docs PR + GitLab
+      mirror ask — out-of-band, needs a maintainer; .gitlab-ci.yml is inert
+      until the mirror exists.
+
 ## 🟢 2026-09-29 — README screenshots + Hide Menu/Full Screen (this session)
 
 - [x] **Hide Menu / Full Screen (F11, `ui_hide`)** shipped + verified live in the

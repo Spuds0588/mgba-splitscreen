@@ -53,6 +53,7 @@ static enum spLayout layoutOpt = SP_LAYOUT_AUTO;
 static enum spAudio audioOpt = SP_AUDIO_P1;
 static int playersOpt = 1;
 static bool fsAssistOpt = false;
+static unsigned advertisedRate; /* audio rate last sent via SET_SYSTEM_AV_INFO */
 
 /* The upstream keymap order: libretro pad -> GBA keymask bit. */
 static const int keymap[] = {
@@ -227,6 +228,7 @@ static bool _doLoad(int nPlayers, const void* data, size_t size, const char* pat
 	if (!sp_load(&sp, nPlayers, data, size, &vid)) {
 		return false;
 	}
+	advertisedRate = sp.players[0].core->audioSampleRate(sp.players[0].core);
 	_geometryFromPlayers(nPlayers);
 	_applyFsAssist();
 	_spLogLine(nPlayers == 1 ? "loaded 1 player (single mode)"
@@ -287,16 +289,21 @@ void retro_get_system_info(struct retro_system_info* info) {
 }
 
 void retro_get_system_av_info(struct retro_system_av_info* info) {
-	unsigned w = lastWidth ? lastWidth : (unsigned) (sp.nPlayers > 2 ? 480 : 480);
-	unsigned h = lastHeight ? lastHeight : (unsigned) (sp.nPlayers > 2 ? 320 : 160);
+	unsigned w = lastWidth ? lastWidth : 480;
+	unsigned h = lastHeight ? lastHeight : 160;
 	info->geometry.base_width = w;
 	info->geometry.base_height = h;
 	info->geometry.max_width = 480;
 	info->geometry.max_height = 320;
 	info->geometry.aspect_ratio = w / (double) h;
-	/* 59.7275 Hz GBA timing; sample rate 32768 (GBA SOUNDBIAS default). */
+	/* 59.7275 Hz GBA video. The sample rate is DYNAMIC: games may rewrite
+	 * SOUNDBIAS (Mario Kart Super Circuit does at boot), which changes the
+	 * emulator's production rate (32768 -> 65536 Hz). Advertising a stale
+	 * rate makes the frontend's audio pacing wedge retro_run entirely. */
 	info->timing.fps = 16777272.0f / 280896.0f;
-	info->timing.sample_rate = 32768.0f;
+	info->timing.sample_rate = sp.nPlayers
+	                               ? (double) sp.players[0].core->audioSampleRate(sp.players[0].core)
+	                               : 32768.0;
 }
 
 void retro_init(void) {
@@ -378,6 +385,17 @@ void retro_run(void) {
 	vid.layout = layoutOpt;
 	vid.audio = audioOpt;
 	_applyGeometry();
+
+	/* A SOUNDBIAS rewrite can change the audio production rate mid-game;
+	 * if it moved, re-advertise timing so the frontend resamples correctly
+	 * (upstream core does the same via the audioRateChanged AVStream). */
+	unsigned rate = sp.players[0].core->audioSampleRate(sp.players[0].core);
+	if (rate != advertisedRate) {
+		advertisedRate = rate;
+		struct retro_system_av_info info;
+		retro_get_system_av_info(&info);
+		environCallback(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info);
+	}
 
 	if (!sp_run_frame(&sp, inputPollCallback, _readKeys)) {
 		/* Livelock bailout already returned; still present the last frames. */

@@ -251,6 +251,7 @@ void sp_set_fs_assist(struct sp_manager* sp, bool on) {
 		/* Default OFF matches the desktop/web apps; the driver's own hard sync
 		 * is the real fix (RETROARCH_CORE.md section 8). */
 		GBASIOLockstepCoordinatorSetFSSuppressed(&sp->coordinator, !on);
+		sp->fsSuppressed = !on;
 	}
 }
 
@@ -259,14 +260,22 @@ void sp_reset(struct sp_manager* sp) {
 		sp->players[i].asleep = false;
 		sp->players[i].lastFrameCounter = sp->players[i].core->frameCounter(sp->players[i].core);
 	}
-	/* The coordinator carries round state across a reset; re-attach cleanly
-	 * (mirrors the app's mgs_reset_sio after state import). */
+	/* The coordinator carries round state across a reset; tear the link layer
+	 * down cleanly and re-attach (mirrors the app's mgs_reset_sio after state
+	 * import). Drivers must be detached BEFORE the coordinator dies, or their
+	 * stale lockstepIds point into a freed table on the next reset. */
 	if (sp->linkAttached) {
+		for (int i = 0; i < sp->nPlayers; ++i) {
+			GBASIOLockstepCoordinatorDetach(&sp->coordinator, &sp->players[i].driver);
+		}
 		GBASIOLockstepCoordinatorDeinit(&sp->coordinator);
 		GBASIOLockstepCoordinatorInit(&sp->coordinator);
 		for (int i = 0; i < sp->nPlayers; ++i) {
 			GBASIOLockstepCoordinatorAttach(&sp->coordinator, &sp->players[i].driver);
 		}
+		/* CoordinatorInit restores library defaults; re-apply the host's
+		 * FS-assist policy so a reset can't silently re-enable the kick. */
+		GBASIOLockstepCoordinatorSetFSSuppressed(&sp->coordinator, sp->fsSuppressed);
 	}
 	for (int i = 0; i < sp->nPlayers; ++i) {
 		sp->players[i].core->reset(sp->players[i].core);
@@ -333,6 +342,23 @@ bool sp_run_frame(struct sp_manager* sp, void (*poll)(void),
 		 * keep the frontend's audio thread alive (log-once would spam; the
 		 * condition is self-reporting via the next frame's snapshot age). */
 		return false;
+	}
+	if (steps == 0) {
+		/* Every player slept without stepping: the link layer deadlocked
+		 * (e.g. all cores asleep waiting on an ack that never came). Report
+		 * it once per wedge so a frozen picture is diagnosable from the log. */
+		if (sp->stallRun < 30) {
+			++sp->stallRun;
+			if (sp->stallRun == 30) {
+				int asleep = 0;
+				for (int i = 0; i < n; ++i) {
+					asleep += sp->players[i].asleep;
+				}
+				_spLog("[splitscreen] STALL: 0 steps on all %d players for ~%d frames; asleep=%d, transferActive=%d, waiting=%u", n, sp->stallRun, asleep, sp->coordinator.transferActive, sp->coordinator.waiting);
+			}
+		}
+	} else {
+		sp->stallRun = 0;
 	}
 	return true;
 }

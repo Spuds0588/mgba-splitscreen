@@ -8,7 +8,78 @@
 
 ---
 
-## 2026-09-29 (latest) — RetroArch core: 2 bugs found & fixed; 4P linktest VERIFIED inside RetroArch
+## 2026-09-30 (latest) — RetroArch core + real game (MKSC): audio-rate fix PROVEN in RetroArch; RESET segfault found & fixed; link-wedge characterized
+
+**Verdict: the core runs a commercial game in real RetroArch; the audio-rate fix
+is proven; a second crash (reset) was found and fixed; one remaining edge
+(link-wedge after minutes idle in a link-discovery screen) is now diagnosable.**
+
+**Environment key (this is why RetroArch sessions kept "dying"):** RetroArch
+1.21 picks its GL context from `XDG_SESSION_TYPE`, not `DISPLAY`. Under this
+Wayland session it silently builds a Wayland-GL context with NO X window →
+`wmctrl -l` shows nothing, XTEST injection has zero effect (native Wayland
+client), and any launch whose process group gets reaped (timeout wrapper,
+script teardown) kills it. Working recipe (also in /tmp/ra_x11_p2.cfg):
+
+```sh
+env -u WAYLAND_DISPLAY EGL_PLATFORM=x11 XDG_SESSION_TYPE=x11 setsid nohup \
+  retroarch --appendconfig /tmp/ra_x11_p2.cfg -L \
+  ~/.config/retroarch/cores/mgba_splitscreen_libretro.so \
+  --subsystem gba_link_2p ROM ROM --verbose < /dev/null > /tmp/log 2>&1 &
+```
+
+`video_context_driver = "x"` is the load-bearing line; P2 numpad binds ride
+along in the same appendconfig (keysym names are CASE-SENSITIVE in xkey:
+KP_Enter/KP_0/KP_Decimal, not kp_enter...). Focus the real window with
+`wmctrl -a "mGBA Splitscreen"` (window title is NOT "RetroArch").
+
+**Audio-rate fix PROVEN in the real frontend.** Every clean boot logs TWO
+`SET_SYSTEM_AV_INFO` sends (boot @32768, then the re-send after MKSC's
+SOUNDBIAS write flips production to 65536 Hz) and runs continuously — millions
+of SWI/DMA lines, e.g. 2.27M over one 20-minute session; audio pacing never
+wedged retro_run (the pre-fix symptom: exactly 2 retro_run calls then silence).
+Pixel evidence: animated MKSC title screens in both quadrants
+(`docs/screens/retroarch-mksc-2p-titles.png`, adjacent-frame screenshots differ;
+P1/P2 quadrant metrics distinct-per-frame, identical-across-players = lockstep
+pre-link, as designed). P1 was driven to the link-flow area past MULTIPLAYER
+(`docs/screens/retroarch-mksc-2p.png`), with the game's own SIO rounds running
+in the log ("All players acked, waking primary").
+
+**Bug 3 — RESET segfault (reproduced 2/2, fixed, verified):** the network
+RESET command (and the Reset hotkey) killed the core 100% of the time. Root
+cause: `sp_reset` re-inited the lockstep coordinator WITHOUT detaching the
+drivers, leaving stale `driver->lockstepId`s; `GBASIOLockstepDriverReset`
+then did `TableLookup(...)` and dereferenced the NULL result
+(src/gba/sio/lockstep.c ~L225). Fix: (a) sp_reset now Detach→Deinit→Init→
+Attach + re-applies the FS-assist policy (CoordinatorInit resets it to library
+defaults); (b) lockstep.c defensively re-registers from scratch on a stale id
+instead of crashing. Verified: RESET survives, "[splitscreen] 2 players reset",
+emulation continues (SWI/DMA grows after reset).
+
+**Known edge (characterized, not yet fixed):** if P1 sits minutes in a
+link-discovery screen while P2 idles elsewhere, the lockstep can wedge —
+log ends at "Primary waiting for players to ack", 0 steps/frame, frames
+freeze while the process lives. Previously misattributed to environment
+flakiness (some of those "window never maps" stalls were THIS). New stall
+watchdog in sp_run_frame logs `STALL: 0 steps ... asleep=N transferActive=...`
+after ~30 frozen frames, so the next occurrence self-reports its state.
+Suspect: a coordinator round waiting on an ack from a player whose game stopped
+talking (single-player menu); needs a re-arm/timeout path in the coordinator
+or a sp-level round abort. Repro: reach SINGLE-PAK LINK with P1 only, wait.
+
+**Blind-driving notes (no OCR on this box):** XTEST → RetroArch "x" input
+driver works once the X11 window is focused; per-player key sets are disjoint
+(P1 x/z/Return/arrows, P2 KP_0/KP_Decimal/KP_Enter/KP_8426) so both players can
+be driven concurrently. Screen state was read via /tmp/mkmetrics.py (quadrant
+color signatures), /tmp/mkmap.py + /tmp/mkzoom.py + /tmp/mkdark.py (ASCII
+renders) — good for stage classification, not for reading menu text; next pass
+should apt install tesseract-ocr (needs elevation) and OCR the menu rows.
+Menu flow proven this pass: TITLE→menu(START)→MULTIPLAYER confirmed; the
+orange-heavy link screen after SINGLE-PAK LINK is where P1 waited.
+
+---
+
+## 2026-09-29 — RetroArch core: 2 bugs found & fixed; 4P linktest VERIFIED inside RetroArch
 
 **Verdict: the libretro core works.** `mgba_splitscreen_libretro.so` (Release,
 `build-libretro-sp/`) loads and runs in RetroArch 1.20: 1P renders, and the 4P

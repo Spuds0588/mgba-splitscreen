@@ -235,6 +235,16 @@ static void GBASIOLockstepDriverReset(struct GBASIODriver* driver) {
 	} else {
 		MutexLock(&coordinator->mutex);
 		player = TableLookup(&coordinator->players, lockstep->lockstepId);
+		if (!player) {
+			/* Stale registration: the coordinator was torn down and re-created
+			 * (e.g. the embedder resets the whole link layer) while this driver
+			 * kept its old id. Re-register from scratch instead of dereferencing
+			 * the missing player. */
+			MutexUnlock(&coordinator->mutex);
+			lockstep->lockstepId = 0;
+			GBASIOLockstepDriverReset(driver);
+			return;
+		}
 		player->cycleOffset = mTimingCurrentTime(&driver->p->p->timing) - coordinator->cycle;
 	}
 
