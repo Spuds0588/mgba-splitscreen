@@ -8,7 +8,40 @@
 
 ---
 
-## 2026-09-30 (latest) — RetroArch core + real game (MKSC): audio-rate fix PROVEN in RetroArch; RESET segfault found & fixed; link-wedge characterized
+## 2026-09-30 (3, latest) — SUBMITTED: libretro-super#2127 + libretro/docs#1214
+
+**Submission shipped via gh.** Facts future sessions need:
+
+- Core repo: pushed `fs-link-loosen-timing` AND fast-forwarded `master` to
+  0cba705d8 (recipes pin the integration branch `master`, matching how every
+  other core's recipe pins its repo's default branch; the spec designated no
+  other branch).
+- **libretro/libretro-super#2127**: `dist/info/mgba_splitscreen_libretro.info`
+  (verbatim from the repo) + recipe line `mgba_splitscreen libretro-mgba-
+  splitscreen https://github.com/Spuds0588/mgba-splitscreen.git master YES
+  CMAKE Makefile build -DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO_SPLITSCREEN=ON`
+  appended after `mgba` in 15 recipe files (linux x4, windows x2, osx, ios x3,
+  tvos, 3ds, libnx, vita, psp). Platforms with NO CMAKE-type precedent
+  (android/wii/wiiu/gamecube/ps2) deliberately left out — said so in the PR.
+- **libretro/docs#1214**: `docs/library/mgba_splitscreen.md` (template-shaped;
+  option/subsystem labels taken from libretro.c source) + core-list row.
+- **Flag verification before shipping**: fresh-tree build with the exact
+  recipe flags `-DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO_SPLITSCREEN=ON` → clean
+  (rc=0) — the CI flags had never been built before this check; would have
+  failed on the buildbot otherwise.
+- gh fork surprise: `gh repo fork` on existing same-name forks prints nothing
+  and `parent` came back null via `--jq '.parent.nameWithOwner'`; verify with
+  `.fork == true` (both forks existed from the 09-27/28 session and worked).
+- Working tree recipe: fork clones in /tmp (lr-super, lr-docs); branch →
+  commit → push to the Spuds0588 fork remote → `gh pr create --repo
+  libretro/<repo> --head Spuds0588:<branch>`.
+- **GitLab mirror ask: drafted, NOT sent** (needs a human in libretro Discord
+  #programming) — the ready-to-paste text lives in RETROARCH_CORE.md's
+  official-core section. PR merge + buildbot nightlies are the remaining tail.
+
+---
+
+## 2026-09-30 — RetroArch core + real game (MKSC): audio-rate fix PROVEN in RetroArch; RESET segfault found & fixed; link-wedge characterized
 
 **Verdict: the core runs a commercial game in real RetroArch; the audio-rate fix
 is proven; a second crash (reset) was found and fixed; one remaining edge

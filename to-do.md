@@ -18,6 +18,12 @@
       emulation continues.
 - [x] Stall watchdog: sp_run_frame logs STALL state after ~30 zero-step frames
       so future link deadlocks self-report.
+- [x] **Upstream submission (spec step 5)**: libretro/libretro-super#2127
+      (info + 15 recipe files) and libretro/docs#1214 (core page + list row)
+      opened via gh; core repo pushed (fs-link-loosen-timing and master both
+      at 0cba705d8). GitLab mirror ask DRAFTED in RETROARCH_CORE.md — needs a
+      human to post in libretro Discord #programming; PR merge + buildbot
+      nightlies remain.
 - [ ] **Link-wedge fix (top remaining core defect)**: coordinator can deadlock
       ("Primary waiting for players to ack", 0 steps/frame, frozen picture) when
       one player idles minutes in a link-discovery screen while the other sits
@@ -26,9 +32,6 @@
 - [ ] Finish the MKSC 2P link flow to a race screenshot: drive both players
       through MULTI-PAK LINK → TRANSFER (OCR the menus — tesseract-ocr needs
       an elevation-approved apt install; blind pixel-reading hit its limit).
-- [ ] Upstream submission (spec step 5): libretro-super PR + docs PR + GitLab
-      mirror ask — out-of-band, needs a maintainer; .gitlab-ci.yml is inert
-      until the mirror exists.
 
 ## 🟢 2026-09-29 — README screenshots + Hide Menu/Full Screen (this session)
 

@@ -1,5 +1,19 @@
 # RETROARCH_CORE.md — shipping mgba-splitscreen as a RetroArch core
 
+> **STATUS 2026-09-30 (2): SUBMITTED UPSTREAM.** libretro-super recipe+info PR
+> **libretro/libretro-super#2127** (dist/info/mgba_splitscreen_libretro.info +
+> recipe lines in 15 files, CMAKE build against master with
+> `-DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO_SPLITSCREEN=ON` — the exact flag combo
+> verified with a fresh-tree build) and docs PR **libretro/docs#1214**
+> (docs/library/mgba_splitscreen.md + core-list row). Core repo pushed:
+> fs-link-loosen-timing AND master are at 0cba705d8 (recipes pin master).
+> REMAINING (out-of-band, needs a maintainer): the GitLab mirror ask — see the
+> draft text in "GitLab mirror ask (draft)" below — plus PR review/merge and
+> the nightly buildbot verification. Console-recipe note: android/wii/wiiu/
+> gamecube/ps2 recipe files have no CMAKE-type precedent, so those lines were
+> left out of the super PR on purpose (the buildbot .gitlab-ci.yml still covers
+> them via the mirror path).
+
 > **STATUS 2026-09-29: BUILT AND VERIFIED IN RETROARCH.** Phases 1–4 done plus
 > the local half of phase 5. `mgba_splitscreen_libretro.so` loads and runs in
 > RetroArch 1.20: 1P quick path renders; `--subsystem gba_link_4p` with 4×
@@ -133,6 +147,25 @@ examples, and `libretro-super/dist/info/mgba_libretro.info`:
 There is no formal PR template or review board; the practical bar is "builds
 green on the buildbot templates + a maintainer willing to mirror it." Upstream
 mGBA's own libretro build is the safest possible recipe to copy.
+
+## GitLab mirror ask (draft) — post in libretro Discord #programming
+
+> Hi! We've built a libretro core on top of mGBA: **mGBA Splitscreen** —
+> 2–4 linked GBA instances in one core (same-cartridge or per-player ROMs)
+> over mGBA's GBASIOLockstepCoordinator. Sources: https://github.com/Spuds0588/mgba-splitscreen
+> (public, MPL-2.0, fork of upstream mGBA; `.gitlab-ci.yml` copied from
+> libretro/mgba with `CORENAME=mgba_splitscreen` and
+> `CORE_ARGS=-DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO_SPLITSCREEN=ON`).
+> Submission PRs: libretro-super#2127 (info + recipes) and libretro/docs#1214.
+> Verified in RetroArch 1.21: 4P linktest reaches LINK ACTIVE - 4 PS in all
+> quadrants; Mario Kart: Super Circuit 2P runs continuously (with the core
+> re-sending SET_SYSTEM_AV_INFO after the game's SOUNDBIAS rate change);
+> reset-hotkey segfault found & fixed. Could someone add
+> Spuds0588/mgba-splitscreen to the GitLab mirror crawl list so the buildbot
+> can produce nightlies? Thanks!
+
+(Warmenhoven historically handles the crawl list; asking in #programming is
+the documented route. This needs a human — do not automate.)
 
 **Licensing note:** the core inherits mGBA's MPL-2.0 (the API itself is MIT;
 RetroArch is GPLv3 but cores are independent works — mGBA's core already ships
