@@ -186,7 +186,15 @@ There is no formal PR template or review board; the practical bar is "builds
 green on the buildbot templates + a maintainer willing to mirror it." Upstream
 mGBA's own libretro build is the safest possible recipe to copy.
 
-## GitLab mirror ask (draft) — post in libretro Discord #programming
+## GitLab mirror ask (draft) — POSTED 2026-09-30 in libretro Discord #programming
+
+> Deep link: https://discord.com/channels/184109094070779904/876520593636335646
+> (invite discord.gg/C4Huaca). Posted verbatim as the draft below; hunterk
+> replied positively the same hour: "oh that's great. I didn't notice that
+> you're using the upstream lockstep coordinator. That's a big advantage over
+> the other splitscreen fork someone was working on a couple of months ago."
+> Awaiting a crawl-list maintainer (Warmenhoven historically); a reply on
+> libretro-super#2127 asks the same question in-thread as backup.
 
 > Hi! We've built a libretro core on top of mGBA: **mGBA Splitscreen** —
 > 2–4 linked GBA instances in one core (same-cartridge or per-player ROMs)

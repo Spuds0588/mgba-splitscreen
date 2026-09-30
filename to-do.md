@@ -17,11 +17,19 @@
       the human re-cycled views on the fixed build): MKSC 2P window, flip all
       layouts + focused player + overlays toggle, confirm aspect holds and no
       link stalls. Evidence shots to docs/screens/.
-- [ ] **HUMAN: post the GitLab mirror ask in libretro Discord #programming**
-      (draft in mgba-splitscreen/RETROARCH_CORE.md "GitLab mirror ask (draft)") —
-      hizzlekizzle confirmed the updater is fed by GitLab CI reading the core
-      repo's .gitlab-ci.yml (ours already adapted), so the crawl-list addition
-      IS the path to official nightlies.
+- [x] **HUMAN DONE: Discord mirror ask posted** (2026-09-30, #programming,
+      deep link discord.com/channels/184109094070779904/876520593636335646);
+      hunterk replied positively same-hour (lockstep coordinator called "a big
+      advantage"). Awaiting crawl-list action; #2127 in-thread ask stands as
+      backup.
+- [x] **Compatibility rig shipped (2026-09-30)**: plain single-instance
+      `mgba_forkstock_libretro` core built from THIS fork's tree
+      (BUILD_LIBRETRO=ON in build-libretro-sp, installed to
+      ~/.config/retroarch/cores/ with its own .info) for home-menu testing of
+      GB/GBC/GBA vs upstream-mGBA behavior; RetroArch boots to the home menu
+      with the user's real config (contamination fix verified). Note: the
+      splitscreen core is GBA-only by design (extensions=gba), so GB/GBC
+      regression testing legitimately goes through the fork-stock core.
 - [x] **libretro/docs#1214 updated** (2026-09-30, via gh API on the PR branch,
       commit 03542ec): Core options section now documents live view layouts,
       per-viewer focus, session-size-adapted lists, and outlines/badges; PR
