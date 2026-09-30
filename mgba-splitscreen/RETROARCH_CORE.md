@@ -1,18 +1,16 @@
 # RETROARCH_CORE.md — shipping mgba-splitscreen as a RetroArch core
 
-> **STATUS 2026-09-30 (4): WEDGE-RESISTANT.** Two lockstep failure modes that
-> could freeze or kill a session are fixed (see history.md 2026-09-30 pass 4):
-> (1) `_enqueueEvent` overflow no longer NULL-memcpy's — it recycles the peer's
-> oldest queued event and auto-acks flow-control events so rounds complete;
-> (2) an all-asleep deadlock self-heals: sp_run_frame's stall watchdog calls
-> the new `GBASIOLockstepCoordinatorRecover()` after ~60 zero-step frames,
-> which clears `waiting`/`transferActive` and wakes every attached player
-> INCLUDING the primary (`CoordinatorWakePlayers` skips it by design in healthy
-> rounds). Verified: forced-wedge self-heals (~62 frames to resumed progress);
-> 2P/3P/4P linktest 600-frame + savestate roundtrip green; asymmetric MKSC
-> menu scenarios 3.6-4k frames clean; RetroArch MKSC 2P boot sanity green.
-> If a freeze is ever seen again, check the log for "Lockstep event overflow"
-> / "Lockstep recovery" lines — failure is now loud, not silent.
+> **STATUS 2026-09-30 (5): HUMAN-VERIFIED WITH A COMMERCIAL GAME.** A human
+> drove Mario Kart Super Circuit 2P, 3P, AND 4P through the complete multiplayer
+> flow (same-cartridge link menus, per-player OK? confirms, guest WAIT, CHOOSE
+> A GAME, 50cc, race) in real RetroArch with zero stalls/desyncs/wedges —
+> ~5.0k/4.7k/3.2k link transfers respectively, continuous emulation, 4-player
+> ack barrier exercised end-to-end. Evidence: docs/screens/retroarch-mksc-
+> 2p-race.png, -3p.png, -4p.png. Test-rig recipe (pause_on_focus_loss=false,
+> conflict-free binds QAZ/WSX/EDC/TGB) in history.md pass 5. Earlier statuses:
+> (4) wedge-resistant (overflow recycle + self-healing recovery), (2)
+> submitted upstream (libretro-super#2127, libretro/docs#1214), (2026-09-29)
+> built and linktest-verified.
 
 > **STATUS 2026-09-30 (2): SUBMITTED UPSTREAM.** libretro-super recipe+info PR
 > **libretro/libretro-super#2127** (dist/info/mgba_splitscreen_libretro.info +

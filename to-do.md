@@ -33,9 +33,15 @@
       3.6-4k frames clean; RetroArch boot sanity green. Exact GUI trigger
       repro remains open — future freezes now log "Lockstep event overflow"/
       "Lockstep recovery" instead of dying silently.
-- [ ] Finish the MKSC 2P link flow to a race screenshot: drive both players
-      through MULTI-PAK LINK → TRANSFER (OCR the menus — tesseract-ocr needs
-      an elevation-approved apt install; blind pixel-reading hit its limit).
+- [x] **MKSC 2P/3P/4P human-driven races in RetroArch (2026-09-30 pass 5)**:
+      full multiplayer flow verified with zero stalls (5.0k/4.7k/3.2k link
+      transfers); evidence PNGs in docs/screens/ (retroarch-mksc-2p-race.png,
+      -3p.png, -4p.png). Test-rig learnings (pause_on_focus_loss, hotkey-
+      conflict-free binds QAZ/WSX/EDC/TGB, digit keys ignored by x driver)
+      recorded in history.md 2026-09-30 pass 5. OCR (tesseract) reads menus
+      but not the LAP HUD.
+- [ ] FS 4P in RetroArch (untested; the FS assist + kick path is 2P-verified
+      only). Use the same human-rig recipe from history.md pass 5.
 
 ## 🟢 2026-09-29 — README screenshots + Hide Menu/Full Screen (this session)
 

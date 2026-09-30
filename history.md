@@ -8,7 +8,51 @@
 
 ---
 
-## 2026-09-30 (4, latest) — link-wedge rescue: overflow crash fixed + self-healing recovery
+## 2026-09-30 (5, latest) — HUMAN-VERIFIED: MKSC 2P/3P/4P all race cleanly in RetroArch
+
+**Verdict: the commercial-game gap is CLOSED. A human drove Mario Kart Super
+Circuit 2P, 3P, and 4P through the FULL multiplayer flow in real RetroArch —
+same-cartridge link, real transfers, real races — with zero stalls, zero
+wedges, zero desyncs.** Keylog: 2P ~5.0k transfers, 3P ~4.7k, 4P ~3.2k, all
+with 0 STALL/recovery/overflow lines and continuous SWI/DMA. Evidence:
+docs/screens/retroarch-mksc-2p-race.png, -3p.png, -4p.png (2P also has
+retroarch-mksc-2p.png titles + -2p-titles.png).
+
+**How the human testing was enabled (critical environment learnings):**
+- RetroArch's pause_on_focus_loss freezes emulation silently when the window
+  loses focus — every script that ran shell commands looked like a freeze.
+  Disable it in the appendconfig (`pause_on_focus_loss = "false"`).
+- RetroArch hotkeys steal keys (F = fullscreen toggle bit mid-test). Test binds
+  must avoid ALL RetroArch defaults. Final clean layout (no conflicts):
+  P1 Q/A/Z, P2 W/S/X, P3 E/D/C, P4 T/G/B (up/down/A). Number-row binds (123/456
+  /789/0-=) DO NOT WORK — the x input driver ignores plain digits (1..0) here.
+- Per-player disjoint binds are required (no player-switch hotkey exists);
+  guests confirm their own OK? prompts, host drives shared menus; guests show
+  WAIT during CHOOSE A GAME/transfer.
+- The human-driven flow (verified twice at 2P): A at title (Start unbound was
+  fine) -> Down+A (MULTIPLAYER) -> Down Down+A (link menu) -> per-player OK?
+  confirms -> WAIT (guests) -> CHOOSE A CHARACTER -> MUSHROOM CUP 50cc -> race.
+- OCR tooling: tesseract 5 on 4x-upscaled quadrants reads menu text well
+  (SINGLE PLAYER, MULTIPLAYER, CHOOSE A CHARACTER, MUSHROOM CUP, WAIT, TRY
+  AGAIN) but NOT the in-race LAP HUD (too small/stylized) — race verification
+  used quadrant metrics + human confirmation instead.
+- Launcher gotcha that wasted hours: a command that backgrounds retroarch but
+  exceeds the tool timeout gets its whole process group reaped. `setsid
+  nohup ... &` + a SHORT command (return in ~1s) survives; verification runs
+  in a separate call.
+
+**4P human run specifics:** 2x2 grid at 720x480 (window resizes when the user
+hits fullscreen — F toggled it mid-run, harmless), all four wire ids assigned,
+4-player ack barrier exercised the whole race with zero desyncs. This is the
+first time 4P MKSC (not linktest) has been played end-to-end in RetroArch.
+
+Remaining known-open items: OCR can't read the race LAP HUD (cosmetic for
+testing), FS 4P in RetroArch still untested, PR review tail
+(libretro-super#2127, libretro/docs#1214), GitLab mirror ask (drafted).
+
+---
+
+## 2026-09-30 (4) — link-wedge rescue: overflow crash fixed + self-healing recovery
 
 **Verdict: the two concrete wedge mechanisms are fixed and verified; the exact
 GUI trigger reproduction remains open (every GUI-faithful asymmetric scenario
