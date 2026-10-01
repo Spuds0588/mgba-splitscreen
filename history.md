@@ -2545,3 +2545,33 @@ char-0x20). Badge digits in instances.c now use the same Tom Thumb patterns
 PASS against the fresh binary (hash c34e7446); frame dumped to
 /tmp/sp_menu.bmp and mirrored at mgba-splitscreen/menu-render-check.html.
 RetroArch relaunched on the fresh install.
+
+### 2026-10-01 (6) — Audio drain rebuilt on upstream's model; low-pass + limiter core options
+
+Compared our audio path against upstream's libretro core (the one with no
+audio issues) and found three divergences, all fixed:
+
+1. **Drain pacing**: upstream drains a leaky average (EMA, alpha 1/180) of
+   each frame's ACTUAL production; we drained everything available with a
+   hard cap of 533*2. Fine at 32768 Hz, but any SOUNDBIAS rewrite (Mario
+   Kart, Four Swords — 65536 Hz, 1097 frames/video-frame) overflowed the
+   fixed buffer and dropped samples forever. sp_audio now drains the EMA
+   per player (seeded at load from rate * frameCycles / frequency, exactly
+   upstream's formula), so the drain is locked to production at any rate.
+2. **Buffer sizing**: upstream sizes the internal audio buffer from the
+   rate (production * 2, capped 0x4000) instead of our fixed 1066. Ours now
+   does the same at load, AND on mid-game rate changes we call
+   setAudioBufferSize live (GBAAudioResizeBuffer) + re-seed the EMA —
+   upstream doesn't, and rides out ~3 s of buffer-full drops on rate
+   changes; ours adapts instantly.
+3. **Post-processing** (the user asked for exactly this): ported upstream's
+   single-pole low-pass verbatim as splitscreen_audio_low_pass (default
+   off, 60% range — the anti-tinny GBA-speaker EQ), and added a
+   splitscreen_audio_limiter option (default ON): a soft-knee limiter that
+   replaces the old hard int16 clamp on the 2-4 player mix — the hard clamp
+   was the "cracking/tearing" on loud mixed audio.
+
+Harness now asserts audio health: per-video-frame average within [500,
+1200] (covers both rates), output on >=90% of played frames, batches <=
+2048. Result against the installed binary: 1091 frames/frame (FS boots at
+65536), 178/179 frames with output, max batch 1128. Both scenarios PASS.

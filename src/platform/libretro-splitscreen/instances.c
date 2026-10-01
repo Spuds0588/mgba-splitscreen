@@ -23,6 +23,8 @@
 #include <mgba/internal/gba/memory.h>
 #include <mgba-util/audio-buffer.h>
 #include <mgba-util/memory.h>
+
+static void _spResetAudioPost(void); /* defined with the audio helpers */
 #include <mgba-util/vfs.h>
 
 #include <stdio.h>
@@ -133,10 +135,6 @@ static bool _spLoadOne(struct sp_player* p, int index, const void* rom, size_t r
 	}
 	memset(p->snapshot, 0, SP_VIDEO_W * SP_VIDEO_H * BYTES_PER_PIXEL);
 
-	/* Audio: GBA produces ~533 stereo samples per frame at 32768 Hz. Give the
-	 * internal buffer 2x headroom (blip buffer limit is 0x4000). */
-	p->core->setAudioBufferSize(p->core, SP_AUDIO_SAMPLES_PER_FRAME * 2);
-
 	/* Battery save: flash-1M-sized buffer per player, wired after reset like
 	 * the upstream core's deferred setup (the frontend may fill it late). */
 	p->saveData = anonymousMemoryMap(GBA_SIZE_FLASH1M);
@@ -189,11 +187,31 @@ static void _spFinishLoad(struct sp_manager* sp, struct sp_video* vid) {
 		p->lastFrameCounter = p->core->frameCounter(p->core);
 		(void) vid;
 	}
+	/* Audio buffer sized like upstream's libretro core: per-frame production
+	 * is rate * frameCycles / frequency (548.6 frames at the default 32768
+	 * Hz), with 2x headroom for blip jitter (mGBA hard-caps at 0x4000). Done
+	 * after reset so the rate is valid; SOUNDBIAS rate changes resize live in
+	 * retro_run. Also seeds each player's drain EMA. */
+	for (int i = 0; i < sp->nPlayers; ++i) {
+		struct mCore* core = sp->players[i].core;
+		size_t samplesPerFrame = (size_t) (((uint64_t) core->audioSampleRate(core)
+			* (uint64_t) core->frameCycles(core)) / (uint64_t) core->frequency(core)) + 1;
+		size_t internal = samplesPerFrame * 2;
+		if (internal > 0x4000) {
+			internal = 0x4000;
+		}
+		core->setAudioBufferSize(core, internal);
+		if (i == 0) {
+			sp->samplesPerFrame = samplesPerFrame;
+		}
+		sp->audioEma[i] = (float) samplesPerFrame;
+	}
 }
 
 bool sp_load(struct sp_manager* sp, int nPlayers, const void* rom, size_t romSize,
              struct sp_video* vid) {
 	memset(sp, 0, sizeof(*sp));
+	_spResetAudioPost();
 	if (nPlayers < 1 || nPlayers > SP_MAX_PLAYERS || !rom || !romSize) {
 		return false;
 	}
@@ -682,28 +700,83 @@ void sp_composite(struct sp_manager* sp, struct sp_video* vid, bool overlays) {
 
 /* ---- Audio ---- */
 
-size_t sp_audio(struct sp_manager* sp, enum spAudio source, int16_t* out, size_t samples) {
-	int n = sp->nPlayers;
-	/* Pull each player's generated samples into scratch and mix. Scratch is
-	 * fixed-size: at 60 fps a player never produces more than ~533/frame plus
-	 * jitter, 4x is generous. */
-	static int16_t scratch[SP_MAX_PLAYERS][SP_AUDIO_SAMPLES_PER_FRAME * 4];
-	size_t produced = 0;
+/* ---- Audio ---- */
 
+#define SP_AUDIO_EMA_ALPHA (1.0f / 180.0f) /* upstream: ~3 s leaky average */
+
+/* Per-frame drain scratch: 2048 frames covers the 65536 Hz SOUNDBIAS case
+ * (1097.2 frames/frame) with headroom. */
+static int16_t scratch[SP_MAX_PLAYERS][SP_AUDIO_MAX_FRAMES * 2];
+
+/* Single-pole low-pass (6 dB/octave), ported verbatim from upstream mGBA's
+ * libretro core ("mgba_audio_low_pass_filter"): tames GBA speaker harshness. */
+static int32_t sLowPassLPrev, sLowPassRPrev;
+#define SP_LOWPASS_RANGE_DEFAULT ((60 * 0x10000) / 100)
+static void _spLowPass(int16_t* buffer, size_t frames) {
+	int32_t l = sLowPassLPrev;
+	int32_t r = sLowPassRPrev;
+	const int32_t factorA = SP_LOWPASS_RANGE_DEFAULT;
+	const int32_t factorB = 0x10000 - factorA;
+	for (size_t s = 0; s < frames; ++s) {
+		int16_t* out = &buffer[s * 2];
+		l = (l * factorA) + (out[0] * factorB);
+		r = (r * factorA) + (out[1] * factorB);
+		l >>= 16;
+		r >>= 16;
+		out[0] = (int16_t) l;
+		out[1] = (int16_t) r;
+	}
+	sLowPassLPrev = l;
+	sLowPassRPrev = r;
+}
+
+void _spResetAudioPost(void) {
+	sLowPassLPrev = 0;
+	sLowPassRPrev = 0;
+}
+
+/* Soft-knee limiter: linear below the knee, asymptotic above it. Replaces
+ * the old hard clamp that made loud 2-4 player mixes "tear". */
+static int16_t _softLimit(int32_t x) {
+	const int32_t knee = 24576;
+	if (x > -knee && x < knee) {
+		return (int16_t) x;
+	}
+	int32_t a = x >= 0 ? x : -x;
+	int32_t y = knee + ((a - knee) * knee) / a;
+	if (y > 32767) {
+		y = 32767;
+	}
+	return (int16_t) (x >= 0 ? y : -y);
+}
+
+size_t sp_audio(struct sp_manager* sp, enum spAudio source, int16_t* out, size_t outFrames) {
+	int n = sp->nPlayers;
 	/* Read every player first: mAudioBufferRead consumes, so all players must
 	 * drain every frame regardless of the audio option (otherwise a player's
-	 * buffer fills and the emulator blocks). */
+	 * buffer fills and the emulator blocks). Drain amount is an upstream-style
+	 * leaky average of actual production: locked to the production rate (no
+	 * drift, no backlog) while smoothing batch jitter. */
 	size_t got[SP_MAX_PLAYERS];
+	size_t produced = 0;
 	for (int i = 0; i < n; ++i) {
 		struct sp_player* p = &sp->players[i];
 		size_t avail = mAudioBufferAvailable(p->audio);
-		if (avail > SP_AUDIO_SAMPLES_PER_FRAME * 4) {
-			avail = SP_AUDIO_SAMPLES_PER_FRAME * 4;
+		if (!avail) {
+			got[i] = 0;
+			continue;
 		}
-		if (avail > samples) {
-			avail = samples;
+		float ema = sp->audioEma[i] > 0.0f ? sp->audioEma[i] : (float) avail;
+		ema = SP_AUDIO_EMA_ALPHA * (float) avail + (1.0f - SP_AUDIO_EMA_ALPHA) * ema;
+		sp->audioEma[i] = ema;
+		size_t toRead = (size_t) ema;
+		if (toRead > SP_AUDIO_MAX_FRAMES) {
+			toRead = SP_AUDIO_MAX_FRAMES;
 		}
-		got[i] = mAudioBufferRead(p->audio, scratch[i], avail);
+		if (toRead > outFrames) {
+			toRead = outFrames;
+		}
+		got[i] = mAudioBufferRead(p->audio, scratch[i], toRead);
 		if (got[i] > produced) {
 			produced = got[i];
 		}
@@ -713,7 +786,7 @@ size_t sp_audio(struct sp_manager* sp, enum spAudio source, int16_t* out, size_t
 	}
 
 	if (source >= SP_AUDIO_MIX) {
-		/* Saturating mix across all players. */
+		/* Mix across all players. */
 		for (size_t s = 0; s < produced; ++s) {
 			int32_t left = 0, right = 0;
 			for (int i = 0; i < n; ++i) {
@@ -723,13 +796,18 @@ size_t sp_audio(struct sp_manager* sp, enum spAudio source, int16_t* out, size_t
 				left += scratch[i][s * 2];
 				right += scratch[i][s * 2 + 1];
 			}
-			/* Saturate to int16. */
-			if (left > 0x7FFF) left = 0x7FFF;
-			if (left < -0x8000) left = -0x8000;
-			if (right > 0x7FFF) right = 0x7FFF;
-			if (right < -0x8000) right = -0x8000;
-			out[s * 2] = (int16_t) left;
-			out[s * 2 + 1] = (int16_t) right;
+			if (sp->limiter) {
+				out[s * 2] = _softLimit(left);
+				out[s * 2 + 1] = _softLimit(right);
+			} else {
+				/* Saturate to int16. */
+				if (left > 0x7FFF) left = 0x7FFF;
+				if (left < -0x8000) left = -0x8000;
+				if (right > 0x7FFF) right = 0x7FFF;
+				if (right < -0x8000) right = -0x8000;
+				out[s * 2] = (int16_t) left;
+				out[s * 2 + 1] = (int16_t) right;
+			}
 		}
 	} else {
 		int pick = (int) source;
@@ -741,9 +819,17 @@ size_t sp_audio(struct sp_manager* sp, enum spAudio source, int16_t* out, size_t
 				out[s * 2] = out[s * 2 + 1] = 0;
 				continue;
 			}
-			out[s * 2] = scratch[pick][s * 2];
-			out[s * 2 + 1] = scratch[pick][s * 2 + 1];
+			if (sp->limiter) {
+				out[s * 2] = _softLimit(scratch[pick][s * 2]);
+				out[s * 2 + 1] = _softLimit(scratch[pick][s * 2 + 1]);
+			} else {
+				out[s * 2] = scratch[pick][s * 2];
+				out[s * 2 + 1] = scratch[pick][s * 2 + 1];
+			}
 		}
+	}
+	if (sp->lowPass) {
+		_spLowPass(out, produced);
 	}
 	return produced;
 }

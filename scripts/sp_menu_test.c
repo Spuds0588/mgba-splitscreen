@@ -90,8 +90,16 @@ static void videoCB(const void* data, unsigned w, unsigned h, size_t pitch) {
 	}
 }
 
+static unsigned long audioFramesTotal;
+static size_t audioMaxBatch;
+static size_t audioBatches;
 static size_t audioCB(const int16_t* data, size_t frames) {
 	(void) data;
+	audioFramesTotal += frames;
+	if (frames > audioMaxBatch) {
+		audioMaxBatch = frames;
+	}
+	++audioBatches;
 	return frames;
 }
 static void pollCB(void) {}
@@ -169,6 +177,9 @@ static void scenario(const uint32_t* keys, size_t nKeys, int frames,
                      int expectPlayers /* 0 = must NOT boot */) {
 	logLen = 0;
 	frameCount = 0;
+	audioFramesTotal = 0;
+	audioMaxBatch = 0;
+	audioBatches = 0;
 	frameCursor = 0;
 	script = keys;
 	scriptLen = nKeys;
@@ -201,8 +212,26 @@ static void scenario(const uint32_t* keys, size_t nKeys, int frames,
 			printf("FAIL: no bright pixels after boot\n");
 			exit(1);
 		}
-		printf("PASS: menu confirm boots %d players (serialize %zu, %u frames, maxBlue %d)\n",
-		       expectPlayers, dlSerializeSize(), frameCount, frameMax);
+		/* Audio sanity: production is 548.6 frames/video-frame at 32768 Hz or
+		 * 1097.2 after a SOUNDBIAS rewrite to 65536 (Four Swords does this at
+		 * boot). The EMA drain must track whichever rate the core picked with
+		 * no starvation: average per played frame in [500, 1200], output on
+		 * ~every played frame, batches within the drain cap. */
+		unsigned long played = frameCount > 61 ? frameCount - 61 : 1;
+		unsigned long avg = audioFramesTotal / played;
+		if (avg < 500 || avg > 1200) {
+			printf("FAIL: audio avg %lu/video-frame out of band (starvation or dropout)\n", avg);
+			exit(1);
+		}
+		if (audioBatches < played * 90 / 100 || audioMaxBatch > 2048) {
+			printf("FAIL: audio pacing bad (batches %zu of %lu, max %zu)\n",
+			       audioBatches, played, audioMaxBatch);
+			exit(1);
+		}
+		printf("PASS: menu confirm boots %d players (serialize %zu, %u frames, maxBlue %d, "
+		       "audio %lu total / %lu per frame / %zu batches, max %zu)\n",
+		       expectPlayers, dlSerializeSize(), frameCount, frameMax,
+		       audioFramesTotal, avg, audioBatches, audioMaxBatch);
 	} else {
 		if (strstr(logBuf, "link attached")) {
 			printf("FAIL: sessions booted with no input; log:\n%.1500s\n", logBuf);

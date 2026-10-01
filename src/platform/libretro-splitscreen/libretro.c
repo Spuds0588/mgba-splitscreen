@@ -58,6 +58,8 @@ static int playersOpt = 1;
 static int focusedOpt = 0;   /* zero-based player index for speaker/focus/overlay */
 static bool fsAssistOpt = false;
 static bool overlaysOpt = true;
+static bool lowPassOpt = false;  /* audio post: single-pole low-pass */
+static bool limiterOpt = true;   /* audio post: soft-knee limiter */
 static unsigned advertisedRate; /* audio rate last sent via SET_SYSTEM_AV_INFO */
 static bool coreOptionsChanged; /* option visibility changed since last poll */
 
@@ -112,6 +114,12 @@ static struct retro_core_option_v2_definition _optionDefs[] = {
 	{ "splitscreen_audio", "Audio source", NULL,
 	  "Whose mix to play (mixed blends all players). Applies live.",
 	  NULL, NULL, { { NULL, NULL } }, "player 1" },
+	{ "splitscreen_audio_low_pass", "Audio low-pass filter", NULL,
+	  "Tames GBA speaker harshness (upstream mGBA has the same option). Applies live.",
+	  NULL, NULL, { { NULL, NULL } }, "off" },
+	{ "splitscreen_audio_limiter", "Audio limiter", NULL,
+	  "Soft-knee limiter: keeps 2-4 player mixed audio from hard-clipping. Applies live.",
+	  NULL, NULL, { { NULL, NULL } }, "on" },
 	{ "splitscreen_fs_assist", "Four Swords link assist", NULL,
 	  "Handshake assist for Four Swords (matches the app default: off).",
 	  NULL, NULL, { { NULL, NULL } }, "off" },
@@ -194,11 +202,19 @@ static void _initOptionDefs(void) {
 	static const struct retro_core_option_value valsOverlays[] = {
 		{ "on", "On" }, { "off", "Off" },
 	};
+	static const struct retro_core_option_value valsLowPass[] = {
+		{ "off", "Off" }, { "on", "On" },
+	};
+	static const struct retro_core_option_value valsLimiter[] = {
+		{ "on", "On" }, { "off", "Off" },
+	};
 	_setValues(&_optionDefs[0], valsPlayers, 3);
 	_setValues(&_optionDefs[2], valsFocus, 4);
 	_setValues(&_optionDefs[3], valsAudio, 5);
-	_setValues(&_optionDefs[4], valsAssist, 2);
-	_setValues(&_optionDefs[5], valsOverlays, 2);
+	_setValues(&_optionDefs[4], valsLowPass, 2);
+	_setValues(&_optionDefs[5], valsLimiter, 2);
+	_setValues(&_optionDefs[6], valsAssist, 2);
+	_setValues(&_optionDefs[7], valsOverlays, 2);
 	_setLayoutValues(0);
 }
 
@@ -336,6 +352,18 @@ static void _readOptions(void) {
 		if (playersOpt < 2 || playersOpt > SP_MAX_PLAYERS) {
 			playersOpt = 2;
 		}
+	}
+
+	var.key = "splitscreen_audio_low_pass";
+	lowPassOpt = false;
+	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		lowPassOpt = strcmp(var.value, "on") == 0;
+	}
+
+	var.key = "splitscreen_audio_limiter";
+	limiterOpt = true;
+	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		limiterOpt = strcmp(var.value, "off") != 0;
 	}
 
 	var.key = "splitscreen_fs_assist";
@@ -494,6 +522,10 @@ void retro_set_environment(retro_environment_t env) {
 				  "Focused player (applies live); 1|2|3|4" },
 				{ "splitscreen_audio",
 				  "Audio source (applies live); player 1|player 2|player 3|player 4|mixed" },
+				{ "splitscreen_audio_low_pass",
+				  "Audio low-pass filter (applies live); off|on" },
+				{ "splitscreen_audio_limiter",
+				  "Audio limiter (applies live); on|off" },
 				{ "splitscreen_fs_assist",
 				  "Four Swords link handshake assist; off|on" },
 				{ "splitscreen_overlays",
@@ -649,6 +681,8 @@ void retro_run(void) {
 	vid.audio = audioOpt;
 	vid.focused = focusedOpt;
 	vid.overlays = overlaysOpt;
+	sp.lowPass = lowPassOpt;
+	sp.limiter = limiterOpt;
 	_applyGeometry();
 
 	/* A SOUNDBIAS rewrite can change the audio production rate mid-game;
@@ -657,6 +691,23 @@ void retro_run(void) {
 	unsigned rate = sp.players[0].core->audioSampleRate(sp.players[0].core);
 	if (rate != advertisedRate) {
 		advertisedRate = rate;
+		/* SOUNDBIAS rewrites change the production rate (32768 -> 65536 Hz).
+		 * Re-size every player's audio buffer for the new rate and re-seed the
+		 * drain EMA so there is no backlog/dropout while the average re-learns
+		 * (upstream only re-advertises AV info and rides out buffer-full
+		 * drops for ~3 s; our GBAAudioResizeBuffer path resizes live). */
+		size_t samplesPerFrame = (size_t) (((uint64_t) rate
+			* (uint64_t) sp.players[0].core->frameCycles(sp.players[0].core))
+			/ (uint64_t) sp.players[0].core->frequency(sp.players[0].core)) + 1;
+		size_t internal = samplesPerFrame * 2;
+		if (internal > 0x4000) {
+			internal = 0x4000;
+		}
+		for (int i = 0; i < sp.nPlayers; ++i) {
+			sp.players[i].core->setAudioBufferSize(sp.players[i].core, internal);
+			sp.audioEma[i] = (float) samplesPerFrame;
+		}
+		sp.samplesPerFrame = samplesPerFrame;
 		struct retro_system_av_info info;
 		retro_get_system_av_info(&info);
 		environCallback(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info);
@@ -669,8 +720,8 @@ void retro_run(void) {
 	sp_composite(&sp, &vid, overlaysOpt);
 	videoCallback(vid.out, vid.width, vid.height, vid.width * BYTES_PER_PIXEL);
 
-	int16_t mix[SP_AUDIO_SAMPLES_PER_FRAME * 4];
-	size_t produced = sp_audio(&sp, audioOpt, mix, SP_AUDIO_SAMPLES_PER_FRAME * 2);
+	int16_t mix[SP_AUDIO_MAX_FRAMES * 2];
+	size_t produced = sp_audio(&sp, audioOpt, mix, SP_AUDIO_MAX_FRAMES);
 	if (produced && audioCallback) {
 		audioCallback(mix, produced);
 	}

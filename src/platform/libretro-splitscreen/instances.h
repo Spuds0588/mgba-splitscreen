@@ -38,8 +38,12 @@ extern const uint16_t spPlayerColors[SP_MAX_PLAYERS]; /* RGB565, app palette */
 /* Log sink wired by libretro.c (routes into the frontend's log callback). */
 extern void (*spLogCallback)(const char* line);
 
-/* Per-player audio pacing: nominal samples per video frame at 32768 Hz. */
-#define SP_AUDIO_SAMPLES_PER_FRAME 533
+/* Audio pacing: production per video frame is rate * frameCycles / frequency
+ * (548.6 frames at the default 32768 Hz — the old fixed "533" was a
+ * misestimate and starved the drain after SOUNDBIAS rewrites). Buffers are
+ * sized from the actual rate at load; SP_AUDIO_MAX_FRAMES bounds the
+ * per-frame drain and the mix buffer. */
+#define SP_AUDIO_MAX_FRAMES 2048
 
 enum spLayout {
 	SP_LAYOUT_AUTO = 0, /* 2P: 2x1, 3P/4P: 2x2 */
@@ -87,6 +91,13 @@ struct sp_manager {
 	bool linkAttached;         /* true when nPlayers > 1 (link wired up) */
 	bool fsSuppressed;         /* host FS-assist policy, re-applied on reset */
 	unsigned stallRun;         /* consecutive 0-step frames (stall watchdog) */
+	/* Audio pacing + post-processing. EMA is seeded at load from the
+	 * rate-derived samples-per-frame (upstream-mGBA-style pacing); the flags
+	 * are set by libretro.c every frame from core options. */
+	float audioEma[SP_MAX_PLAYERS];
+	size_t samplesPerFrame;
+	bool lowPass;              /* single-pole low-pass on the output (anti-tinny) */
+	bool limiter;              /* soft-knee limiter on the output (anti-clipping) */
 };
 
 /* State of the last compositors + outputs, owned by libretro.c but shared with
