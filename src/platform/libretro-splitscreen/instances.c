@@ -210,6 +210,11 @@ static void _spFinishLoad(struct sp_manager* sp, struct sp_video* vid) {
 
 bool sp_load(struct sp_manager* sp, int nPlayers, const void* rom, size_t romSize,
              struct sp_video* vid) {
+	if (sp->nPlayers) {
+		/* Re-load on a live manager (e.g. the deferred load racing the menu
+		 * take): deinit first or the old cores/buffers leak. */
+		sp_deinit(sp);
+	}
 	memset(sp, 0, sizeof(*sp));
 	_spResetAudioPost();
 	if (nPlayers < 1 || nPlayers > SP_MAX_PLAYERS || !rom || !romSize) {

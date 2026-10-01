@@ -634,6 +634,10 @@ void retro_deinit(void) {
 }
 
 void retro_reset(void) {
+	/* Diagnostic: the MKSC 4P "session restarted" mystery (2026-10-01) traced
+	 * to a full SIO teardown+rebuild, which only this path or retro_unload_game
+	 * can produce. Log which one the frontend asked for. */
+	_spLogLine("frontend requested RESET (retro_reset)");
 	sp_reset(&sp);
 	menuActive = false; /* a reset restarts the game, not the boot menu */
 }
@@ -656,6 +660,7 @@ void retro_run(void) {
 		videoCallback(vid.out, vid.width, vid.height, vid.width * BYTES_PER_PIXEL);
 		if (spMenuTakeConfirmed()) {
 			menuActive = false;
+			pendingLoad = false; /* the menu-take IS the load; don't re-run the deferred one */
 			pendingPlayers = spMenuSelection();
 			if (!_doLoad(pendingPlayers, romCopy, romCopySize, havePath ? romPath : NULL)) {
 				_spLogLine("ERROR: load failed after menu; refusing to run");
@@ -795,6 +800,9 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info* i
 }
 
 void retro_unload_game(void) {
+	/* Diagnostic: pairs with the retro_reset line; distinguishes an unload+reload
+	 * cycle (content change, savestate state-load, netplay sync) from a reset. */
+	_spLogLine("frontend requested UNLOAD (retro_unload_game)");
 	sp_deinit(&sp);
 	free(romCopy);
 	romCopy = NULL;
