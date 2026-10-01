@@ -199,7 +199,7 @@ the frontend-neutral layers.
 | src/gba/serialize.c | +8 | OURS: memset GBABundledState before serialize (garbage hw.unlCartFlags made imported states drop the bootleg section — observed as FS link-screen garbage execution) |
 | src/gba/gba.c | +61/−some | OURS: SIO IRQ/halt DEBUG trace instrumentation (mLOG-gated, constant-cost bookkeeping, inert at default log levels) |
 | src/gba/io.c | +36 | OURS: SIO BUSYRD/MULTIRD DEBUG trace (same gating) |
-| src/gba/audio.c | −8 | UPSTREAM-NEWER: FIFO sourceOffset rescale exists upstream, absent here — fork predates it. CHERRY-PICK CANDIDATE (evaluate before next release; see to-do) |
+| src/gba/audio.c | 0 | IN SYNC (2026-10-01): upstream's FIFO sourceOffset rescale cherry-picked — fixes garbled FIFO audio when a game uses 16-bit DMA with a nonzero source offset |
 | src/platform/libretro-splitscreen/ | new | OURS: the core itself (not mGBA changes) |
 | build system | + | OURS: BUILD_LIBRETRO_SPLITSCREEN option (+ BUILD_LIBRETRO untouched) |
 

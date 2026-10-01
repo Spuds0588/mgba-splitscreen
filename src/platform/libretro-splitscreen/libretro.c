@@ -6,10 +6,11 @@
  *
  * mgba-splitscreen libretro core: 2-4 linked mGBA GBA cores inside ONE core
  * instance, linked over the lockstep SIO coordinator (the same driver the
- * web/desktop apps drive). Single-ROM loads run ONE player; multi-ROM
- * subsystem loads (GBA Link 2/3/4 Player) run N linked players; a core
- * option also splits a single ROM across N players (TGB Dual's
- * MODE_SINGLE_GAME_DUAL pattern).
+ * web/desktop apps drive). Multiplayer only: a single-ROM load boots an
+ * in-core "how many players?" menu (2-4, driven by Player 1) — see
+ * instances_menu.c; multi-ROM subsystem loads (GBA Link 2/3/4 Player) boot
+ * their declared count directly; the Players per ROM core option is the
+ * menu's persisted default.
  */
 #include "libretro.h"
 
@@ -24,6 +25,7 @@
 #include <mgba-util/vfs.h>
 
 #include "instances.h"
+#include "instances_menu.h"
 #include <mgba/internal/gba/sio/lockstep.h>
 
 #include <stdio.h>
@@ -45,6 +47,7 @@ static char romPath[PATH_MAX];
 static bool havePath;
 static bool pendingLoad;    /* deferred until first retro_run (options ready) */
 static int pendingPlayers;
+static bool menuActive;     /* in-core boot menu (single-ROM quick path) */
 static unsigned lastWidth = 240;
 static unsigned lastHeight = 160;
 
@@ -98,8 +101,8 @@ static void _spLogLine(const char* line) {
 
 static struct retro_core_option_v2_definition _optionDefs[] = {
 	{ "splitscreen_players", "Players per ROM (requires reload)", NULL,
-	  "Link N instances of one ROM (subsystems load distinct ROMs instead).",
-	  NULL, NULL, { { NULL, NULL } }, "1" },
+	  "Link N instances of one ROM (subsystems load distinct ROMs instead). 1-player mode was removed: this core is for linked multiplayer; use upstream mGBA to play solo.",
+	  NULL, NULL, { { NULL, NULL } }, "2" },
 	{ "splitscreen_layout", "View layout", NULL,
 	  "Applies live; per-viewer (each netplay client picks their own view).",
 	  NULL, NULL, { { NULL, NULL } }, "auto" },
@@ -176,7 +179,7 @@ static void _setLayoutValues(int n) {
 
 static void _initOptionDefs(void) {
 	static const struct retro_core_option_value valsPlayers[] = {
-		{ "1", "1 (single)" }, { "2", "2" }, { "3", "3" }, { "4", "4" },
+		{ "2", "2" }, { "3", "3" }, { "4", "4" },
 	};
 	static const struct retro_core_option_value valsFocus[] = {
 		{ "1", "Player 1" }, { "2", "Player 2" }, { "3", "Player 3" }, { "4", "Player 4" },
@@ -191,7 +194,7 @@ static void _initOptionDefs(void) {
 	static const struct retro_core_option_value valsOverlays[] = {
 		{ "on", "On" }, { "off", "Off" },
 	};
-	_setValues(&_optionDefs[0], valsPlayers, 4);
+	_setValues(&_optionDefs[0], valsPlayers, 3);
 	_setValues(&_optionDefs[2], valsFocus, 4);
 	_setValues(&_optionDefs[3], valsAudio, 5);
 	_setValues(&_optionDefs[4], valsAssist, 2);
@@ -325,11 +328,13 @@ static void _readOptions(void) {
 	}
 
 	var.key = "splitscreen_players";
-	playersOpt = 1;
+	/* 1-player sessions were removed (this core is linked-multiplayer only);
+	 * a stale persisted "1" clamps to 2 so old configs still load. */
+	playersOpt = 2;
 	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
 		playersOpt = atoi(var.value);
-		if (playersOpt < 1 || playersOpt > SP_MAX_PLAYERS) {
-			playersOpt = 1;
+		if (playersOpt < 2 || playersOpt > SP_MAX_PLAYERS) {
+			playersOpt = 2;
 		}
 	}
 
@@ -467,16 +472,22 @@ unsigned retro_api_version(void) {
 }
 
 void retro_set_environment(retro_environment_t env) {
-	environCallback = env;		struct retro_core_options_update_display_callback udisp = {
-			_updateOptionVisibility,
-		};
+	environCallback = env;
+	/* Populate the v2 value lists BEFORE sending the struct: frontends parse
+	 * it immediately, and empty value lists made RetroArch silently drop
+	 * every option (Core Options showed nothing). retro_init re-runs this
+	 * for frontends that call it before reading options. */
+	_initOptionDefs();
+	struct retro_core_options_update_display_callback udisp = {
+		_updateOptionVisibility,
+	};
 		environCallback(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &udisp);
 		/* Prefer the v2 interface (per-value visibility, clean labels); fall
 		 * back to the legacy string form for frontends without v2. */
 		if (!environCallback(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &_optionsV2)) {
 			static struct retro_variable vars[] = {
 				{ "splitscreen_players",
-				  "Players per ROM (requires reload); 1|2|3|4" },
+				  "Players per ROM (requires reload); 2|3|4" },
 				{ "splitscreen_layout",
 				  "View layout (applies live); auto|2x1|1x2|2x2|speaker|focus|overlay" },
 				{ "splitscreen_focus_player",
@@ -592,6 +603,7 @@ void retro_deinit(void) {
 
 void retro_reset(void) {
 	sp_reset(&sp);
+	menuActive = false; /* a reset restarts the game, not the boot menu */
 }
 
 static uint32_t _readKeys(unsigned port) {
@@ -603,6 +615,22 @@ static uint32_t _readKeys(unsigned port) {
 }
 
 void retro_run(void) {
+	/* Boot menu (single-ROM loads): render through the normal video callback
+	 * until P1 confirms a count, then spin the sessions up in-place. The
+	 * frontend sees only a slow-loading core. */
+	if (menuActive) {
+		_applyGeometry(); /* 480x160 menu canvas before the first draw */
+		spMenuFrame(&vid, inputPollCallback, _readKeys);
+		videoCallback(vid.out, vid.width, vid.height, vid.width * BYTES_PER_PIXEL);
+		if (spMenuTakeConfirmed()) {
+			menuActive = false;
+			pendingPlayers = spMenuSelection();
+			if (!_doLoad(pendingPlayers, romCopy, romCopySize, havePath ? romPath : NULL)) {
+				_spLogLine("ERROR: load failed after menu; refusing to run");
+			}
+		}
+		return;
+	}
 	if (pendingLoad) {
 		pendingLoad = false;
 		if (!_doLoad(pendingPlayers, romCopy, romCopySize, havePath ? romPath : NULL)) {
@@ -662,8 +690,13 @@ bool retro_load_game(const struct retro_game_info* game) {
 		havePath = false;
 	}
 	_readOptions();
-	pendingPlayers = playersOpt; /* quick path: N copies of this one ROM */
+	/* Quick path: N copies of this one ROM. The count is chosen on the boot
+	 * menu (defaulting to the persisted option) instead of requiring a trip
+	 * to Core Options on every load. */
+	pendingPlayers = 2;
 	pendingLoad = true;
+	menuActive = true;
+	spMenuStart(playersOpt);
 	return true;
 }
 
@@ -706,6 +739,7 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info* i
 	 * per-player ROMs, _doLoad takes an array. */
 	pendingPlayers = n;
 	pendingLoad = true;
+	menuActive = false; /* subsystem declares its count; no menu */
 	return true;
 }
 
@@ -717,6 +751,8 @@ void retro_unload_game(void) {
 	free(vid.out);
 	memset(&vid, 0, sizeof(vid));
 	pendingLoad = false;
+	menuActive = false;
+	spMenuStart(playersOpt); /* re-arm; default = the persisted option */
 }
 
 unsigned retro_get_region(void) {

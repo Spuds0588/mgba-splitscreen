@@ -106,6 +106,16 @@ void GBAAudioScheduleFifoDma(struct GBAAudio* audio, int number, struct GBADMA* 
 	info->reg = GBADMARegisterSetDestControl(info->reg, GBA_DMA_FIXED);
 	info->reg = GBADMARegisterSetWidth(info->reg, 1);
 	info->destOffset = 0;
+	// The width was just forced to 32-bit, but sourceOffset was cached at CNT_HI
+	// write time from the width the game programmed. Rescale it, keeping the
+	// direction the source control selected. (Cherry-picked from upstream mGBA:
+	// games using 16-bit DMA with a nonzero source offset produced garbled
+	// FIFO audio without this.)
+	if (info->sourceOffset > 0) {
+		info->sourceOffset = 4;
+	} else if (info->sourceOffset < 0) {
+		info->sourceOffset = -4;
+	}
 	switch (info->dest) {
 	case GBA_BASE_IO | GBA_REG_FIFO_A_LO:
 		audio->chA.dmaSource = number;

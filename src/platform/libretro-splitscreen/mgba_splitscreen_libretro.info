@@ -10,7 +10,7 @@ display_version = "0.1.0"
 
 # Hardware Information
 manufacturer = "Nintendo"
-systemname = "Game Boy Advance (2-4 linked players)"
+systemname = "Game Boy Advance (2-4 linked players; multiplayer only)"
 systemid = "game_boy_advance"
 
 # Libretro Features
@@ -29,7 +29,7 @@ needs_fullpath = "false"
 disk_control = "false"
 is_experimental = "true"
 
-description = "mgba-splitscreen: 2-4 linked Game Boy Advance emulator instances in one core, over mGBA's lockstep link-cable driver. Load a single ROM with the 'Players per ROM' option for same-cartridge multiplayer, or use Load Content -> the GBA Link subsystems for per-player ROMs. A fork of upstream mGBA's libretro core carrying the mgba-splitscreen link fixes (Four Swords handshake assist + gated deadlock kick)."
+description = "mgba-splitscreen: 2-4 linked Game Boy Advance emulator instances in one core, over mGBA's lockstep link-cable driver. Multiplayer only: 'Players per ROM' starts at 2 — for solo play use the regular mGBA core. Load a single ROM for same-cartridge multiplayer, or use Load Content -> the GBA Link subsystems for per-player ROMs. A fork of upstream mGBA's libretro core carrying the mgba-splitscreen link fixes (Four Swords handshake assist + gated deadlock kick)."
 
 # Firmware (optional, same entry upstream mGBA declares)
 firmware_count = 1

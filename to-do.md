@@ -17,6 +17,28 @@
       the human re-cycled views on the fixed build): MKSC 2P window, flip all
       layouts + focused player + overlays toggle, confirm aspect holds and no
       link stalls. Evidence shots to docs/screens/.
+- [x] **HUMAN-REPORTED + FIXED round 2 (2026-10-01): Core Options empty in
+      real RetroArch** — root cause: the v2 options struct was sent from
+      retro_set_environment BEFORE _initOptionDefs() filled the value lists
+      (that ran in retro_init, which is too late: the frontend parses the
+      struct at send time and silently drops options with no values). Fix:
+      populate first. Headless proof: GET_VARIABLE "Not implemented" 4140 → 0.
+      (Also found: the 13:57 "reinstall" earlier today ran while RetroArch was
+      open — the running instance kept the old mapped .so. Lesson: reinstall
+      only with RetroArch closed, then relaunch.)
+- [x] **DECIDED (2026-10-01): core is multiplayer-only** — Players per ROM
+      2/3/4, default 2; "1 (single)" removed, stale persisted "1" clamps to 2.
+      Solo players use upstream mGBA; forkstock core stays as test instrument
+      only. Decision + rebuild recipe: src/platform/libretro-splitscreen/FORK_NOTES.md.
+- [ ] **Return real save sizes from sp_memory_size** (upstream returns
+      GBASavedataSize; we return the full 1 MiB buffer, so frontends write 1 MiB
+      files). Read-compat with upstream .srm is unaffected (type-tagged, smaller
+      files load fine). Tiny change in instances.c sp_memory_size + per-core
+      size query; add a regression that a 64 KiB SRAM game writes a 64 KiB file.
+- [ ] **Save-interop UX (future)**: "copy solo save into seat N" flow for
+      Shining-Soul-II-style carryover (desktop picker or documented manual copy
+      foo.srm -> foo.sav2 before a subsystem load). P1 already interops with
+      upstream mGBA .srm today; plan in FORK_NOTES.md.
 - [x] **HUMAN DONE: Discord mirror ask posted** (2026-09-30, #programming,
       deep link discord.com/channels/184109094070779904/876520593636335646);
       hunterk replied positively same-hour (lockstep coordinator called "a big
@@ -44,9 +66,18 @@
       serialize memset fix, mLOG-gated trace), ONE cherry-pick candidate:
       upstream's audio FIFO sourceOffset rescale postdates the fork (evaluate
       before next release). GB/GBC link = feature gap, not regression.
-- [ ] **Evaluate the audio sourceOffset cherry-pick** (upstream "The width was
-      just forced..." hunk in GBAAudioScheduleFifoDma): confirm our removal
-      was fork-age (not deliberate), test MKSC after applying, then keep.
+- [x] **In-core boot menu SHIPPED (2026-10-01)**: "How many players?" (2/3/4)
+      rendered through the video callback before sessions boot; P1
+      Left/Right + A/Start; press-to-start only; defaults to the Players per
+      ROM option; subsystem loads skip it. Headless-verified
+      (scripts/sp_menu_test.c, both scenarios PASS). HUMAN RETEST: load any
+      GBA ROM in RetroArch, pick 2/3/4 on the menu, confirm boot + controls.
+- [x] **Audio sourceOffset cherry-pick APPLIED (2026-10-01)**: upstream's
+      "The width was just forced..." hunk in GBAAudioScheduleFifoDma is now in
+      src/gba/audio.c (games using 16-bit FIFO DMA with a nonzero source offset
+      produced garbled audio without it — the user's "audio sounds a bit
+      garbled" report on the test build). Kept, matching upstream behavior;
+      fork-diff catalog row updated to "in sync".
 - [ ] After review feedback: adjust recipes/info per maintainer preference
       (platforms, core name); watch libretro-super#2127 + libretro/docs#1214.
 

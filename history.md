@@ -2411,3 +2411,137 @@ The newly added personal ROMs under `Test Roms/` are ignored by `/Test Roms/`; g
 The rebuilt WASM bridge successfully loads both `Double Dragon II (USA, Europe).gb` and `Mario Tennis (USA).gbc` into two GB cores, reports platform `mPLATFORM_GB`, and renders both 160x144 instances. The browser smoke path can step both cores and route input through the shared control mask.
 
 The deterministic serial probe initially only enabled one GB endpoint, which cannot start a real transfer. The probe now enables both ends and was rebuilt, but a game-agnostic register poke is not considered proof of game-level link play because the running ROM can immediately overwrite the registers. We therefore record GB/GBC link support as bridge/coordinator smoke coverage, not a verified Pokémon battle/trade flow. Separate-ROM linked sessions are explicitly deferred; the Oracle of Ages/Seasons use password exchange rather than cable link and provide no useful audience case.
+
+### 2026-10-01 — Cast verdict (feasible); core goes multiplayer-only (min 2 sessions); save-interop plan
+
+**Cast button research (web app, research-only per request — no code)**: verdict
+FEASIBLE, lag does not kill it. The existing PeerJS host-star layer already
+moves per-seat JPEG at ~10-20KB/frame with 1-2ms encodes (online.js); a cast is
+a fifth, view-only peer receiving all seats (~1.8MB/s at 30 fps, LAN-fine).
+Estimated added latency ~50-150ms via the JPEG DataChannel path, ~30-80ms via a
+canvas.captureStream() WebRTC media track — both beat OS screen mirroring
+(~100-300ms). Chromecast/Google TV cannot run a PeerJS page and smart-TV
+browsers are not a target: the practical v1 receiver is any laptop/second
+device on the TV (viewer invite URL reusing the existing QR flow). Controls
+stay on the phones, so cast lag never touches input latency. Full memo:
+mgba-splitscreen/CAST_FEASIBILITY.md.
+
+**"No core options / 1 left-aligned session" root-caused as a stale artifact,
+not source**: the installed mgba_splitscreen_libretro.so predated the options
+work and build-libretro-sp/ had been wiped by disk cleanup (the .info was newer
+than the .so — that mismatch is the tell). Rebuilt (Release + mandatory
+-DCOLOR_16_BIT -DCOLOR_5_6_5) and reinstalled; core options are back.
+
+**Core is now multiplayer-only by decision**: "Players per ROM" options are
+2/3/4, default 2; a persisted "1" clamps to 2; the "1 (single)" value and the
+1-session layout path are gone (auto = side-by-side at 2P, quadrants at 3-4P).
+Rationale: solo players should use upstream mGBA; this core is for linked
+multiplayer. mgba_forkstock_libretro stays as a home-menu compatibility test
+instrument only, not a product. Headless verify: load logs
+"link attached: 2 players on the virtual cable", SET_SYSTEM_AV_INFO 480x160,
+"loaded 2 players linked (per-viewer views active)". New decision +
+rebuild recipe live in src/platform/libretro-splitscreen/FORK_NOTES.md;
+.info description says multiplayer-only. RetroArch relaunched at the home menu
+for the human retest (Core Options visible, 2P default, no stale persisted
+values in retroarch-core-options.cfg).
+
+**Save-data compatibility with upstream mGBA (researched, plan recorded)**:
+mGBA battery saves are type-tagged; both cores hand the frontend an opaque
+RETRO_MEMORY_SAVE_RAM blob, so an upstream foo.srm loads into our P1 seat
+as-is and P1 saves round-trip — P1 interop works today with zero conversion.
+P2-P4 use subsystem memory ids 0x100-0x102 (<rom>.sav2/3/4). Known divergence
+(harmless on read, wasteful on write): sp_memory_size reports the full 1 MiB
+buffer where upstream reports GBASavedataSize, so we write 1 MiB files.
+Follow-up queued: return each core's real save size. Future UX (not built):
+"copy solo save into seat N".
+
+### 2026-10-01 (2) — Core Options empty in real RetroArch (root cause #2); audio garble fixed via upstream cherry-pick; no-prompt UX answer
+
+**Core Options, round 2**: the stale-.so story was only half of it. Real
+RetroArch showed NO options even on the fresh binary: the core sent
+RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2 from retro_set_environment BEFORE
+_initOptionDefs() had populated the value lists (that ran in retro_init —
+too late). RetroArch parses the struct at send time and silently drops
+options with empty value lists; every GET_VARIABLE then logs "Not
+implemented". Fix: _initOptionDefs() moved before the send (retro_init still
+re-runs it, harmless). Headless A/B: 4140 "Not implemented" lines → 0.
+Process lesson recorded: the midday reinstall ran while RetroArch was open,
+so the running instance kept the old mapped .so — reinstall only with
+RetroArch closed, then relaunch.
+
+**Garbled audio**: identified as the long-flagged upstream cherry-pick
+candidate — GBAAudioScheduleFifoDma sourceOffset rescale ("The width was just
+forced..."). Applied to src/gba/audio.c; to-do item closed; fork-diff catalog
+row now "in sync". Note the same source feeds the native app and the web
+wasm bridge, so both benefit; MKSC SOUNDBIAS behavior unchanged.
+
+**"Prompt for player count before boot"**: RetroArch has no content-load
+hook a core can use to ask questions mid-load — no frontends implement one.
+The native equivalent already exists and matches the ask: subsystems
+(GBA Link 2P/3P/4P) put the choice in Load Content's per-ROM picking flow,
+no Core Options visit needed. Quick path (one ROM, N seats) stays on the
+default-2 "Players per ROM" option. Documented; no code.
+
+### 2026-10-01 (3) — In-core boot menu ("how many players?") shipped and verified
+
+**Decision**: the Load Content subsystem picker does not re-fire when a game
+is relaunched from a playlist/Recents (playlists store only content path +
+core), so it cannot carry the per-boot player-count choice. Built instead:
+an IN-CORE boot menu rendered through the normal video callback before any
+sessions spin up — RetroArch just sees a slow-loading core; no frontend
+contract changes. UX: press-to-start only (waits until P1 presses
+A/Start; nothing auto-boots).
+
+**Implementation**: src/platform/libretro-splitscreen/instances_menu.{c,h}
+(auto-globbed by CMake). 480x160 menu: title, three color-coded 2/3/4 tiles
+in the seat palette, blinking hint; 3x5 bitmap font (A-Z/0-9 subset) grown
+from the badge glyph engine; P1 Left/Right/L/R select, A/Start confirms.
+Wired in libretro.c: retro_load_game (quick path) arms the menu with the
+persisted "Players per ROM" option as the highlighted default; subsystem
+loads skip the menu (count declared); retro_reset restarts the game without
+re-showing the menu; retro_unload_game re-arms it. Sessions boot in-place on
+confirm; savestate size stays 0 while the menu shows.
+
+**Verification**: new headless harness scripts/sp_menu_test.c (dlopens the
+INSTALLED .so, scripts P1's RetroPad per frame — with the libretro-id ->
+keymask-bit translation, RetroPad ids are SNES-style B=0/A=8). Scenario 1:
+240 frames with no input -> menu holds, "link attached" absent, serialize 0.
+Scenario 2: 30 idle, RIGHT, 30 idle, A -> "link attached: 3 players",
+serialize 1230556, frames render. Both PASS against the installed binary.
+Process note: the first "FAIL" was again the stale installed .so —
+rebuild WITHOUT reinstall keeps biting; always cp the .so before testing.
+
+### 2026-10-01 (4) — Boot-menu glyphs fixed (2/3/4 were wrong; "3" rendered as E)
+
+Human screenshot showed the menu digits mirrored/wrong: the OLD badge digit
+patterns in instances.c _glyphDigits were defective — "3" was literally an
+E-shaped pattern ({7,4,6,4,7}), "2" had a stray #.# mid-row (mirrored look),
+and "4" had its stem on the left. Nobody had scrutinized them at 1x badge
+scale; the 6x menu made it obvious. Fixed in BOTH places (menu font3x5 and
+badge _glyphDigits), plus W and O reshaped in the menu font (W now converges
+to a bottom point; O is a box). Verified by rendering the glyphs as ASCII
+first, then dumping the real 480x160 menu frame from the harness to a BMP
+(/tmp/sp_menu.bmp; viewer copy at mgba-splitscreen/menu-render-check.html).
+Harness regressions still PASS both scenarios; new binary installed and
+RetroArch relaunched.
+
+### 2026-10-01 (5) — Font replaced with Tom Thumb (extracted, not hand-drawn); stale-binary process hole closed
+
+The round-4 glyph fix never reached the user: the 14:38 build chain silently
+did not recompile and the "install" copied the old binary — the freshness
+check compared installed-vs-build-dir hashes (both stale), which proves
+nothing. Correct gate: hash BEFORE vs AFTER the build must differ, and the
+installed hash must equal the new build hash. Added to the build flow.
+
+Per the user's ask ("use existing sprites, don't hand-roll"), the whole menu
+font is now Tom Thumb, the classic public-domain 3x5 bitmap font (Robey
+Pointer). Data was extracted MECHANICALLY: downloaded the Tom Thumb TTF
+(gheja/tom-thumb-ttf), rendered every printable char at its native 3x5 grid
+(PIL, ppem 15), thresholded to the MSB-left 5-bytes-per-glyph layout, and
+spliced the 95-entry table into instances_menu.c (drawText indexes by
+char-0x20). Badge digits in instances.c now use the same Tom Thumb patterns
+(1 lost its serif base for consistency). ASCII-audited before embedding:
+3 is open-sided, 4 faces right, W/M/O/N canonical. Harness: both scenarios
+PASS against the fresh binary (hash c34e7446); frame dumped to
+/tmp/sp_menu.bmp and mirrored at mgba-splitscreen/menu-render-check.html.
+RetroArch relaunched on the fresh install.
