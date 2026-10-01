@@ -116,7 +116,7 @@ static struct retro_core_option_v2_definition _optionDefs[] = {
 	  NULL, NULL, { { NULL, NULL } }, "player 1" },
 	{ "splitscreen_audio_low_pass", "Audio low-pass filter", NULL,
 	  "Tames GBA speaker harshness (upstream mGBA has the same option). Applies live.",
-	  NULL, NULL, { { NULL, NULL } }, "off" },
+	  NULL, NULL, { { NULL, NULL } }, "on" },
 	{ "splitscreen_audio_limiter", "Audio limiter", NULL,
 	  "Soft-knee limiter: keeps 2-4 player mixed audio from hard-clipping. Applies live.",
 	  NULL, NULL, { { NULL, NULL } }, "on" },
@@ -355,7 +355,7 @@ static void _readOptions(void) {
 	}
 
 	var.key = "splitscreen_audio_low_pass";
-	lowPassOpt = false;
+	lowPassOpt = true;
 	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
 		lowPassOpt = strcmp(var.value, "on") == 0;
 	}
@@ -523,7 +523,7 @@ void retro_set_environment(retro_environment_t env) {
 				{ "splitscreen_audio",
 				  "Audio source (applies live); player 1|player 2|player 3|player 4|mixed" },
 				{ "splitscreen_audio_low_pass",
-				  "Audio low-pass filter (applies live); off|on" },
+				  "Audio low-pass filter (applies live); on|off" },
 				{ "splitscreen_audio_limiter",
 				  "Audio limiter (applies live); on|off" },
 				{ "splitscreen_fs_assist",
