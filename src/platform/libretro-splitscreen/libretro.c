@@ -27,6 +27,8 @@
 #include "instances.h"
 #include "instances_menu.h"
 #include <mgba/internal/gba/sio/lockstep.h>
+#include <mgba/internal/gba/gba.h>
+#include <mgba/internal/gba/memory.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -86,6 +88,16 @@ static const int keymap[] = {
 #define SP_MEMORY_P2 0x100
 #define SP_MEMORY_P3 0x101
 #define SP_MEMORY_P4 0x102
+
+static void _spMgbaLog(struct mLogger* logger, int category, enum mLogLevel level, const char* format, va_list args) {
+	UNUSED(logger);
+	if (!logCallback || !(level & (mLOG_FATAL | mLOG_ERROR))) {
+		return;
+	}
+	char message[256];
+	vsnprintf(message, sizeof(message), format, args);
+	logCallback(level == mLOG_FATAL ? RETRO_LOG_ERROR : RETRO_LOG_WARN, "[splitscreen] %s: %s\n", mLogCategoryName(category), message);
+}
 
 static void _spLogLine(const char* line) {
 	if (logCallback) {
@@ -476,10 +488,46 @@ static void _geometryFromPlayers(int n) {
 	_applyGeometry();
 }
 
+/* NelfePlay: each console's work RAM through SET_MEMORY_MAPS, so the frontend's READ_CORE_MEMORY /
+ * WRITE_CORE_MEMORY reach every player (a ready start writes each player's choice before netplay
+ * peers connect). Player 1 keeps the real GBA addresses (EWRAM 0x02000000, IWRAM 0x03000000), so
+ * achievements and READ_CORE_RAM see an ordinary GBA; player N+1 is the same map 0xN0000000 higher.
+ * Explicit ranges (select 0): no mirror of one player can alias another. */
+#define SP_PLAYER_MAP_STRIDE 0x10000000u
+static struct retro_memory_descriptor _spDescs[SP_MAX_PLAYERS * 2];
+
+static void _setupPlayerMaps(void) {
+	struct retro_memory_map mmaps;
+	unsigned n = 0;
+	memset(_spDescs, 0, sizeof(_spDescs));
+	for (int i = 0; i < sp.nPlayers && i < SP_MAX_PLAYERS; ++i) {
+		struct mCore* core = sp.players[i].core;
+		if (!core || core->platform(core) != mPLATFORM_GBA) {
+			continue;
+		}
+		struct GBA* gba = core->board;
+		_spDescs[n].ptr = gba->memory.wram;
+		_spDescs[n].start = GBA_BASE_EWRAM + SP_PLAYER_MAP_STRIDE * (unsigned) i;
+		_spDescs[n].len = GBA_SIZE_EWRAM;
+		++n;
+		_spDescs[n].ptr = gba->memory.iwram;
+		_spDescs[n].start = GBA_BASE_IWRAM + SP_PLAYER_MAP_STRIDE * (unsigned) i;
+		_spDescs[n].len = GBA_SIZE_IWRAM;
+		++n;
+	}
+	mmaps.descriptors = _spDescs;
+	mmaps.num_descriptors = n;
+	environCallback(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &mmaps);
+	char msg[96];
+	snprintf(msg, sizeof(msg), "memory maps: %u descriptors for %d player%s", n, sp.nPlayers, sp.nPlayers == 1 ? "" : "s");
+	_spLogLine(msg);
+}
+
 static bool _doLoad(int nPlayers, const void* data, size_t size, const char* path) {
 	if (!sp_load(&sp, nPlayers, data, size, &vid)) {
 		return false;
 	}
+	_setupPlayerMaps();
 	advertisedRate = sp.players[0].core->audioSampleRate(sp.players[0].core);
 	_geometryFromPlayers(nPlayers);
 	_applyFsAssist();
@@ -619,9 +667,11 @@ void retro_init(void) {
 	vid.audio = SP_AUDIO_P1;
 	_initOptionDefs();
 
-	static struct mLogger logger; /* lives for the process: fine, global state allowed */
-	logger.log = 0;
-	(void) logger;
+	/* Without a default logger, mLog() falls back to printf for EVERY message at every level, debug included
+	 * (each DMA, BIOS call and SIO event, thousands per frame): with stdout captured by the launcher, two
+	 * linked consoles ran at a third of full speed. Only fatal and error messages reach the frontend log. */
+	static struct mLogger logger = { .log = _spMgbaLog };
+	mLogSetDefaultLogger(&logger);
 }
 
 void retro_deinit(void) {
