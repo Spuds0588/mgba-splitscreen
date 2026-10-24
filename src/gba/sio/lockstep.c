@@ -277,6 +277,7 @@ static void GBASIOLockstepDriverReset(struct GBASIODriver* driver) {
 	for (q = 0; q < MAX_LOCKSTEP_EVENTS - 1; ++q) {
 		player->buffer[q].next = &player->buffer[q + 1];
 	}
+	player->buffer[MAX_LOCKSTEP_EVENTS - 1].next = NULL;
 	player->freeList = &player->buffer[0];
 	if (player->driver->user->wake) {
 		player->driver->user->wake(player->driver->user);
@@ -368,6 +369,11 @@ static bool GBASIOLockstepDriverLoadState(struct GBASIODriver* driver, const voi
 	player->otherModes[1] = _modeIntToEnum(GBASIOLockstepSerializedFlagsGetPlayer1Mode(flags));
 	player->otherModes[2] = _modeIntToEnum(GBASIOLockstepSerializedFlagsGetPlayer2Mode(flags));
 	player->otherModes[3] = _modeIntToEnum(GBASIOLockstepSerializedFlagsGetPlayer3Mode(flags));
+	// The ready lines (SIOCNT ready, RCNT SD) follow from the modes just
+	// restored. The I/O restore set them from this player's view of the link
+	// before the load: in a new process (or after a reset) they came back low
+	// and the games dropped the link ("communication error").
+	_setReady(coordinator, player, player->playerId, player->mode);
 
 	if (GBASIOLockstepSerializedFlagsGetEventScheduled(flags)) {
 		int32_t when;
@@ -391,6 +397,8 @@ static bool GBASIOLockstepDriverLoadState(struct GBASIODriver* driver, const voi
 	for (i = 0; i < MAX_LOCKSTEP_EVENTS - 1; ++i) {
 		player->buffer[i].next = &player->buffer[i + 1];
 	}
+	// The last slot may still point at an event from before the load.
+	player->buffer[MAX_LOCKSTEP_EVENTS - 1].next = NULL;
 	player->freeList = &player->buffer[0];
 	player->queue = NULL;
 
@@ -420,6 +428,11 @@ static bool GBASIOLockstepDriverLoadState(struct GBASIODriver* driver, const voi
 			break;
 		}
 	}
+	// End the queue. Its last event still linked to the next free slot, so the
+	// queue and the free list shared their tail: the next event enqueued after
+	// a load with events pending made a loop, and the lockstep event spun on it
+	// forever (F-Zero: Maximum Velocity froze after a netplay rollback).
+	*lastEvent = NULL;
 
 	if (player->playerId == 0) {
 		LOAD_32LE(coordinator->cycle, 0, &state->coordinator.cycle);
