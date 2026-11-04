@@ -616,7 +616,11 @@ int16_t* mgs_get_audio(void) {
 		if (i >= g_count || !g_players[i].running) {
 			return g_mix;
 		}
-		size_t used = g_astream_used[i] - g_astream_head[i];
+		/* `used` is a frame count from `head`, the same convention as the
+		 * writer (collect_audio_player). Reading it as an absolute position
+		 * and never decrementing it replayed already-consumed frames: ~3.5x
+		 * too many frames per frame, heard as a high-pitched, "piped" sound. */
+		size_t used = g_astream_used[i];
 		if (used == 0) {
 			return g_mix;
 		}
@@ -625,6 +629,7 @@ int16_t* mgs_get_audio(void) {
 		}
 		memcpy(g_mix, g_astream[i] + g_astream_head[i] * 2, used * 2 * sizeof(int16_t));
 		g_astream_head[i] += used;
+		g_astream_used[i] -= used;
 		g_mix_frames = (int) used;
 		return g_mix;
 	}
@@ -639,7 +644,7 @@ int16_t* mgs_get_audio(void) {
 			continue;
 		}
 		++running;
-		size_t used = g_astream_used[i] - g_astream_head[i];
+		size_t used = g_astream_used[i]; /* frames available from head */
 		if (used < best) {
 			best = used;
 		}
@@ -664,6 +669,7 @@ int16_t* mgs_get_audio(void) {
 			}
 		}
 		g_astream_head[i] += best;
+		g_astream_used[i] -= best;
 	}
 	g_mix_frames = (int) best;
 	return g_mix;
