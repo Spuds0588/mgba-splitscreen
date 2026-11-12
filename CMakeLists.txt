@@ -1035,6 +1035,16 @@ endif()
 
 if(BUILD_LIBRETRO_SPLITSCREEN)
 	file(GLOB SP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/libretro-splitscreen/*.c)
+	# The core compiles with ENABLE_VFS but not ENABLE_DIRECTORIES, so VDir is an
+	# opaque type here. vfs-w32.c (the Qt frontend's directory backend) gets swept
+	# in on Windows by the platform glob, then fails to compile against that
+	# opaque type — and it calls VDirOpenArchive, which nothing in the core
+	# defines, so it would leave an unresolved symbol inside a DLL. The core never
+	# touches VDir, so keep the file out of this target.
+	set(SP_CORE_SRC ${CORE_SRC})
+	if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Windows")
+		list(REMOVE_ITEM SP_CORE_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/vfs-w32.c)
+	endif()
 	# GBA_SIO_SRC (the lockstep coordinator/driver) is required by the
 	# splitscreen core but only appended to SRC when NOT MINIMAL_CORE; add it
 	# explicitly so the link surface is complete at any MINIMAL_CORE setting.
@@ -1045,7 +1055,7 @@ if(BUILD_LIBRETRO_SPLITSCREEN)
 	if(M_CORE_GB)
 		list(APPEND SP_SIO_SRC ${GB_SIO_SRC})
 	endif()
-	add_library(mgba_splitscreen_libretro SHARED ${CORE_SRC} ${SP_SRC} ${SP_SIO_SRC} ${CORE_VFS_SRC})
+	add_library(mgba_splitscreen_libretro SHARED ${SP_CORE_SRC} ${SP_SRC} ${SP_SIO_SRC} ${CORE_VFS_SRC})
 	add_dependencies(mgba_splitscreen_libretro ${BINARY_NAME}-version-info)
 	set_target_properties(mgba_splitscreen_libretro PROPERTIES PREFIX "" OUTPUT_NAME "mgba_splitscreen_libretro" COMPILE_DEFINITIONS "__LIBRETRO__;COLOR_16_BIT;COLOR_5_6_5;DISABLE_THREADING;MGBA_STANDALONE;${OS_DEFINES};${FUNCTION_DEFINES};ENABLE_VFS;MINIMAL_CORE=2")
 	target_include_directories(mgba_splitscreen_libretro PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/libretro-splitscreen)
