@@ -21,6 +21,10 @@ on:
         description: "Release tag to attach the built core zips to"
         required: true
         default: "retroarch-core-v0.1.0"
+      skip_macos:
+        description: "Skip the macOS jobs (GitHub cancels them when macOS runners are short on capacity)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -34,6 +38,7 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    if: ${{ !(matrix.platform == 'macos' && inputs.skip_macos) }}
     strategy:
       fail-fast: false
       matrix:
@@ -186,7 +191,7 @@ jobs:
     needs: build
     # Publish whatever built, even if one platform failed or a runner was never
     # provisioned — a broken macOS job shouldn't withhold the Windows build.
-    if: ${{ !cancelled() }}
+    if: ${{ always() }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v4
