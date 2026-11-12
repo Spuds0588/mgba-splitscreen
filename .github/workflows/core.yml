@@ -21,10 +21,6 @@ on:
         description: "Release tag to attach the built core zips to"
         required: true
         default: "retroarch-core-v0.1.0"
-      skip_macos:
-        description: "Skip the macOS jobs (GitHub cancels them when macOS runners are short on capacity)"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -38,7 +34,6 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    if: ${{ !(matrix.platform == 'macos' && inputs.skip_macos) }}
     strategy:
       fail-fast: false
       matrix:
