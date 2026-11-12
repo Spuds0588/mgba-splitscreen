@@ -1,0 +1,213 @@
+name: Build RetroArch core
+
+# Builds the mgba_splitscreen libretro core for every platform RetroArch ships
+# on, and attaches the zips to a GitHub Release.
+#
+# Why this exists: libretro's buildbot (the thing behind RetroArch's Core
+# Downloader) carries our core metadata (libretro-super#2127) but compiles no
+# binary for it, so users have no way to install the core from inside
+# RetroArch. These builds are the workaround, and they mirror the same recipe
+# our .gitlab-ci.yml asks libretro's CI to run once the repo is mirrored.
+#
+# Run it by hand to (re)build the assets onto an existing release, or tag a
+# commit `retroarch-core-*` to cut a fresh one.
+on:
+  push:
+    tags:
+      - "retroarch-core-*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to attach the built core zips to"
+        required: true
+        default: "retroarch-core-v0.1.0"
+
+permissions:
+  contents: write
+
+env:
+  # Identical to CORENAME / CORE_ARGS in .gitlab-ci.yml, so a libretro buildbot
+  # build and these builds produce the same core.
+  CMAKE_ARGS: -DCMAKE_BUILD_TYPE=Release -DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO_SPLITSCREEN=ON
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            platform: linux
+          - name: windows-x86_64
+            os: ubuntu-22.04
+            platform: windows
+          - name: macos-arm64
+            os: macos-14
+            platform: macos
+            arch: arm64
+          # Both slices build on an Apple-silicon runner: Apple's SDK ships
+          # both architectures, and macos-13 (Intel) is being retired.
+          - name: macos-x86_64
+            os: macos-14
+            platform: macos
+            arch: x86_64
+          - name: android-arm64-v8a
+            os: ubuntu-22.04
+            platform: android
+            abi: arm64-v8a
+          - name: android-armeabi-v7a
+            os: ubuntu-22.04
+            platform: android
+            abi: armeabi-v7a
+          - name: android-x86_64
+            os: ubuntu-22.04
+            platform: android
+            abi: x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install minGW-w64 (Windows cross compiler)
+        if: matrix.platform == 'windows'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+
+      - name: Configure (Linux)
+        if: matrix.platform == 'linux'
+        run: cmake -S . -B build $CMAKE_ARGS
+
+      - name: Configure (Windows, mingw-w64 cross)
+        if: matrix.platform == 'windows'
+        run: |
+          cmake -S . -B build $CMAKE_ARGS \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+            -DCMAKE_FIND_ROOT_PATH=/usr/x86_64-w64-mingw32
+
+      - name: Configure (macOS)
+        if: matrix.platform == 'macos'
+        run: cmake -S . -B build $CMAKE_ARGS -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+
+      - name: Configure (Android, NDK toolchain)
+        if: matrix.platform == 'android'
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-$(ls -d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"/ndk/* | sort -V | tail -1)}"
+          echo "Using NDK: $NDK"
+          echo "NDK_ROOT=$NDK" >> "$GITHUB_ENV"
+          # libretro passes ANDROID_ARM_MODE=arm only for the 32-bit ARM build.
+          EXTRA=""
+          if [ "${{ matrix.abi }}" = "armeabi-v7a" ]; then EXTRA="-DANDROID_ARM_MODE=arm"; fi
+          cmake -S . -B build $CMAKE_ARGS $EXTRA \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-21
+
+      - name: Build core
+        run: cmake --build build --target mgba_splitscreen_libretro --parallel $(getconf _NPROCESSORS_ONLN)
+
+      # Strip in place so the download is ~half the size. Each platform has its
+      # own strip binary; Android's ships inside the NDK.
+      - name: Strip (Linux)
+        if: matrix.platform == 'linux'
+        run: strip --strip-unneeded build/mgba_splitscreen_libretro.so
+
+      - name: Strip (Windows)
+        if: matrix.platform == 'windows'
+        run: x86_64-w64-mingw32-strip --strip-unneeded build/mgba_splitscreen_libretro.dll
+
+      - name: Strip (macOS)
+        if: matrix.platform == 'macos'
+        run: strip -x build/mgba_splitscreen_libretro.dylib
+
+      - name: Strip (Android)
+        if: matrix.platform == 'android'
+        run: |
+          STRIP=$(ls "$NDK_ROOT"/toolchains/llvm/prebuilt/*/bin/llvm-strip | head -1)
+          "$STRIP" --strip-unneeded build/mgba_splitscreen_libretro.so
+
+      # RetroArch looks for `<core>_libretro_android.so` on Android, and
+      # `<core>_libretro.{so,dll,dylib}` everywhere else, so the Android cores
+      # get the buildbot's suffix here.
+      - name: Package zip
+        run: |
+          set -e
+          case "${{ matrix.platform }}" in
+            linux)   SRC=build/mgba_splitscreen_libretro.so;   DEST=mgba_splitscreen_libretro.so ;;
+            windows) SRC=build/mgba_splitscreen_libretro.dll;  DEST=mgba_splitscreen_libretro.dll ;;
+            macos)   SRC=build/mgba_splitscreen_libretro.dylib; DEST=mgba_splitscreen_libretro.dylib ;;
+            android) SRC=build/mgba_splitscreen_libretro.so;   DEST=mgba_splitscreen_libretro_android.so ;;
+          esac
+          mkdir -p pkg
+          cp "$SRC" "pkg/$DEST"
+          case "${{ matrix.platform }}" in
+            linux)   WHERE="$HOME/.config/retroarch/cores/  (Flatpak: ~/.var/app/org.libretro.RetroArch/config/retroarch/cores/)" ;;
+            windows) WHERE="the RetroArch folder\\cores\\" ;;
+            macos)   WHERE="$HOME/Library/Application Support/RetroArch/cores/" ;;
+            android) WHERE="Android/data/com.retroarch/files/cores/  (or use Load Core and browse to the file)" ;;
+          esac
+          cat > pkg/INSTALL.txt <<EOF
+          mgba_splitscreen_libretro — RetroArch core, ${{ matrix.name }}
+          Built from Spuds0588/mgba-splitscreen @ ${GITHUB_SHA:0:9}
+
+          1. Copy $DEST into $WHERE
+          2. Restart RetroArch, then Load Content -> a GBA ROM -> "mGBA Splitscreen".
+          3. On boot the core asks "How many players?" (2/3/4): P1 picks with
+             Left/Right and confirms with A/Start.
+
+          Core options (Quick Menu -> Core Options):
+            splitscreen_layout        auto | 2x1 | 1x2 | 2x2 | speaker | focus | overlay
+            splitscreen_focus_player  1-4
+            splitscreen_overlays      on | off
+            Players per ROM           same-cartridge multiplayer
+
+          Not in the official Core Downloader yet; see the README's RetroArch section.
+          EOF
+          # The heredoc body is indented to sit under the YAML block scalar.
+          sed -i.bak 's/^          //' pkg/INSTALL.txt && rm -f pkg/INSTALL.txt.bak
+          cd pkg && zip -qr9 "../mgba_splitscreen_libretro-${{ matrix.name }}.zip" .
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-${{ matrix.name }}
+          path: mgba_splitscreen_libretro-${{ matrix.name }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Attach cores to release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd artifacts
+          ls -l
+          sha256sum *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # `gh release upload` (rather than softprops/action-gh-release) so an
+      # existing release keeps its title and notes — we only add assets.
+      - name: Publish assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          set -e
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --prerelease \
+              --title "RetroArch core — mgba_splitscreen" \
+              --notes "Pre-built RetroArch cores for mgba-splitscreen. Install by hand: the official Core Downloader doesn't carry a binary yet."
+          fi
+          gh release upload "$TAG" artifacts/*.zip artifacts/SHA256SUMS.txt --clobber
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \(.size) bytes"'
