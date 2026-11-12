@@ -314,8 +314,8 @@ handling and per-core options — instead of the standalone app.
 | Android x86_64 (Chromebooks, emulators) | [`mgba_splitscreen_libretro-android-x86_64.zip`](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-android-x86_64.zip) | same as above |
 
 Every core self-reports as **mGBA Splitscreen 0.1.0** and takes `gba` content. macOS
-builds are produced by the same workflow and land on the release page once the runner
-has finished them.
+builds (arm64 and Intel) come from their own workflow and appear on the release page as
+GitHub provides macOS runners; they run on the same code and recipe.
 
 1. Unzip it and copy `mgba_splitscreen_libretro.so` into your RetroArch cores folder:
    `~/.config/retroarch/cores/` for a standard Linux build, or

@@ -1,0 +1,116 @@
+name: Build RetroArch core (macOS)
+
+# macOS half of the core builds — split out of core.yml because GitHub
+# frequently has no macOS arm64 capacity: those jobs queue for ~15 minutes and
+# are then cancelled with "The job was not acquired by Runner of type hosted",
+# which used to hold up the Linux/Windows/Android builds and their release.
+# Runs on its own, and publishes whatever it produced.
+on:
+  push:
+    tags:
+      - "retroarch-core-*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to attach the built core zips to"
+        required: true
+        default: "retroarch-core-v0.1.0"
+
+permissions:
+  contents: write
+
+env:
+  CMAKE_ARGS: -DCMAKE_BUILD_TYPE=Release -DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO_SPLITSCREEN=ON
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-latest, not an explicit macos-14: this account rejects that
+          # label ("configuration 'macos-14-arm64-us-default' is not
+          # supported"). Both slices build on the same runner — Apple's SDK
+          # ships both architectures.
+          - name: macos-arm64
+            arch: arm64
+          - name: macos-x86_64
+            arch: x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build $CMAKE_ARGS -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+
+      - name: Build core
+        run: cmake --build build --target mgba_splitscreen_libretro --parallel $(sysctl -n hw.ncpu)
+
+      - name: Strip
+        run: strip -x build/mgba_splitscreen_libretro.dylib
+
+      - name: Package zip
+        run: |
+          set -e
+          mkdir -p pkg
+          cp build/mgba_splitscreen_libretro.dylib pkg/mgba_splitscreen_libretro.dylib
+          cat > pkg/INSTALL.txt <<EOF
+          mgba_splitscreen_libretro — RetroArch core, ${{ matrix.name }}
+          Built from Spuds0588/mgba-splitscreen @ ${GITHUB_SHA:0:9}
+
+          1. Copy mgba_splitscreen_libretro.dylib into
+             ~/Library/Application Support/RetroArch/cores/
+          2. Restart RetroArch, then Load Content -> a GBA ROM -> "mGBA Splitscreen".
+          3. On boot the core asks "How many players?" (2/3/4): P1 picks with
+             Left/Right and confirms with A/Start.
+
+          Core options (Quick Menu -> Core Options):
+            splitscreen_layout        auto | 2x1 | 1x2 | 2x2 | speaker | focus | overlay
+            splitscreen_focus_player  1-4
+            splitscreen_overlays      on | off
+            Players per ROM           same-cartridge multiplayer
+
+          Not in the official Core Downloader yet; see the README's RetroArch section.
+          EOF
+          sed -i.bak 's/^          //' pkg/INSTALL.txt && rm -f pkg/INSTALL.txt.bak
+          cd pkg && zip -qr9 "../mgba_splitscreen_libretro-${{ matrix.name }}.zip" .
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-${{ matrix.name }}
+          path: mgba_splitscreen_libretro-${{ matrix.name }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Attach cores to release
+    needs: build
+    if: ${{ always() }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          set -e
+          ls artifacts/*.zip >/dev/null 2>&1 || { echo "no macOS core was built"; exit 1; }
+          cd artifacts && sha256sum *.zip > SHA256SUMS-macos.txt
+          for z in *.zip; do
+            if ! gh release view "$TAG" >/dev/null 2>&1; then
+              gh release create "$TAG" --target "$GITHUB_SHA" --prerelease \
+                --title "RetroArch core — mgba_splitscreen" \
+                --notes "Pre-built RetroArch cores for mgba-splitscreen. Install by hand: the official Core Downloader doesn't carry a binary yet."
+            fi
+            gh release upload "$TAG" "$z" --clobber
+          done
+          gh release upload "$TAG" SHA256SUMS-macos.txt --clobber
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \(.size) bytes"'

@@ -44,18 +44,10 @@ jobs:
           - name: windows-x86_64
             os: ubuntu-22.04
             platform: windows
-          # macos-latest, not macos-14: this account rejects the explicit
-          # macos-14 label ("configuration 'macos-14-arm64-us-default' is not
-          # supported"), while macos-latest is what release.yml has been using.
-          # Both slices build there — Apple's SDK ships both architectures.
-          - name: macos-arm64
-            os: macos-latest
-            platform: macos
-            arch: arm64
-          - name: macos-x86_64
-            os: macos-latest
-            platform: macos
-            arch: x86_64
+          # macOS lives in core-macos.yml: when GitHub is short on macOS
+          # capacity those jobs sit queued for ~15 minutes and then get
+          # cancelled, which used to stall this whole workflow (and the release
+          # job behind it) on every run.
           - name: android-arm64-v8a
             os: ubuntu-22.04
             platform: android
@@ -92,10 +84,6 @@ jobs:
             -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
             -DCMAKE_FIND_ROOT_PATH=/usr/x86_64-w64-mingw32
 
-      - name: Configure (macOS)
-        if: matrix.platform == 'macos'
-        run: cmake -S . -B build $CMAKE_ARGS -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
-
       - name: Configure (Android, NDK toolchain)
         if: matrix.platform == 'android'
         run: |
@@ -123,10 +111,6 @@ jobs:
         if: matrix.platform == 'windows'
         run: x86_64-w64-mingw32-strip --strip-unneeded build/mgba_splitscreen_libretro.dll
 
-      - name: Strip (macOS)
-        if: matrix.platform == 'macos'
-        run: strip -x build/mgba_splitscreen_libretro.dylib
-
       - name: Strip (Android)
         if: matrix.platform == 'android'
         run: |
@@ -142,7 +126,6 @@ jobs:
           case "${{ matrix.platform }}" in
             linux)   SRC=build/mgba_splitscreen_libretro.so;   DEST=mgba_splitscreen_libretro.so ;;
             windows) SRC=build/mgba_splitscreen_libretro.dll;  DEST=mgba_splitscreen_libretro.dll ;;
-            macos)   SRC=build/mgba_splitscreen_libretro.dylib; DEST=mgba_splitscreen_libretro.dylib ;;
             android) SRC=build/mgba_splitscreen_libretro.so;   DEST=mgba_splitscreen_libretro_android.so ;;
           esac
           mkdir -p pkg
@@ -150,7 +133,6 @@ jobs:
           case "${{ matrix.platform }}" in
             linux)   WHERE="$HOME/.config/retroarch/cores/  (Flatpak: ~/.var/app/org.libretro.RetroArch/config/retroarch/cores/)" ;;
             windows) WHERE="the RetroArch folder\\cores\\" ;;
-            macos)   WHERE="$HOME/Library/Application Support/RetroArch/cores/" ;;
             android) WHERE="Android/data/com.retroarch/files/cores/  (or use Load Core and browse to the file)" ;;
           esac
           cat > pkg/INSTALL.txt <<EOF
