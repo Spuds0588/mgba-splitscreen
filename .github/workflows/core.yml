@@ -184,6 +184,9 @@ jobs:
   release:
     name: Attach cores to release
     needs: build
+    # Publish whatever built, even if one platform failed or a runner was never
+    # provisioned — a broken macOS job shouldn't withhold the Windows build.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v4

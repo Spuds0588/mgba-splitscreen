@@ -30,10 +30,10 @@
 
 > ## 🕹️ [RetroArch core — pre-built download](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-linux-x86_64.zip)
 >
-> Already live in RetroArch? Grab the compiled **mGBA Splitscreen** core (Linux x86_64),
-> drop the `.so` into your `cores/` folder, and run 2–4 linked GBA instances inside
-> RetroArch. It isn't in the official Core Downloader yet, so it installs manually —
-> steps in [RetroArch core](#retroarch-core).
+> Already live in RetroArch? Grab the compiled **mGBA Splitscreen** core (Linux,
+> Windows and Android builds below), drop it into your `cores/` folder, and run 2–4
+> linked GBA instances inside RetroArch. It isn't in the official Core Downloader
+> yet, so it installs manually — steps in [RetroArch core](#retroarch-core).
 
 mgba-splitscreen is a **split-screen Game Boy Advance emulator**: run multiple GBA instances
 side by side, linked together over a virtual link cable, so two to four players can
@@ -303,10 +303,19 @@ The splitscreen emulator also builds as a **libretro core**, so you can play 2�
 GBA instances inside RetroArch itself — with RetroArch's shaders, savestates, gamepad
 handling and per-core options — instead of the standalone app.
 
-**Download (Linux x86_64):**
-[`mgba_splitscreen_libretro-linux-x86_64.zip`](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-linux-x86_64.zip)
-· [release notes](https://github.com/Spuds0588/mgba-splitscreen/releases/tag/retroarch-core-v0.1.0)
-(1.6 MB core, self-reports as **mGBA Splitscreen 0.1.0**)
+**Pre-built cores** — grab one, no compiler needed ([release page with checksums](https://github.com/Spuds0588/mgba-splitscreen/releases/tag/retroarch-core-v0.1.0)):
+
+| Platform | Download | Copy the core file into |
+|---|---|---|
+| Linux x86_64 | [`mgba_splitscreen_libretro-linux-x86_64.zip`](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-linux-x86_64.zip) | `~/.config/retroarch/cores/` (Flatpak: `~/.var/app/org.libretro.RetroArch/config/retroarch/cores/`) |
+| Windows x86_64 | [`mgba_splitscreen_libretro-windows-x86_64.zip`](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-windows-x86_64.zip) | the `cores\` folder next to `retroarch.exe` |
+| Android arm64 (most phones) | [`mgba_splitscreen_libretro-android-arm64-v8a.zip`](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-android-arm64-v8a.zip) | `Android/data/com.retroarch/files/cores/` |
+| Android armv7 (older phones) | [`mgba_splitscreen_libretro-android-armeabi-v7a.zip`](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-android-armeabi-v7a.zip) | same as above |
+| Android x86_64 (Chromebooks, emulators) | [`mgba_splitscreen_libretro-android-x86_64.zip`](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-android-x86_64.zip) | same as above |
+
+Every core self-reports as **mGBA Splitscreen 0.1.0** and takes `gba` content. macOS
+builds are produced by the same workflow and land on the release page once the runner
+has finished them.
 
 1. Unzip it and copy `mgba_splitscreen_libretro.so` into your RetroArch cores folder:
    `~/.config/retroarch/cores/` for a standard Linux build, or
