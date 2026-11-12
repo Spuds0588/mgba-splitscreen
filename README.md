@@ -28,6 +28,13 @@
 > - Found something broken? [Open an issue](https://github.com/Spuds0588/mgba-splitscreen/issues/new?labels=bug) —
 >   tester reports directly drive what gets fixed.
 
+> ## 🕹️ [RetroArch core — pre-built download](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-linux-x86_64.zip)
+>
+> Already live in RetroArch? Grab the compiled **mGBA Splitscreen** core (Linux x86_64),
+> drop the `.so` into your `cores/` folder, and run 2–4 linked GBA instances inside
+> RetroArch. It isn't in the official Core Downloader yet, so it installs manually —
+> steps in [RetroArch core](#retroarch-core).
+
 mgba-splitscreen is a **split-screen Game Boy Advance emulator**: run multiple GBA instances
 side by side, linked together over a virtual link cable, so two to four players can
 play multiplayer GBA games (trading, link battles, co-op, etc.) on a single machine —
@@ -289,6 +296,32 @@ points at someone else's bare file will be refused by the browser. A ROM that ca
 loaded reports why in the status line and leaves the launcher fully usable. Unknown
 parameters are ignored, so `?fsassist=1` (the Four Swords link-assist experiment, off by
 default) still composes with these.
+
+## RetroArch core
+
+The splitscreen emulator also builds as a **libretro core**, so you can play 2–4 linked
+GBA instances inside RetroArch itself — with RetroArch's shaders, savestates, gamepad
+handling and per-core options — instead of the standalone app.
+
+**Download (Linux x86_64):**
+[`mgba_splitscreen_libretro-linux-x86_64.zip`](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-linux-x86_64.zip)
+· [release notes](https://github.com/Spuds0588/mgba-splitscreen/releases/tag/retroarch-core-v0.1.0)
+(1.6 MB core, self-reports as **mGBA Splitscreen 0.1.0**)
+
+1. Unzip it and copy `mgba_splitscreen_libretro.so` into your RetroArch cores folder:
+   `~/.config/retroarch/cores/` for a standard Linux build, or
+   `~/.var/app/org.libretro.RetroArch/config/retroarch/cores/` for the Flatpak.
+2. Restart RetroArch, then **Load Content** → pick a GBA ROM → **mGBA Splitscreen**.
+3. The core asks **"How many players?"** on boot (P1 chooses with Left/Right, confirms
+   with A/Start). Views live in **Quick Menu → Core Options**: `splitscreen_layout`
+   (auto / 2x1 / 1x2 / 2x2 / speaker / focus / overlay), `splitscreen_focus_player`
+   (1–4) and `splitscreen_overlays` (player-colour outlines + P-number badges).
+
+This build is **not in RetroArch's official Core Downloader yet**: libretro's buildbot
+carries the core's metadata but has no compiled binary, so the updater can't fetch it. The
+attached zip is the workaround until that lands. Other platforms can build from source
+today — `cmake -DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO_SPLITSCREEN=ON`, the same flags libretro
+CI uses; see [`mgba-splitscreen/RETROARCH_CORE.md`](mgba-splitscreen/RETROARCH_CORE.md).
 
 ## Beta releases
 
