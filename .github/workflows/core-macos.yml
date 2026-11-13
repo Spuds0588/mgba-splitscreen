@@ -24,26 +24,19 @@ env:
 
 jobs:
   build:
-    name: ${{ matrix.name }}
-    runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # macos-latest, not an explicit macos-14: this account rejects that
-          # label ("configuration 'macos-14-arm64-us-default' is not
-          # supported"). Both slices build on the same runner — Apple's SDK
-          # ships both architectures.
-          - name: macos-arm64
-            arch: arm64
-          - name: macos-x86_64
-            arch: x86_64
+    # Intel, not the default arm64 pool: GitHub never grants this repo an arm64
+    # macOS runner ("not acquired by Runner of type hosted" after the 15-minute
+    # queue cap), but macos-15-intel is a standard hosted label on a separate
+    # pool. One Intel runner cross-compiles both slices, so the result is a
+    # universal dylib that runs on Apple Silicon and Intel alike.
+    name: macos-universal
+    runs-on: macos-15-intel
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -S . -B build $CMAKE_ARGS -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+        run: cmake -S . -B build $CMAKE_ARGS -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
 
       - name: Build core
         run: cmake --build build --target mgba_splitscreen_libretro --parallel $(sysctl -n hw.ncpu)
@@ -56,8 +49,9 @@ jobs:
           set -e
           mkdir -p pkg
           cp build/mgba_splitscreen_libretro.dylib pkg/mgba_splitscreen_libretro.dylib
+          lipo -info pkg/mgba_splitscreen_libretro.dylib
           cat > pkg/INSTALL.txt <<EOF
-          mgba_splitscreen_libretro — RetroArch core, ${{ matrix.name }}
+          mgba_splitscreen_libretro — RetroArch core, macOS universal (arm64 + x86_64)
           Built from Spuds0588/mgba-splitscreen @ ${GITHUB_SHA:0:9}
 
           1. Copy mgba_splitscreen_libretro.dylib into
@@ -75,13 +69,13 @@ jobs:
           Not in the official Core Downloader yet; see the README's RetroArch section.
           EOF
           sed -i.bak 's/^          //' pkg/INSTALL.txt && rm -f pkg/INSTALL.txt.bak
-          cd pkg && zip -qr9 "../mgba_splitscreen_libretro-${{ matrix.name }}.zip" .
+          cd pkg && zip -qr9 "../mgba_splitscreen_libretro-macos-universal.zip" .
 
       - name: Upload zip
         uses: actions/upload-artifact@v4
         with:
-          name: core-${{ matrix.name }}
-          path: mgba_splitscreen_libretro-${{ matrix.name }}.zip
+          name: core-macos-universal
+          path: mgba_splitscreen_libretro-macos-universal.zip
           if-no-files-found: error
 
   release:
