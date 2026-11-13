@@ -34,7 +34,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Linux system dependencies
         if: matrix.os == 'linux'
@@ -44,7 +44,7 @@ jobs:
           librsvg2-dev patchelf libasound2-dev libpulse-dev
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
 
@@ -65,7 +65,7 @@ jobs:
         run: npm run tauri build
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bundles-${{ matrix.os }}
           if-no-files-found: error
@@ -91,10 +91,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
 
@@ -110,7 +110,7 @@ jobs:
           prefix-key: android
 
       - name: Set up Java (Gradle)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
@@ -218,7 +218,7 @@ jobs:
           ls -la dist
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bundles-android
           if-no-files-found: error
@@ -230,12 +230,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all bundles
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
       - name: Create/update release and upload assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: "mgba-splitscreen ${{ github.ref_name }}"

@@ -33,7 +33,7 @@ jobs:
     runs-on: macos-15-intel
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure
         run: cmake -S . -B build $CMAKE_ARGS -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
@@ -72,7 +72,7 @@ jobs:
           cd pkg && zip -qr9 "../mgba_splitscreen_libretro-macos-universal.zip" .
 
       - name: Upload zip
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: core-macos-universal
           path: mgba_splitscreen_libretro-macos-universal.zip
@@ -84,7 +84,7 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true

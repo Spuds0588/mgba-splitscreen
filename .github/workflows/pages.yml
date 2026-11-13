@@ -25,9 +25,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
         with:
           # Auto-enable GitHub Pages (Actions build type) on the first run.
           enablement: true
@@ -40,9 +40,9 @@ jobs:
           # issues name the exact build (placeholder shipped in the repo).
           sed -i "s/__GIT_SHA__/${GITHUB_SHA}/" staged/crash-report.js
       - name: Upload frontend
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: staged
       - name: Deploy to Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
