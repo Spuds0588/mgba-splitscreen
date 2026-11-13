@@ -312,10 +312,10 @@ handling and per-core options — instead of the standalone app.
 | Android arm64 (most phones) | [`mgba_splitscreen_libretro-android-arm64-v8a.zip`](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-android-arm64-v8a.zip) | `Android/data/com.retroarch/files/cores/` |
 | Android armv7 (older phones) | [`mgba_splitscreen_libretro-android-armeabi-v7a.zip`](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-android-armeabi-v7a.zip) | same as above |
 | Android x86_64 (Chromebooks, emulators) | [`mgba_splitscreen_libretro-android-x86_64.zip`](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-android-x86_64.zip) | same as above |
+| macOS (Apple Silicon **and** Intel) | [`mgba_splitscreen_libretro-macos-universal.zip`](https://github.com/Spuds0588/mgba-splitscreen/releases/download/retroarch-core-v0.1.0/mgba_splitscreen_libretro-macos-universal.zip) | `~/Library/Application Support/RetroArch/cores/` |
 
-Every core self-reports as **mGBA Splitscreen 0.1.0** and takes `gba` content. macOS
-builds (arm64 and Intel) come from their own workflow and appear on the release page as
-GitHub provides macOS runners; they run on the same code and recipe.
+Every core self-reports as **mGBA Splitscreen 0.1.0** and takes `gba` content. The macOS
+build is a universal dylib, so the same file works on Apple Silicon and Intel Macs.
 
 1. Unzip it and copy `mgba_splitscreen_libretro.so` into your RetroArch cores folder:
    `~/.config/retroarch/cores/` for a standard Linux build, or
